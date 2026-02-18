@@ -1,0 +1,9 @@
+name = "GRAIL"
+
+[tajriba.auth]
+srtoken = "CHANGE_ME"
+
+[[tajriba.auth.users]]
+name = "Admin"
+username = "admin"
+password = "CHANGE_ME"

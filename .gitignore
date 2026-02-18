@@ -1,0 +1,8 @@
+*.tar.zst
+*.env
+*.zip
+*.csv
+**/.DS_Store
+archive/**
+TODO.md
+.empirica/empirica.toml

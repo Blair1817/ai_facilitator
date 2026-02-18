@@ -1,0 +1,147 @@
+@layer utilities {
+
+  /* Chrome, Safari, Edge, Opera */
+  input.number-arrows-none::-webkit-outer-spin-button,
+  input.number-arrows-none::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  /* Firefox */
+  input.number-arrows-none[type="number"] {
+    -moz-appearance: textfield;
+  }
+}
+
+
+.footer {
+  padding: 20px;
+  bottom: 0;
+  width: 100%;
+  text-align: center;
+}
+
+.footer a {  
+  color: #5900c5;  
+  text-decoration: none;  
+}  
+  
+.footer a:hover {  
+  text-decoration: underline;  
+}
+
+.separator {  
+  margin: 0 5px;  
+}
+
+
+
+.custom-captcha {  
+  display: flex;  
+  flex-direction: column;  
+  align-items: center;  
+  font-family: Arial, sans-serif;
+  min-width: 100%;
+  max-width: 100%;
+  min-height: 50%;
+  max-height: 50%;
+  background-color: "blue";  
+}  
+  
+
+.mention {
+  background-color: #007bff;
+  color: white;
+  border-radius: 0.375rem;
+  padding: 0.2rem 0.15rem;
+  display: inline-block;
+  overflow: visible;
+}
+
+
+.no-copy {
+  user-select: none;
+  /* Disable text selection */
+  -webkit-user-select: none;
+  /* Safari */
+  -moz-user-select: none;
+  /* Firefox */
+  -ms-user-select: none;
+  /* Internet Explorer/Edge */
+}
+
+
+
+
+/* UNUSED */
+/* Chat.css */
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  width: 50rem;
+  /* Ensure the container is always 60% of the parent's width */
+  max-width: 50rem;
+  /* Prevent it from growing beyond 60% */
+  margin: 0 auto;
+  /* Center the container horizontally */
+}
+
+.chat-window {
+  border: 1px solid #ccc;
+  padding: 10px;
+  width: 100%;
+  /* Ensure the chat window takes the full width of its container */
+  height: 500px;
+  overflow-y: scroll;
+  box-sizing: border-box;
+  /* Include padding and border in the element's total width and height */
+}
+
+.message {
+  padding: 5px 10px;
+  margin: 5px 0;
+  border-radius: 5px;
+  word-wrap: break-word;
+  /* Ensure long words break and wrap */
+}
+
+.message.user {
+  background-color: #e1ffc7;
+  align-self: flex-start;
+}
+
+.message.assistant {
+  background-color: #ffebc7;
+  align-self: flex-end;
+}
+
+form {
+  display: flex;
+  margin-top: 10px;
+  width: 100%;
+}
+
+input {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #ccc;
+  border-radius: 5px;
+  box-sizing: border-box;
+  /* Include padding and border in the element's total width and height */
+}
+
+button {
+  padding: 10px 20px;
+  margin-left: 10px;
+  border: none;
+  background-color: #007bff;
+  color: white;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+button:hover {
+  background-color: #0056b3;
+}
