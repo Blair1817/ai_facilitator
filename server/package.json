@@ -7,7 +7,7 @@
     "openai": "^4.47.3"
   },
   "devDependencies": {
-    "esbuild": "0.14.47"
+    "esbuild": "0.25.0"
   },
   "name": "empirica-server",
   "private": true,
