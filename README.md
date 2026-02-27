@@ -163,4 +163,3 @@ This project may contain trademarks or logos for projects, products, or services
 This research was conducted by members of <https://www.microsoft.com/en-us/research/>. We welcome feedback and collaboration from our audience. If you have suggestions, questions, or observe unexpected/offensive behavior in our technology, please contact Dan Goldstein (<dgg@microsoft.com>) or Mohammed Alsobay (<malsobay@microsoft.com>).
 
 If the team receives reports of undesired behavior or identifies issues independently, we will update this repository with appropriate mitigations.
->>>>>>> 3c0ffa3 (Initial commit)
