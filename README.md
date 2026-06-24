@@ -25,7 +25,7 @@ GRAIL is not intended for direct deployment as a production system or for use in
 
 ## Getting started
 
-GRAIL was developed using the open-source Empirica framework (v1.12.0).
+GRAIL was developed using the open-source [Empirica](https://empirica.ly/) framework (v1.12.0).
 
 ### Project structure
 
