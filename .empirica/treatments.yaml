@@ -1,70 +1,75 @@
 factors:
-    - name: facilitation
-      desc: What type of facilitation is enabled in the game?
-      values:
-        - value: none
-        - value: human
-        - value: LLM
-    - name: llmRequestInterval
-      desc: How frequently LLM requests are sent via API, in seconds
-      values:
-        - value: 90
-    - name: fullInfo
-      desc: Do participants have full information about the options?
-      values:
-        - value: true
-        - value: false
-    - name: requireLLMMessage
-      desc: 'Is the LLM required to respond to each timed request, or can it choose not to? '
-      values:
-        - value: true
-        - value: false
-    - name: hiddenInfoCue
-      desc: Are the participants shown a cue about different players having different information?
-      values:
-        - value: true
-        - value: false
-    - name: introDuration
-      desc: Duration of the introduction chat stage, in minutes
-      values:
-        - value: 1
-    - name: gameDuration
-      desc: Duration of the game in minutes
-      values:
-        - value: 10
-    - name: playerCount
-      desc: playerCount determines the number of Players are in a Game.
-      values:
-        - value: 5
-        - value: 6
+  - name: facilitation
+    desc: Type of AI facilitation in the game
+    values:
+      - value: none
+      - value: static
+      - value: adaptive
+
+  - name: playerCount
+    desc: Number of players per game
+    values:
+      - value: 3
+
+  - name: gameDuration
+    desc: Duration of the discussion stage in minutes
+    values:
+      - value: 10
+
+  - name: phase1Duration
+    desc: Duration of Phase 1 individual answer stage in minutes
+    values:
+      - value: 2
+
+  - name: introDuration
+    desc: Duration of the icebreaker stage in minutes
+    values:
+      - value: 2
+
+  - name: llmTriggerMessages
+    desc: Number of messages after which LLM state detection is triggered
+    values:
+      - value: 6
+
+  - name: requireLLMMessage
+    desc: Whether the LLM must respond every trigger or can choose not to
+    values:
+      - value: true   # static AI - always responds
+      - value: false  # adaptive AI - can stay silent
+
+  - name: hiddenInfoCue
+    desc: Whether participants are told that others have different information
+    values:
+      - value: true
+
 treatments:
-    - name: noFacilitator_noCue
-      factors:
-        facilitation: none
-        gameDuration: 10
-        introDuration: 1
-        llmRequestInterval: 90
-        playerCount: 5
-    - name: noFacilitator_withCue
-      factors:
-        facilitation: none
-        gameDuration: 10
-        hiddenInfoCue: true
-        introDuration: 1
-        llmRequestInterval: 90
-        playerCount: 5
-    - name: llmFacilitation_noCue
-      factors:
-        facilitation: LLM
-        gameDuration: 10
-        introDuration: 1
-        llmRequestInterval: 90
-        playerCount: 5
-        requireLLMMessage: true
-    - name: humanFacilitation_noCue
-      factors:
-        facilitation: human
-        gameDuration: 10
-        introDuration: 1
-        llmRequestInterval: 90
-        playerCount: 6
+  - name: no_ai
+    factors:
+      facilitation: none
+      playerCount: 3
+      gameDuration: 10
+      phase1Duration: 2
+      introDuration: 2
+      hiddenInfoCue: true
+
+  - name: static_ai
+    factors:
+      facilitation: static
+      playerCount: 3
+      gameDuration: 10
+      phase1Duration: 2
+      introDuration: 2
+      llmTriggerMessages: 6
+      requireLLMMessage: true
+      hiddenInfoCue: true
+
+  - name: adaptive_ai
+    factors:
+      facilitation: adaptive
+      playerCount: 3
+      gameDuration: 10
+      phase1Duration: 2
+      introDuration: 2
+      llmTriggerMessages: 6
+      requireLLMMessage: false
+      hiddenInfoCue: true
