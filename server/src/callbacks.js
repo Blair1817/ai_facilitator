@@ -4,7 +4,7 @@ import _ from "lodash";
 import dotenv from "dotenv";
 import taskConfig from "./HPTConfig.json";
 import { llmSystemPrompts } from "./LLMConfig.js";
-import { THRESHOLDS, computeStateScores, selectRole } from "./utils.js";
+import { THRESHOLDS, selectRole } from "./utils.js";
 
 dotenv.config();
 
@@ -130,15 +130,15 @@ function buildLLMMessages(game, players, facilitation, localMessages, allHumanMe
 // ── onGameStart ───────────────────────────────────────────────────────────────
 
 Empirica.onGameStart(({ game }) => {
-  const { facilitation, gameDuration, phase1Duration, introDuration } = game.get("treatment");
+  const { gameDuration, phase1Duration, introDuration } = game.get("treatment");
+  // facilitation is no longer read from treatment.
+  // It is assigned per-round below and read from round.get("facilitation") at runtime.
 
-  game.set("llmLog",                       []);
-  game.set("messagesSinceLastIntervention", 0);
-  game.set("totalInterventions",            0);
-  game.set("lastRole",                      null);
-  game.set("humanMessageCount",             0);
-  game.set("synthesiserFired",              false);
-  game.set("generalInfo",                   taskConfig["generalInfo"]);
+  // Initialize game-level state
+  game.set("llmLog",              []);
+  game.set("totalInterventions",  0);
+  game.set("chat_round_0",        []);
+  game.set("chat_round_1",        []);
   game.set("systemInfo", {
     model:           openaiModel,
     featureServer:   "http://localhost:5001",
@@ -146,10 +146,61 @@ Empirica.onGameStart(({ game }) => {
     thresholds:      THRESHOLDS,
   });
 
-  const shuffledConfig = _.shuffle(taskConfig["playerConfig"]);
+  // Randomly assign facilitation order across the two rounds
+  const facilitationOrder = Math.random() < 0.5
+    ? ["static", "adaptive"]
+    : ["adaptive", "static"];
+  game.set("facilitationOrder", facilitationOrder);
+
+  // Round 1
+  const round1 = game.addRound({ name: "Round 1" });
+  round1.set("facilitation", facilitationOrder[0]);
+  round1.set("taskIndex",    0);
+  round1.addStage({ name: "transitionToIntroduction", duration: 10 });
+  round1.addStage({ name: "Introduction",             duration: (introDuration  || 2) * 60 });
+  round1.addStage({ name: "transitionToTask",         duration: 10 });
+  round1.addStage({ name: "InitialDecision",          duration: (phase1Duration || 3) * 60 });
+  round1.addStage({ name: "Task",                     duration: (gameDuration   || 10) * 60 });
+  round1.addStage({ name: "FinalDecision",            duration: 120 });
+
+  // Round 2
+  const round2 = game.addRound({ name: "Round 2" });
+  round2.set("facilitation", facilitationOrder[1]);
+  round2.set("taskIndex",    1);
+  round2.addStage({ name: "transitionToIntroduction", duration: 10 });
+  round2.addStage({ name: "Introduction",             duration: (introDuration  || 2) * 60 });
+  round2.addStage({ name: "transitionToTask",         duration: 10 });
+  round2.addStage({ name: "InitialDecision",          duration: (phase1Duration || 3) * 60 });
+  round2.addStage({ name: "Task",                     duration: (gameDuration   || 10) * 60 });
+  round2.addStage({ name: "FinalDecision",            duration: 120 });
+});
+
+// ── onRoundStart ──────────────────────────────────────────────────────────────
+
+Empirica.onRoundStart(({ round }) => {
+  const game = round.currentGame;
+  const taskIndex = round.get("taskIndex");
+  const task = taskConfig["tasks"][taskIndex];
+
+  if (!task) {
+    console.error(`[onRoundStart] No task found for taskIndex ${taskIndex}`);
+    return;
+  }
+
+  // Reset per-round counters
+  game.set("messagesSinceLastIntervention", 0);
+  game.set("lastRole",                      null);
+  game.set("synthesiserFired",              false);
+  game.set("humanMessageCount",             0);
+
+  // Set task content for this round
+  game.set("generalInfo", task["generalInfo"]);
+
+  // Assign player profiles for this round's task
+  const shuffledConfig = _.shuffle(task["playerConfig"]);
 
   if (game.players.length > shuffledConfig.length) {
-    console.error(`[onGameStart] Not enough player configs: need ${game.players.length}, have ${shuffledConfig.length}`);
+    console.error(`[onRoundStart] Not enough player configs for taskIndex ${taskIndex}: need ${game.players.length}, have ${shuffledConfig.length}`);
     return;
   }
 
@@ -158,13 +209,6 @@ Empirica.onGameStart(({ game }) => {
     player.set("playerContent", shuffledConfig[i].playerContent);
     player.set("hexCode",       shuffledConfig[i].hexCode);
   });
-
-  const round = game.addRound({ name: "Round 1" });
-  round.addStage({ name: "transitionToIntroduction", duration: 10 });
-  round.addStage({ name: "Introduction",             duration: (introDuration  || 2) * 60 });
-  round.addStage({ name: "Phase1",                   duration: (phase1Duration || 3) * 60 });
-  round.addStage({ name: "Discussion",               duration: (gameDuration   || 10) * 60 });
-  round.addStage({ name: "Phase3",                   duration: 300 });
 });
 
 // ── onStageStart ──────────────────────────────────────────────────────────────
@@ -172,26 +216,36 @@ Empirica.onGameStart(({ game }) => {
 Empirica.onStageStart(({ stage }) => {
   const game = stage.currentGame;
   const { gameDuration } = game.get("treatment");
-  if (stage.get("name") === "Discussion") {
+  if (stage.get("name") === "Task") {
     const now = new Date().getTime();
     game.set("taskStartTime", now);
     game.set("deadline",      now + (gameDuration || 10) * 60 * 1000);
   }
 });
 
-// ── on("game", "chat") ────────────────────────────────────────────────────────
+// ── on("game", "chat_round_N") ────────────────────────────────────────────────
 
-Empirica.on("game", "chat", async function (env, { game }) {
-  const { facilitation } = game.get("treatment");
+async function handleChat(env, { game }) {
+  const currentRound = game.currentRound;
+  const roundIndex   = currentRound?.get("index");
+  const chatKey      = `chat_round_${roundIndex}`;
+
+  // Guard: make sure the chatKey matches what triggered this listener
+  if (roundIndex === null || roundIndex === undefined) return;
+  if (!game.get(chatKey)) return;
+
+  const facilitation = currentRound?.get("facilitation");
+  if (!facilitation) return;
+
   const players = game.players;
-  const chat = game.get("chat") || [];
+  const chat = game.get(chatKey) || [];
   if (!chat.length) return;
 
   const lastMessage = chat[chat.length - 1];
   if (lastMessage.sender.id === "ai") return;
 
   const currentStageName = game.currentStage?.get("name");
-  if (currentStageName !== "Discussion") return;
+  if (currentStageName !== "Task") return;
 
   const humanMessageCount = (game.get("humanMessageCount") || 0) + 1;
   game.set("humanMessageCount", humanMessageCount);
@@ -199,7 +253,6 @@ Empirica.on("game", "chat", async function (env, { game }) {
   let messagesSince = (game.get("messagesSinceLastIntervention") || 0) + 1;
   game.set("messagesSinceLastIntervention", messagesSince);
 
-  // DESIGN CHOICE: 6-message cooldown. Simple rate-limiter, not a rolling detector.
   if (messagesSince < 6) return;
 
   const now = new Date().getTime();
@@ -210,11 +263,12 @@ Empirica.on("game", "chat", async function (env, { game }) {
 
   let logEntry = {
     timestamp:                     now,
+    roundIndex,
+    facilitation,
     humanMessageCount,
     messagesSinceLastIntervention: messagesSince,
     remainingTime,
     timeElapsed,
-    facilitation,
     requestMade:    false,
     requestSuccess: false,
     messageAdded:   false,
@@ -233,7 +287,7 @@ Empirica.on("game", "chat", async function (env, { game }) {
       logEntry.requestSuccess = true;
       logEntry.llmAction = llmAction;
       if (llmAction.DECISION === "INTERVENE") {
-        game.append("chat", {
+        game.append(chatKey, {
           text:   llmAction.MESSAGE,
           ts:     new Date().getTime(),
           sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
@@ -263,10 +317,10 @@ Empirica.on("game", "chat", async function (env, { game }) {
       return;
     }
 
-    const features        = featureResult.data;
-    const lastRole        = game.get("lastRole");
+    const features         = featureResult.data;
+    const lastRole         = game.get("lastRole");
     const synthesiserFired = game.get("synthesiserFired");
-    const stateResult     = selectRole(features, remainingTime, lastRole, synthesiserFired);
+    const stateResult      = selectRole(features, remainingTime, lastRole, synthesiserFired);
 
     logEntry.featureScores = features;
     logEntry.eligibleRoles = stateResult.eligibleRoles;
@@ -282,6 +336,7 @@ Empirica.on("game", "chat", async function (env, { game }) {
       const llmStart    = Date.now();
       const llmResponse = await getLLMResponse(messages);
       logEntry.apiLatency = Date.now() - llmStart;
+
       if (llmResponse.success) {
         const llmAction = llmResponse.data;
         logEntry.requestSuccess = true;
@@ -292,7 +347,7 @@ Empirica.on("game", "chat", async function (env, { game }) {
         }
 
         if (llmAction.DECISION === "INTERVENE") {
-          game.append("chat", {
+          game.append(chatKey, {
             text:   llmAction.MESSAGE,
             ts:     new Date().getTime(),
             sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
@@ -314,12 +369,20 @@ Empirica.on("game", "chat", async function (env, { game }) {
 
   game.set("llmLog", [...(game.get("llmLog") || []), logEntry]);
   Empirica.flush();
-});
+}
+
+Empirica.on("game", "chat_round_0", handleChat);
+Empirica.on("game", "chat_round_1", handleChat);
 
 Empirica.onStageEnded(({ stage }) => {});
-Empirica.onRoundEnded(({ round }) => {});
+
+Empirica.onRoundEnded(({ round }) => {
+  const game = round.currentGame;
+  console.log(`[Round ${round.get("index")} ended] facilitation: ${round.get("facilitation")}, total interventions so far: ${game.get("totalInterventions")}`);
+});
 
 Empirica.onGameEnded(({ game }) => {
   console.log(`[Game ended] Total interventions: ${game.get("totalInterventions")}`);
   console.log(`[Game ended] Total human messages: ${game.get("humanMessageCount")}`);
+  console.log(`[Game ended] Facilitation order: ${JSON.stringify(game.get("facilitationOrder"))}`);
 });
