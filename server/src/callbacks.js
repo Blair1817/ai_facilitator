@@ -1,293 +1,325 @@
 import { ClassicListenersCollector } from "@empirica/core/admin/classic";
 export const Empirica = new ClassicListenersCollector();
-import _, { method, template } from 'lodash';
+import _ from "lodash";
 import dotenv from "dotenv";
-import taskConfig from "./HPTConfig.json"; 
-import { llmSystemPrompts } from "./LLMConfig";
+import taskConfig from "./HPTConfig.json";
+import { llmSystemPrompts } from "./LLMConfig.js";
+import { THRESHOLDS, computeStateScores, selectRole } from "./utils.js";
 
-const llmFacilitationModes = ["LLM"];
 dotenv.config();
 
 const openaiModel = process.env.OPENAI_MODEL || "gpt-4o";
 const llmAPIEndpoint = process.env.LLM_API_ENDPOINT || "https://api.openai.com/v1/responses";
 const llmMaxOutputTokens = Number.parseInt(process.env.LLM_MAX_OUTPUT_TOKENS ?? "1000", 10);
 
+// ── LLM API call ──────────────────────────────────────────────────────────────
 
 async function getLLMResponse(messages) {
-
-  // # Uncomment to debug
-  // console.log("LLM Configuration:");
-  // console.log(`Model: ${openaiModel}`);
-  // console.log(`Max Output Tokens: ${llmMaxOutputTokens}`);
-  // console.log(`API Endpoint: ${llmAPIEndpoint}`);
-  
   const data = {
     model: openaiModel,
     max_output_tokens: llmMaxOutputTokens,
     input: messages,
-    text: { format: { type: "json_object" } }
+    text: { format: { type: "json_object" } },
   };
-
   try {
     const completion = await fetch(llmAPIEndpoint, {
       method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       },
-      body: JSON.stringify(data)
+      body: JSON.stringify(data),
     });
-
-    const isJson = completion.headers
-      .get("content-type")
-      ?.includes("application/json");
-    const responseBody = isJson
-      ? await completion.json()
-      : await completion.text();
-
+    const isJson = completion.headers.get("content-type")?.includes("application/json");
+    const responseBody = isJson ? await completion.json() : await completion.text();
     if (!completion.ok) {
       const errorPayload = isJson ? responseBody : { error: responseBody };
-      console.error("LLM endpoint HTTP error:", {
-        status: completion.status,
-        statusText: completion.statusText,
-        error: errorPayload?.error || errorPayload
-      });
-      return {
-        success: false,
-        error: errorPayload?.error?.message || completion.statusText
-      };
+      console.error("LLM endpoint HTTP error:", { status: completion.status, error: errorPayload?.error || errorPayload });
+      return { success: false, error: errorPayload?.error?.message || completion.statusText };
     }
-
     const message = responseBody?.output?.find((item) => item.type === "message");
     const text = message?.content?.find((c) => c.type === "output_text")?.text;
     if (!text) {
-      console.error("LLM endpoint response missing output text:", responseBody);
+      console.error("LLM response missing output text:", responseBody);
       return { success: false, error: "LLM response missing output text" };
     }
-
-    const llmAction = JSON.parse(text);
-    return { success: true, data: llmAction };
+    return { success: true, data: JSON.parse(text) };
   } catch (error) {
-    console.error('LLM endpoint Error: ', error);
+    console.error("LLM endpoint error:", error);
     return { success: false, error: error.message };
   }
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatDuration(duration) {
   const totalSeconds = Math.floor(duration / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
-
-  const formattedMinutes = minutes > 0 ? `${minutes} mins` : '';
+  const formattedMinutes = minutes > 0 ? `${minutes} mins` : "";
   const formattedSeconds = `${seconds} seconds`;
-
-  return `${formattedMinutes}${formattedMinutes && formattedSeconds ? ', ' : ''}${formattedSeconds}`;
+  return `${formattedMinutes}${formattedMinutes && formattedSeconds ? ", " : ""}${formattedSeconds}`;
 }
 
+function getHumanMessages(chat) {
+  if (!chat) return [];
+  return chat.filter((m) => m.sender.id !== "ai");
+}
 
+function buildLocalContext(humanMessages, n = 6) {
+  return humanMessages.slice(-n);
+}
+
+function formatMessages(messages) {
+  return messages.map((m) => `[${m.sender.name}]: ${m.text}`).join("\n");
+}
+
+// ── Feature extraction (calls Python sidecar) ─────────────────────────────────
+// Feature server failure → skip intervention, log error.
+// Returning default values would silently change the detector behavior.
+
+async function extractFeatures(messages) {
+  const payload = {
+    messages: messages.map((m) => ({ sender: m.sender.name, text: m.text })),
+    redundancy_threshold: THRESHOLDS.expander.redundancy_threshold
+  };
+  try {
+    const featureResponse = await fetch("http://localhost:5001/features", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await featureResponse.json();
+    if (!featureResponse.ok) {
+      console.error("[callbacks] Feature server error:", data);
+      return { success: false, error: data.error || "Feature server returned error" };
+    }
+    return { success: true, data };
+  } catch (error) {
+    console.error("[callbacks] Feature server unreachable:", error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+// ── Build LLM messages ────────────────────────────────────────────────────────
+
+function buildLLMMessages(game, players, facilitation, localMessages, allHumanMessages, stateResult, remainingTime, timeElapsed) {
+  const systemPrompt = llmSystemPrompts(facilitation, stateResult?.role || null);
+  const cumulativeContext = formatMessages(allHumanMessages);
+  const localContext = formatMessages(localMessages);
+  const userContent = [
+    `[TIME REMAINING: ${formatDuration(remainingTime)}]`,
+    `[TIME ELAPSED: ${formatDuration(timeElapsed)}]`,
+    `[PARTICIPANTS: ${players.map((p) => p.get("name")).join(", ")}]`,
+    ``,
+    `[Full discussion so far]`,
+    cumulativeContext,
+    ``,
+    `[Last 6 human messages]`,
+    localContext,
+  ].join("\n");
+  const adaptiveContext = facilitation === "adaptive" && stateResult
+    ? `\n[Detected state: ${stateResult.role}]${stateResult.scores ? `\n[Feature scores: ${JSON.stringify(stateResult.scores)}]` : ""}`
+    : "";
+  return [
+    { content: systemPrompt,                  role: "system" },
+    { content: userContent + adaptiveContext,  role: "user"   },
+  ];
+}
+
+// ── onGameStart ───────────────────────────────────────────────────────────────
 
 Empirica.onGameStart(({ game }) => {
-  const { playerCount, facilitation, gameDuration, introDuration, llmRequestInterval, fullInfo} = game.get("treatment");
-  
-  game.set("llmLog", []);
-  game.set("generalInfo", taskConfig["generalInfo"])
-  const shuffleTaskConfig = _.shuffle(taskConfig["playerConfig"]);
-  const players = game.players;
-  const randomFacilitatorPlayerIndex = Math.floor(Math.random() * players.length);
-  const nonFacilitatorPlayers = players.filter((_, i) => i !== randomFacilitatorPlayerIndex);
+  const { facilitation, gameDuration, phase1Duration, introDuration } = game.get("treatment");
 
-
-
-  // Create the round/stage structure 
-  const round = game.addRound({
-    name: "Round 1"
+  game.set("llmLog",                       []);
+  game.set("messagesSinceLastIntervention", 0);
+  game.set("totalInterventions",            0);
+  game.set("lastRole",                      null);
+  game.set("humanMessageCount",             0);
+  game.set("synthesiserFired",              false);
+  game.set("generalInfo",                   taskConfig["generalInfo"]);
+  game.set("systemInfo", {
+    model:           openaiModel,
+    featureServer:   "http://localhost:5001",
+    thresholdSource: "hardcoded_placeholder",
+    thresholds:      THRESHOLDS,
   });
+
+  const shuffledConfig = _.shuffle(taskConfig["playerConfig"]);
+
+  if (game.players.length > shuffledConfig.length) {
+    console.error(`[onGameStart] Not enough player configs: need ${game.players.length}, have ${shuffledConfig.length}`);
+    return;
+  }
+
+  game.players.forEach((player, i) => {
+    player.set("name",          shuffledConfig[i].playerName);
+    player.set("playerContent", shuffledConfig[i].playerContent);
+    player.set("hexCode",       shuffledConfig[i].hexCode);
+  });
+
+  const round = game.addRound({ name: "Round 1" });
   round.addStage({ name: "transitionToIntroduction", duration: 10 });
-  round.addStage({ name: "Introduction", duration: introDuration * 60 });
-  round.addStage({ name: "transitionToTask", duration: 10 });
-  round.addStage({ name: "Task", duration: gameDuration * 60 });
-
-  // Randomly assign private content to players 
-  if (facilitation == "human") {
-    nonFacilitatorPlayers.forEach((player, i) => {
-      player.set("name", shuffleTaskConfig[i].playerName);
-      player.set("playerContent", fullInfo ? shuffleTaskConfig[i].playerContent_fullinfo : shuffleTaskConfig[i].playerContent);
-      player.set("hexCode", shuffleTaskConfig[i].hexCode);
-    });
-    players[randomFacilitatorPlayerIndex].set("name", "Facilitator");
-    players[randomFacilitatorPlayerIndex].set("playerContent", llmSystemPrompts("human", false));
-  }
-  else {
-    players.forEach((player, i) => {
-      player.set("name", shuffleTaskConfig[i].playerName);
-      player.set("playerContent", fullInfo ? shuffleTaskConfig[i].playerContent_fullinfo : shuffleTaskConfig[i].playerContent);
-      player.set("hexCode", shuffleTaskConfig[i].hexCode);
-    });
-  }
-
+  round.addStage({ name: "Introduction",             duration: (introDuration  || 2) * 60 });
+  round.addStage({ name: "Phase1",                   duration: (phase1Duration || 3) * 60 });
+  round.addStage({ name: "Discussion",               duration: (gameDuration   || 10) * 60 });
+  round.addStage({ name: "Phase3",                   duration: 300 });
 });
 
-Empirica.onRoundStart(({ round }) => { });
+// ── onStageStart ──────────────────────────────────────────────────────────────
 
 Empirica.onStageStart(({ stage }) => {
   const game = stage.currentGame;
-  const { playerCount, facilitation, gameDuration, introDuration, llmRequestInterval, requireLLMMessage} = game.get("treatment");
-  const players = game.players;
-
-  if (stage.get("name") == "Task") {
-    game.set("taskStartTime", new Date().getTime());
-    game.set("deadline", game.get("taskStartTime") + gameDuration * 60 * 1000);
-  }
-  
-  // Kick off LLM listener if needed by treatment
-  if (llmFacilitationModes.includes(facilitation) && stage.get("name") == "Task") {
-    // Every llmRequestInterval seconds, query the LLM for a response, then kill the interval
-    const interval = setInterval(async () => {
-      const remainingTime = game.get("deadline") - new Date().getTime();
-      const timeElapsed = new Date().getTime() - game.get("taskStartTime");
-      
-      let logEntry = {
-        timestamp: new Date().getTime(),
-        remainingTime: remainingTime,
-        timeElapsed: timeElapsed,
-        intervalTriggered: true,
-        requestMade: false,
-        requestSuccess: false,
-        reason: "",
-        model: openaiModel,
-        directlyRequested: false,
-        requireLLMMessage: requireLLMMessage
-      };
-
-      if (game.get("chat")) {
-        const lastSender = game.get("chat")[game.get("chat").length - 1].sender.id;
-
-        if (lastSender != "ai") {
-          logEntry.requestMade = true;
-
-          const messagesOAIFormat = [{
-            content: game.get("chat").map((message) => `[${formatDuration(new Date().getTime() - message.ts)} ago] ${message.sender.name}: ${message.text}`).join("\n"),
-            role: "user"
-          }];
-
-          messagesOAIFormat.unshift({ content: `[TIME REMAINING: ${formatDuration(remainingTime)}]`, role: "system" });
-          messagesOAIFormat.unshift({ content: `[TIME ELAPSED: ${formatDuration(timeElapsed)}]`, role: "system" });
-          messagesOAIFormat.unshift({ content: `Meeting attendees: ${players.map((player) => player.get("name")).join(", ")}`, role: "system" });
-          messagesOAIFormat.unshift({ content: llmSystemPrompts(facilitation, requireLLMMessage), role: "system" });
-
-          logEntry.messagesOAIFormat = messagesOAIFormat;
-
-          const llmResponse = await getLLMResponse(messagesOAIFormat);
-
-          if (llmResponse.success) {
-            const llmAction = llmResponse.data;
-            logEntry.requestSuccess = true;
-            logEntry.llmAction = llmAction;
-
-            if (llmAction.DECISION == "INTERVENE" || requireLLMMessage) {
-              game.append("chat", {
-                text: llmAction.MESSAGE, ts: new Date().getTime(),
-                sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` }
-              });
-              logEntry.messageAdded = true;
-            } else {
-              logEntry.messageAdded = false;
-              logEntry.reason = "LLM decided not to intervene";
-            }
-          } else {
-            logEntry.reason = `API Error: ${llmResponse.error}`;
-          }
-        } else {
-          logEntry.reason = "Last message was from AI, no request made";
-        }
-      } else {
-        logEntry.reason = "No chat messages available";
-      }
-
-      game.set("llmLog", [...game.get("llmLog"), logEntry]);
-      Empirica.flush();
-    }, llmRequestInterval * 1000);
-
-    setTimeout(() => {
-      clearInterval(interval);
-    }, (gameDuration * 60 - 20) * 1000);
+  const { gameDuration } = game.get("treatment");
+  if (stage.get("name") === "Discussion") {
+    const now = new Date().getTime();
+    game.set("taskStartTime", now);
+    game.set("deadline",      now + (gameDuration || 10) * 60 * 1000);
   }
 });
 
-Empirica.onStageEnded(({ stage }) => { });
+// ── on("game", "chat") ────────────────────────────────────────────────────────
 
-Empirica.onRoundEnded(({ round }) => { });
-
-Empirica.onGameEnded(({ game }) => { });
-
-
-// Allowing users to explicitly trigger a facilitator message 
 Empirica.on("game", "chat", async function (env, { game }) {
-  const { playerCount, facilitation, gameDuration, introDuration, llmRequestInterval, requireLLMMessage} = game.get("treatment");
+  const { facilitation } = game.get("treatment");
   const players = game.players;
-  const lastSender = game.get("chat")[game.get("chat").length - 1].sender.id
-  const isFacilitatorTagged = game.get("chat")[game.get("chat").length - 1].text.includes("@[Facilitator]")
+  const chat = game.get("chat") || [];
+  if (!chat.length) return;
 
-  if (llmFacilitationModes.includes(facilitation) && lastSender != "ai" && isFacilitatorTagged) {
-    const remainingTime = game.get("deadline") - new Date().getTime();
-    const timeElapsed = new Date().getTime() - game.get("taskStartTime");
+  const lastMessage = chat[chat.length - 1];
+  if (lastMessage.sender.id === "ai") return;
 
-    let logEntry = {
-      timestamp: new Date().getTime(),
-      remainingTime: remainingTime,
-      timeElapsed: timeElapsed,
-      intervalTriggered: false,
-      requestMade: true,
-      requestSuccess: false,
-      reason: "",
-      model: openaiModel,
-      directlyRequested: true,
-      requireLLMMessage: requireLLMMessage
-    };
+  const currentStageName = game.currentStage?.get("name");
+  if (currentStageName !== "Discussion") return;
 
-    const messagesOAIFormat = [{
-      content: game.get("chat").map((message) => `[${formatDuration(new Date().getTime() - message.ts)} ago] ${message.sender.name}: ${message.text}`).join("\n"),
-      role: "user"
-    }]
+  const humanMessageCount = (game.get("humanMessageCount") || 0) + 1;
+  game.set("humanMessageCount", humanMessageCount);
 
-    // Add the deadline and current time to the beginning of the messages 
-    messagesOAIFormat.unshift({ content: `[TIME REMAINING: ${formatDuration(remainingTime)}]`, role: "system" })
-    messagesOAIFormat.unshift({ content: `[TIME ELAPSED: ${formatDuration(timeElapsed)}]`, role: "system" })
+  let messagesSince = (game.get("messagesSinceLastIntervention") || 0) + 1;
+  game.set("messagesSinceLastIntervention", messagesSince);
 
-    // Add the list of meeting attendees 
-    messagesOAIFormat.unshift({ content: `Meeting attendees: ${players.map((player) => player.get("name")).join(", ")}`, role: "system" })
+  // DESIGN CHOICE: 6-message cooldown. Simple rate-limiter, not a rolling detector.
+  if (messagesSince < 6) return;
 
-    // Add the system prompt to the beginning of the messages
-    messagesOAIFormat.unshift({ content: llmSystemPrompts(facilitation, true), role: "system" })
+  const now = new Date().getTime();
+  const remainingTime = Math.max(0, game.get("deadline") - now);
+  const timeElapsed   = now - game.get("taskStartTime");
+  const allHumanMessages = getHumanMessages(chat);
+  const localMessages    = buildLocalContext(allHumanMessages, 6);
 
-    logEntry.messagesOAIFormat = messagesOAIFormat;
+  let logEntry = {
+    timestamp:                     now,
+    humanMessageCount,
+    messagesSinceLastIntervention: messagesSince,
+    remainingTime,
+    timeElapsed,
+    facilitation,
+    requestMade:    false,
+    requestSuccess: false,
+    messageAdded:   false,
+    model:          openaiModel,
+    reason:         "",
+  };
 
-    try {
-      const llmResponse = await getLLMResponse(messagesOAIFormat);
+  // ── Static ──────────────────────────────────────────────────────────────────
+  if (facilitation === "static") {
+    logEntry.requestMade = true;
+    const messages = buildLLMMessages(game, players, "static", localMessages, allHumanMessages, null, remainingTime, timeElapsed);
+    logEntry.messagesOAIFormat = messages;
+    const llmResponse = await getLLMResponse(messages);
+    if (llmResponse.success) {
+      const llmAction = llmResponse.data;
+      logEntry.requestSuccess = true;
+      logEntry.llmAction = llmAction;
+      if (llmAction.DECISION === "INTERVENE") {
+        game.append("chat", {
+          text:   llmAction.MESSAGE,
+          ts:     new Date().getTime(),
+          sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
+        });
+        logEntry.messageAdded = true;
+        game.set("totalInterventions", (game.get("totalInterventions") || 0) + 1);
+      } else {
+        logEntry.reason = "LLM decided not to intervene";
+      }
+    } else {
+      logEntry.reason = `API Error: ${llmResponse.error}`;
+    }
+    game.set("messagesSinceLastIntervention", 0);
+  }
 
+  // ── Adaptive ────────────────────────────────────────────────────────────────
+  else if (facilitation === "adaptive") {
+    const featureStart  = Date.now();
+    const featureResult = await extractFeatures(localMessages);
+    logEntry.featureLatency = Date.now() - featureStart;
+
+    if (!featureResult.success) {
+      logEntry.reason = `Feature server unavailable: ${featureResult.error} — skipping intervention`;
+      game.set("messagesSinceLastIntervention", 0);
+      game.set("llmLog", [...(game.get("llmLog") || []), logEntry]);
+      Empirica.flush();
+      return;
+    }
+
+    const features        = featureResult.data;
+    const lastRole        = game.get("lastRole");
+    const synthesiserFired = game.get("synthesiserFired");
+    const stateResult     = selectRole(features, remainingTime, lastRole, synthesiserFired);
+
+    logEntry.featureScores = features;
+    logEntry.eligibleRoles = stateResult.eligibleRoles;
+    logEntry.selectedRole  = stateResult.role;
+    logEntry.stateScores   = stateResult.scores;
+    logEntry.forced        = stateResult.forced;
+    logEntry.reasoning     = stateResult.reasoning;
+
+    if (stateResult.role !== "silent") {
+      logEntry.requestMade = true;
+      const messages = buildLLMMessages(game, players, "adaptive", localMessages, allHumanMessages, stateResult, remainingTime, timeElapsed);
+      logEntry.messagesOAIFormat = messages;
+      const llmStart    = Date.now();
+      const llmResponse = await getLLMResponse(messages);
+      logEntry.apiLatency = Date.now() - llmStart;
       if (llmResponse.success) {
         const llmAction = llmResponse.data;
         logEntry.requestSuccess = true;
         logEntry.llmAction = llmAction;
 
-        game.append("chat", {
-          text: llmAction.MESSAGE, 
-          ts: new Date().getTime(),
-          sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` }
-        });
+        if (stateResult.role === "synthesiser" && stateResult.forced) {
+          game.set("synthesiserFired", true);
+        }
 
-        logEntry.messageAdded = true;
+        if (llmAction.DECISION === "INTERVENE") {
+          game.append("chat", {
+            text:   llmAction.MESSAGE,
+            ts:     new Date().getTime(),
+            sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
+          });
+          logEntry.messageAdded = true;
+          game.set("totalInterventions", (game.get("totalInterventions") || 0) + 1);
+          game.set("lastRole",           stateResult.role);
+        } else {
+          logEntry.reason = "LLM decided not to intervene";
+        }
       } else {
         logEntry.reason = `API Error: ${llmResponse.error}`;
-        logEntry.messageAdded = false;
       }
-    } catch (error) {
-      logEntry.reason = `Unexpected Error: ${error.message}`;
-      logEntry.messageAdded = false;
+    } else {
+      logEntry.reason = "State = silent, no intervention";
     }
-
-    game.set("llmLog", [...game.get("llmLog"), logEntry]);
-    Empirica.flush();
+    game.set("messagesSinceLastIntervention", 0);
   }
+
+  game.set("llmLog", [...(game.get("llmLog") || []), logEntry]);
+  Empirica.flush();
+});
+
+Empirica.onStageEnded(({ stage }) => {});
+Empirica.onRoundEnded(({ round }) => {});
+
+Empirica.onGameEnded(({ game }) => {
+  console.log(`[Game ended] Total interventions: ${game.get("totalInterventions")}`);
+  console.log(`[Game ended] Total human messages: ${game.get("humanMessageCount")}`);
 });
