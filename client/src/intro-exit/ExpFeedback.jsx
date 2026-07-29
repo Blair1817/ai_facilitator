@@ -14,10 +14,15 @@ export function ExpFeedback({ next }) {
 
     // Define state variables for each question
     const [question1, setQuestion1] = useState("");
- 
+    const [submitting, setSubmitting] = useState(false);
+
 
     function handleSubmit(event) {
         event.preventDefault();
+        if (submitting) {
+            return;
+        }
+        setSubmitting(true);
         player.set("expFeedback", {
             expFeedback: question1,
         });
@@ -57,7 +62,7 @@ export function ExpFeedback({ next }) {
     
     
                                 <div className="mb-12 text-right">
-                                    <Button type="submit">Exit survey and receive submission code</Button>
+                                    <Button type="submit" disabled={submitting}>Exit survey and receive submission code</Button>
                                 </div>
                             </div>
                         </div>

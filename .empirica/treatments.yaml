@@ -42,7 +42,16 @@ factors:
     values:
       - value: true
 
+  - name: taskVersion
+    desc: Which task/task materials this game uses (see server/src/TaskRegistry.js)
+    values:
+      - value: task1
+      - value: task2
+
 treatments:
+  # Development/test-only. Not a formal experimental condition — kept so local
+  # smoke testing (no facilitation, no LLM calls) keeps working. Uses task1
+  # since that is the only taskVersion with real materials right now.
   - name: no_ai
     factors:
       facilitation: none
@@ -51,8 +60,9 @@ treatments:
       phase1Duration: 2
       introDuration: 2
       hiddenInfoCue: true
+      taskVersion: task1
 
-  - name: static_ai
+  - name: static_task1
     factors:
       facilitation: static
       playerCount: 3
@@ -62,8 +72,24 @@ treatments:
       llmTriggerMessages: 6
       requireLLMMessage: true
       hiddenInfoCue: true
+      taskVersion: task1
 
-  - name: adaptive_ai
+  # BLOCKER: task2 has no real materials yet (see server/src/TaskRegistry.js).
+  # Selecting this treatment in a batch will not start a working game — see the
+  # taskRegistry availability guard in server/src/callbacks.js onGameStart.
+  - name: static_task2
+    factors:
+      facilitation: static
+      playerCount: 3
+      gameDuration: 10
+      phase1Duration: 2
+      introDuration: 2
+      llmTriggerMessages: 6
+      requireLLMMessage: true
+      hiddenInfoCue: true
+      taskVersion: task2
+
+  - name: adaptive_task1
     factors:
       facilitation: adaptive
       playerCount: 3
@@ -73,3 +99,19 @@ treatments:
       llmTriggerMessages: 6
       requireLLMMessage: false
       hiddenInfoCue: true
+      taskVersion: task1
+
+  # BLOCKER: task2 has no real materials yet (see server/src/TaskRegistry.js).
+  # Selecting this treatment in a batch will not start a working game — see the
+  # taskRegistry availability guard in server/src/callbacks.js onGameStart.
+  - name: adaptive_task2
+    factors:
+      facilitation: adaptive
+      playerCount: 3
+      gameDuration: 10
+      phase1Duration: 2
+      introDuration: 2
+      llmTriggerMessages: 6
+      requireLLMMessage: false
+      hiddenInfoCue: true
+      taskVersion: task2

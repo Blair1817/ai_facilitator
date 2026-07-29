@@ -41,7 +41,7 @@ export default defineConfig({
     rollupOptions: {
       preserveEntrySignatures: "strict",
       plugins: [builtinsPlugin],
-      external: ["pkg-types", "mlly", "local-pkg", "fs"],
+      external: ["pkg-types", "mlly", "local-pkg", "fs", "@antfu/install-pkg"],
       output: {
         sourcemap: true,
       },
