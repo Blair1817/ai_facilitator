@@ -152,10 +152,14 @@ Empirica.onGameStart(({ game }) => {
     : ["adaptive", "static"];
   game.set("facilitationOrder", facilitationOrder);
 
+  const taskOrder = Math.random() < 0.5 ? [0, 1] : [1, 0];
+  game.set("taskOrder", taskOrder);
+
   // Round 1
   const round1 = game.addRound({ name: "Round 1" });
   round1.set("facilitation", facilitationOrder[0]);
-  round1.set("taskIndex",    0);
+  // round1.set("taskIndex",    0);
+  round1.set("taskIndex", taskOrder[0]);
   round1.addStage({ name: "transitionToIntroduction", duration: 10 });
   round1.addStage({ name: "Introduction",             duration: (introDuration  || 2) * 60 });
   round1.addStage({ name: "transitionToTask",         duration: 10 });
@@ -166,7 +170,8 @@ Empirica.onGameStart(({ game }) => {
   // Round 2
   const round2 = game.addRound({ name: "Round 2" });
   round2.set("facilitation", facilitationOrder[1]);
-  round2.set("taskIndex",    1);
+  // round2.set("taskIndex",    1);
+  round1.set("taskIndex", taskOrder[1]);
   round2.addStage({ name: "transitionToIntroduction", duration: 10 });
   round2.addStage({ name: "Introduction",             duration: (introDuration  || 2) * 60 });
   round2.addStage({ name: "transitionToTask",         duration: 10 });
@@ -195,6 +200,7 @@ Empirica.onRoundStart(({ round }) => {
 
   // Set task content for this round
   game.set("generalInfo", task["generalInfo"]);
+  round.set("decisionOptions", task["decisionOptions"]);
 
   // Assign player profiles for this round's task
   const shuffledConfig = _.shuffle(task["playerConfig"]);

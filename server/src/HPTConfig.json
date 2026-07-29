@@ -3,6 +3,11 @@
     {
       "taskIndex": 0,
       "generalInfo": "TechNova Analytics, a mid-size data-analytics firm, needs to open a new regional office within the next 6 months to accommodate roughly 40 staff. A site-selection committee has shortlisted three candidate buildings: Rivermill Center, Oak Hollow Business Park, and Fenwick Crossing Tower.\n\nAll three buildings currently have 8,000-10,000 square feet available and have confirmed availability within TechNova's required move-in window.\n\nRivermill Center's publicly listed monthly rent is $18,000.\nOak Hollow Business Park's publicly listed monthly rent is $21,000.\nFenwick Crossing Tower's publicly listed monthly rent is $19,500.",
+      "decisionOptions": [
+        { "id": "OPT1", "label": "Rivermill Center" },
+        { "id": "OPT2", "label": "Oak Hollow Business Park" },
+        { "id": "OPT3", "label": "Fenwick Crossing Tower" }
+      ],
       "playerConfig": [
         {
           "playerName": "Red",
@@ -24,6 +29,11 @@
     {
       "taskIndex": 1,
       "generalInfo": "Bright Path Youth Foundation is planning its annual fundraising gala for approximately 150 guests. The event committee has shortlisted three catering vendors: Silver Fork Catering, Meridian Table, and Harborlight Catering.\n\nAll three vendors have catered nonprofit events of a similar size before and have confirmed availability on the gala date.\n\nSilver Fork Catering's quoted price is $85 per guest.\nMeridian Table's quoted price is $95 per guest.\nHarborlight Catering's quoted price is $90 per guest.",
+      "decisionOptions": [
+        { "id": "OPT1", "label": "Silver Fork Catering" },
+        { "id": "OPT2", "label": "Meridian Table" },
+        { "id": "OPT3", "label": "Harborlight Catering" }
+      ],
       "playerConfig": [
         {
           "playerName": "Red",
