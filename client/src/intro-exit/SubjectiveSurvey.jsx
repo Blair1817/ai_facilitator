@@ -27,10 +27,15 @@ export function SubjectiveSurvey({ next }) {
     const [question11, setQuestion11] = useState("");
     const [question12, setQuestion12] = useState("");
     const [question13, setQuestion13] = useState("");
+    const [submitting, setSubmitting] = useState(false);
 
 
     function handleSubmit(event) {
         event.preventDefault();
+        if (submitting) {
+            return;
+        }
+        setSubmitting(true);
         player.set("subjectiveSurvey", {
             groupFreeText: question1,
             groupContribution: question2,
@@ -276,7 +281,7 @@ export function SubjectiveSurvey({ next }) {
                                 </>}
 
                                 <div className="mb-12 text-right">
-                                    <Button type="submit">Next</Button>
+                                    <Button type="submit" disabled={submitting}>Next</Button>
                                 </div>
                             </div>
                         </div>

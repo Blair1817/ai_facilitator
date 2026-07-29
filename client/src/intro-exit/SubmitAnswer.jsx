@@ -1,12 +1,15 @@
 import React, { useState } from "react";
-import { usePlayer } from "@empirica/core/player/classic/react";
+import { usePlayer, useGame } from "@empirica/core/player/classic/react";
 import Slider from "@mui/material/Slider";
 import { Button } from "@mui/material";
 
 export function SubmitAnswer({ next }) {
   const player = usePlayer();
+  const game = useGame();
+  const decisionOptions = game.get("taskDecisionOptions") || [];
   const [selectedOption, setSelectedOption] = useState("");
-  const [agreement, setAgreement] = useState(null); 
+  const [agreement, setAgreement] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const buttonClassName = (option) =>
     `px-4 py-2 border rounded-md mx-2 ${selectedOption === option
@@ -24,6 +27,10 @@ export function SubmitAnswer({ next }) {
 
   const handleSubmit = (event) => {
     event.preventDefault();
+    if (submitting || !selectedOption || agreement === null) {
+      return;
+    }
+    setSubmitting(true);
     player.set("selectedOption", selectedOption);
     player.set("agreement", agreement);
     next();
@@ -35,24 +42,15 @@ export function SubmitAnswer({ next }) {
         Which option did your group choose?
       </h1>
       <div className="flex space-x-4 mb-4">
-        <button
-          className={buttonClassName("Eldoron")}
-          onClick={() => handleOptionClick("Eldoron")}
-        >
-          Eldoron
-        </button>
-        <button
-          className={buttonClassName("Myloria")}
-          onClick={() => handleOptionClick("Myloria")}
-        >
-          Myloria
-        </button>
-        <button
-          className={buttonClassName("Cragnio")}
-          onClick={() => handleOptionClick("Cragnio")}
-        >
-          Cragnio
-        </button>
+        {decisionOptions.map((option) => (
+          <button
+            key={option}
+            className={buttonClassName(option)}
+            onClick={() => handleOptionClick(option)}
+          >
+            {option}
+          </button>
+        ))}
       </div>
 
       <div className="mb-4">
@@ -80,13 +78,13 @@ export function SubmitAnswer({ next }) {
       <div className="text-right">
         <button
           onClick={handleSubmit}
-          disabled={!selectedOption || agreement === null}
-          className={`px-4 py-2 rounded-md ${!selectedOption || agreement === null
+          disabled={submitting || !selectedOption || agreement === null}
+          className={`px-4 py-2 rounded-md ${submitting || !selectedOption || agreement === null
               ? "bg-gray-300 text-gray-700 cursor-not-allowed"
               : "bg-blue-500 text-white"
             }`}
         >
-          {!selectedOption || agreement === null ? "Please answer the above to proceed" : "Submit"}
+          {!selectedOption || agreement === null ? "Please answer the above to proceed" : submitting ? "Submitting…" : "Submit"}
         </button>
       </div>
     </div>

@@ -2,13 +2,27 @@ import React from "react";
 import { Button } from "../components/Button";
 import { RenderMarkdown } from "../components/RenderMarkdown.jsx";
 
+// Bump this when the consent text below is replaced with real IRB-approved copy.
+export const CONSENT_VERSION = "placeholder-v1";
+export const CONSENT_METADATA_KEY = "grail:consentMeta";
 
 export function Consent({ onConsent }) {
+  const handleConsent = () => {
+    // Empirica's own consent flag (useConsent()) only lives in localStorage and is
+    // never synced to the player record. We record the actual click time/version
+    // here so RecruitmentBootstrap can persist it onto the player once it exists.
+    window.localStorage.setItem(
+      CONSENT_METADATA_KEY,
+      JSON.stringify({ consentedAt: Date.now(), consentVersion: CONSENT_VERSION })
+    );
+    onConsent();
+  };
+
   return (
     <div className="flex-col justify-center mx-10% mt-5%">
       <RenderMarkdown markdownText={consentMarkdown} />
       <div className="text-center pb-10px">
-        <Button handleClick={onConsent}>
+        <Button handleClick={handleConsent}>
           <p>I agree to this consent form</p>
         </Button>
       </div>
