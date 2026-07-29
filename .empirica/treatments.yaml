@@ -1,41 +1,23 @@
 factors:
-  - name: facilitation
-    desc: Type of AI facilitation in the game
-    values:
-      - value: none
-      - value: static
-      - value: adaptive
-
   - name: playerCount
     desc: Number of players per game
     values:
       - value: 3
 
   - name: gameDuration
-    desc: Duration of the discussion stage in minutes
+    desc: Duration of the Task stage in minutes
     values:
       - value: 10
 
   - name: phase1Duration
-    desc: Duration of Phase 1 individual answer stage in minutes
+    desc: Duration of the InitialDecision stage in minutes
     values:
       - value: 2
 
   - name: introDuration
-    desc: Duration of the icebreaker stage in minutes
+    desc: Duration of the Introduction icebreaker stage in minutes
     values:
       - value: 2
-
-  - name: llmTriggerMessages
-    desc: Number of messages after which LLM state detection is triggered
-    values:
-      - value: 6
-
-  - name: requireLLMMessage
-    desc: Whether the LLM must respond every trigger or can choose not to
-    values:
-      - value: true   # static AI - always responds
-      - value: false  # adaptive AI - can stay silent
 
   - name: hiddenInfoCue
     desc: Whether participants are told that others have different information
@@ -43,33 +25,10 @@ factors:
       - value: true
 
 treatments:
-  - name: no_ai
+  - name: main
     factors:
-      facilitation: none
-      playerCount: 3
-      gameDuration: 10
+      playerCount:   3
+      gameDuration:  10
       phase1Duration: 2
       introDuration: 2
-      hiddenInfoCue: true
-
-  - name: static_ai
-    factors:
-      facilitation: static
-      playerCount: 3
-      gameDuration: 10
-      phase1Duration: 2
-      introDuration: 2
-      llmTriggerMessages: 6
-      requireLLMMessage: true
-      hiddenInfoCue: true
-
-  - name: adaptive_ai
-    factors:
-      facilitation: adaptive
-      playerCount: 3
-      gameDuration: 10
-      phase1Duration: 2
-      introDuration: 2
-      llmTriggerMessages: 6
-      requireLLMMessage: false
       hiddenInfoCue: true
