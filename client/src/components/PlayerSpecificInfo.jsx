@@ -9,7 +9,14 @@ export function PlayerSpecificInfo() {
   const players = usePlayers();
   const stage = useStage();
   const game = useGame();
-  const playerContent = player.get("playerContent");
+  // Round-first: the current round's private profile should live at
+  // player.round.get("playerContent") once the backend sets it per round.
+  // Falls back to the old flat player.get("playerContent") for compatibility
+  // with the current (unmodified) backend, which only sets it once at the
+  // player level via callbacks.js's onGameStart shuffle. Both reads are
+  // scoped to the current player only (usePlayer(), never usePlayers()) --
+  // this must never read another participant's profile.
+  const playerContent = player.round?.get("playerContent") ?? player.get("playerContent");
   const playerName = player.get("name");
   const generalInfo = game.get("generalInfo");
   const [selectedTab, setSelectedTab] = useState(0);
@@ -17,6 +24,14 @@ export function PlayerSpecificInfo() {
   const handleChange = (event, newValue) => {
     setSelectedTab(newValue);
   };
+
+  if (!playerContent) {
+    return (
+      <div className="h-full w-full flex items-center justify-center text-gray-500">
+        This session is not yet available. Please contact the research team.
+      </div>
+    );
+  }
 
   const playerSpecificInfo = [
     { label: `Personal report for ${player.get("name")}`, content: playerContent },

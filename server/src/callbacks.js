@@ -2,10 +2,10 @@ import { ClassicListenersCollector } from "@empirica/core/admin/classic";
 export const Empirica = new ClassicListenersCollector();
 import _, { method, template } from 'lodash';
 import dotenv from "dotenv";
-import taskConfig from "./HPTConfig.json"; 
+import { taskRegistry } from "./TaskRegistry.mjs";
 import { llmSystemPrompts } from "./LLMConfig";
+import { resolveFacilitationDispatch } from "./ConditionRouting.mjs";
 
-const llmFacilitationModes = ["LLM"];
 dotenv.config();
 
 const openaiModel = process.env.OPENAI_MODEL || "gpt-4o";
@@ -88,11 +88,18 @@ function formatDuration(duration) {
 
 
 Empirica.onGameStart(({ game }) => {
-  const { playerCount, facilitation, gameDuration, introDuration, llmRequestInterval, fullInfo} = game.get("treatment");
-  
+  const { playerCount, facilitation, gameDuration, introDuration, phase1Duration, llmRequestInterval, fullInfo, taskVersion} = game.get("treatment");
+
+  const taskEntry = taskRegistry[taskVersion];
+  if (!taskEntry || !taskEntry.readyForFlowTesting) {
+    console.error(`[GRAIL] BLOCKED game start: taskVersion "${taskVersion}" is not readyForFlowTesting (game ID: ${game.id}, treatment: ${JSON.stringify(game.get("treatment"))}). No rounds/stages will be created for this game.`);
+    return;
+  }
+
   game.set("llmLog", []);
-  game.set("generalInfo", taskConfig["generalInfo"])
-  const shuffleTaskConfig = _.shuffle(taskConfig["playerConfig"]);
+  game.set("generalInfo", taskEntry.generalInfo)
+  game.set("taskDecisionOptions", taskEntry.decisionOptions)
+  const shuffleTaskConfig = _.shuffle(taskEntry.playerConfig);
   const players = game.players;
   const randomFacilitatorPlayerIndex = Math.floor(Math.random() * players.length);
   const nonFacilitatorPlayers = players.filter((_, i) => i !== randomFacilitatorPlayerIndex);
@@ -106,6 +113,7 @@ Empirica.onGameStart(({ game }) => {
   round.addStage({ name: "transitionToIntroduction", duration: 10 });
   round.addStage({ name: "Introduction", duration: introDuration * 60 });
   round.addStage({ name: "transitionToTask", duration: 10 });
+  round.addStage({ name: "InitialDecision", duration: phase1Duration * 60 });
   round.addStage({ name: "Task", duration: gameDuration * 60 });
 
   // Randomly assign private content to players 
@@ -139,9 +147,14 @@ Empirica.onStageStart(({ stage }) => {
     game.set("taskStartTime", new Date().getTime());
     game.set("deadline", game.get("taskStartTime") + gameDuration * 60 * 1000);
   }
-  
+
+  const dispatch = resolveFacilitationDispatch(facilitation);
+  if (stage.get("name") == "Task" && !dispatch.eligible && dispatch.kind !== "none") {
+    console.error(`[GRAIL] Facilitation condition routing: ${dispatch.reason} (game ID: ${game.id}). No LLM requests will be made for this game.`);
+  }
+
   // Kick off LLM listener if needed by treatment
-  if (llmFacilitationModes.includes(facilitation) && stage.get("name") == "Task") {
+  if (dispatch.eligible && stage.get("name") == "Task") {
     // Every llmRequestInterval seconds, query the LLM for a response, then kill the interval
     const interval = setInterval(async () => {
       const remainingTime = game.get("deadline") - new Date().getTime();
@@ -229,7 +242,8 @@ Empirica.on("game", "chat", async function (env, { game }) {
   const lastSender = game.get("chat")[game.get("chat").length - 1].sender.id
   const isFacilitatorTagged = game.get("chat")[game.get("chat").length - 1].text.includes("@[Facilitator]")
 
-  if (llmFacilitationModes.includes(facilitation) && lastSender != "ai" && isFacilitatorTagged) {
+  const dispatch = resolveFacilitationDispatch(facilitation);
+  if (dispatch.eligible && lastSender != "ai" && isFacilitatorTagged) {
     const remainingTime = game.get("deadline") - new Date().getTime();
     const timeElapsed = new Date().getTime() - game.get("taskStartTime");
 

@@ -19,10 +19,18 @@ export function TLX({ next }) {
     const [question4, setQuestion4] = useState("");
     const [question5, setQuestion5] = useState("");
     const [question6, setQuestion6] = useState("");
+    const [submitting, setSubmitting] = useState(false);
 
+    const isComplete = Boolean(
+        question1 && question2 && question3 && question4 && question5 && question6
+    );
 
     function handleSubmit(event) {
         event.preventDefault();
+        if (submitting || !isComplete) {
+            return;
+        }
+        setSubmitting(true);
         player.set("tlxSurvey", {
             tlxMentalDemand: question1,
             tlxPhysicalDemand: question2,
@@ -136,7 +144,12 @@ export function TLX({ next }) {
                                 </div>
     
                                 <div className="mb-12 text-right">
-                                    <Button type="submit">Next</Button>
+                                    {!isComplete && (
+                                        <p className="text-sm text-gray-500 mb-2">
+                                            Please answer all six questions above to continue.
+                                        </p>
+                                    )}
+                                    <Button type="submit" disabled={submitting || !isComplete}>Next</Button>
                                 </div>
                             </div>
                         </div>

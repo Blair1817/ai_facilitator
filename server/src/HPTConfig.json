@@ -1,35 +1,260 @@
 {
-    "playerConfig": [
+  "schemaVersion": "1.0.0",
+  "tasks": {
+    "A": {
+      "taskVersion": "A",
+      "title": "Regional Office Site Selection",
+      "instructions": "Review the general information below together with your group. Then read your own private report -- it contains additional information that only you have received. Discuss the three candidate locations with your group, and be ready to record your own individual decision both before and after the discussion.",
+      "generalInfo": [
         {
-            "playerName": "Green",
-            "playerContent": "# General Information\nThe International Sports Federation (ISF) runs an international event similar to the Olympics every 4 years. Historically, the events have been well-received and attracted millions of attendees from around the world. Throughout the years, the ISF has worked with partners and sponsors from various industries to bring the event to various cities and cultures, and the search is on for the city to host the next event.\n\n**As one of 5 decision makers at the ISF, you have been asked to sit on a committee to review the options and select the next host city based on reasonable criteria for a large sporting event.**\n\n**For the event being held this year, 3 cities have submitted a bid to host: Eldoron, Myloria, and Cragnio. All three cities are equally qualified and capable of hosting the event from a sports infrastructure perspective, but may differ in non-critical ways.**\n\n\n\n# Personal report delivered to Green:\nAs a decision maker named **\"Green\"** at the International Sports Federation, you have requested a report to get more information on the three cities; this report is shown below, with information split by city. Although this report is personal, you may discuss the information in it with others. Remember: you may have personal preferences for each city, but your goal is to select the city that is most suited to host the event overall. **Be sure to scroll to the bottom of the report to review all details.**\n## Eldoron\n* Friendly and welcoming residents \n* Strong culture of sports and fitness \n* Home of the Kinetica Motors manufacturing plant \n* Higher than average humidity\n## Myloria\n* Vibrant nightlife scene to keep visitors entertained\n* Evenings can be warmer than average, causing slight discomfort \n* Low sun index in the area minimizes risk of sunburn \n* Community of volunteers eager to help with the event\n* Has a plan to repurpose facilities for community sports after the event\n## Cragnio\n* Shopping centers are popular with visitors \n* Some visitors with cars complain about parking availability\n* Considered a hub for biotech in the region\n* City's dry season coincides with the event dates, minimizing risk of rain\n* Comfortable evening temperatures \n",
-            "playerContent_fullinfo": "# General Information\nThe International Sports Federation (ISF) runs an international event similar to the Olympics every 4 years. Historically, the events have been well-received and attracted millions of attendees from around the world. Throughout the years, the ISF has worked with partners and sponsors from various industries to bring the event to various cities and cultures, and the search is on for the city to host the next event.\n\n**As one of 5 decision makers at the ISF, you have been asked to sit on a committee to review the options and select the next host city based on reasonable criteria for a large sporting event.**\n\n**For the event being held this year, 3 cities have submitted a bid to host: Eldoron, Myloria, and Cragnio. All three cities are equally qualified and capable of hosting the event from a sports infrastructure perspective, but may differ in non-critical ways.**\n\n\n\n# Personal report delivered to Green:\nAs a decision maker named **\"Green\"** at the International Sports Federation, you have requested a report to get more information on the three cities; this report is shown below, with information split by city. Although this report is personal, you may discuss the information in it with others. Remember: you may have personal preferences for each city, but your goal is to select the city that is most suited to host the event overall. **Be sure to scroll to the bottom of the report to review all details.**\n## Eldoron\n* Popular destination for concerts and conferences\n* Home of the Kinetica Motors manufacturing plant \n* Strong culture of sports and fitness \n* Has a reputation for an easy-to-navigate public transportation experience\n* Local botanical garden has one of the highest rates of plant diversity \n* Friendly and welcoming residents \n* Rated as a top tourist destination \n* Has fewer cultural activities for visitors than an average city\n## Myloria\n* Visitors sometimes comment that city's layout is confusing\n* Supportive local businesses \n* Has a plan to repurpose facilities for community sports after the event\n* Visitors occasionally complain about traffic in the city\n* Home of a renowned sweet pastry bakery \n* Community of volunteers eager to help with the event\n* Vibrant nightlife scene to keep visitors entertained\n* High number of universities and research institutions \n## Cragnio\n* Some visitors with cars complain about parking availability\n* Recent archeological dig featured in a magazine\n* Residents have a reputation for being friendly and welcoming of visitors \n* The public transportation system recently added a convenient way for visitors to pay\n* Considered a hub for biotech in the region\n* In the past, residents have complained about noise from large events\n* Shopping centers are popular with visitors \n* Only a few activities geared towards families with children\n",
-            "hexCode": "39BC21"
+          "id": "A-GEN-1",
+          "optionId": null,
+          "text": "TechNova Analytics, a mid-size data-analytics firm, needs to open a new regional office within the next 6 months to accommodate roughly 40 staff. A site-selection committee has shortlisted three candidate buildings: Rivermill Center, Oak Hollow Business Park, and Fenwick Crossing Tower."
         },
         {
-            "playerName": "Blue",
-            "playerContent": "# General Information\nThe International Sports Federation (ISF) runs an international event similar to the Olympics every 4 years. Historically, the events have been well-received and attracted millions of attendees from around the world. Throughout the years, the ISF has worked with partners and sponsors from various industries to bring the event to various cities and cultures, and the search is on for the city to host the next event.\n\n**As one of 5 decision makers at the ISF, you have been asked to sit on a committee to review the options and select the next host city based on reasonable criteria for a large sporting event.**\n\n**For the event being held this year, 3 cities have submitted a bid to host: Eldoron, Myloria, and Cragnio. All three cities are equally qualified and capable of hosting the event from a sports infrastructure perspective, but may differ in non-critical ways.**\n\n\n\n# Personal report delivered to Blue:\nAs a decision maker named **\"Blue\"** at the International Sports Federation, you have requested a report to get more information on the three cities; this report is shown below, with information split by city. Although this report is personal, you may discuss the information in it with others. Remember: you may have personal preferences for each city, but your goal is to select the city that is most suited to host the event overall. **Be sure to scroll to the bottom of the report to review all details.**\n## Eldoron\n* Well-known for its comfortable breezes\n* Friendly and welcoming residents \n* Higher than average humidity\n* Dedicated cultural villages for visitors during major events\n## Myloria\n* Vibrant nightlife scene to keep visitors entertained\n* Low sun index in the area minimizes risk of sunburn \n* Supportive local businesses \n* Visitors sometimes comment that city's layout is confusing\n* Community of volunteers eager to help with the event\n## Cragnio\n* Considered a hub for biotech in the region\n* Recent archeological dig featured in a magazine\n* City's dry season coincides with the event dates, minimizing risk of rain\n* In the past, residents have complained about noise from large events\n* Shopping centers are popular with visitors \n",
-            "playerContent_fullinfo": "# General Information\nThe International Sports Federation (ISF) runs an international event similar to the Olympics every 4 years. Historically, the events have been well-received and attracted millions of attendees from around the world. Throughout the years, the ISF has worked with partners and sponsors from various industries to bring the event to various cities and cultures, and the search is on for the city to host the next event.\n\n**As one of 5 decision makers at the ISF, you have been asked to sit on a committee to review the options and select the next host city based on reasonable criteria for a large sporting event.**\n\n**For the event being held this year, 3 cities have submitted a bid to host: Eldoron, Myloria, and Cragnio. All three cities are equally qualified and capable of hosting the event from a sports infrastructure perspective, but may differ in non-critical ways.**\n\n\n\n# Personal report delivered to Blue:\nAs a decision maker named **\"Blue\"** at the International Sports Federation, you have requested a report to get more information on the three cities; this report is shown below, with information split by city. Although this report is personal, you may discuss the information in it with others. Remember: you may have personal preferences for each city, but your goal is to select the city that is most suited to host the event overall. **Be sure to scroll to the bottom of the report to review all details.**\n## Eldoron\n* Has a reputation for an easy-to-navigate public transportation experience\n* Home of the Kinetica Motors manufacturing plant \n* Strong culture of sports and fitness \n* Popular destination for concerts and conferences\n* Friendly and welcoming residents \n* Has fewer cultural activities for visitors than an average city\n* Local botanical garden has one of the highest rates of plant diversity \n* Rated as a top tourist destination \n## Myloria\n* Visitors occasionally complain about traffic in the city\n* Supportive local businesses \n* Has a plan to repurpose facilities for community sports after the event\n* Visitors sometimes comment that city's layout is confusing\n* Community of volunteers eager to help with the event\n* High number of universities and research institutions \n* Home of a renowned sweet pastry bakery \n* Vibrant nightlife scene to keep visitors entertained\n## Cragnio\n* The public transportation system recently added a convenient way for visitors to pay\n* Recent archeological dig featured in a magazine\n* Residents have a reputation for being friendly and welcoming of visitors \n* Some visitors with cars complain about parking availability\n* In the past, residents have complained about noise from large events\n* Only a few activities geared towards families with children\n* Considered a hub for biotech in the region\n* Shopping centers are popular with visitors \n",
-            "hexCode": "206EEF"
+          "id": "A-GEN-2",
+          "optionId": null,
+          "text": "All three buildings currently have 8,000-10,000 square feet available and have confirmed availability within TechNova's required move-in window."
         },
         {
-            "playerName": "Pink",
-            "playerContent": "# General Information\nThe International Sports Federation (ISF) runs an international event similar to the Olympics every 4 years. Historically, the events have been well-received and attracted millions of attendees from around the world. Throughout the years, the ISF has worked with partners and sponsors from various industries to bring the event to various cities and cultures, and the search is on for the city to host the next event.\n\n**As one of 5 decision makers at the ISF, you have been asked to sit on a committee to review the options and select the next host city based on reasonable criteria for a large sporting event.**\n\n**For the event being held this year, 3 cities have submitted a bid to host: Eldoron, Myloria, and Cragnio. All three cities are equally qualified and capable of hosting the event from a sports infrastructure perspective, but may differ in non-critical ways.**\n\n\n\n# Personal report delivered to Pink:\nAs a decision maker named **\"Pink\"** at the International Sports Federation, you have requested a report to get more information on the three cities; this report is shown below, with information split by city. Although this report is personal, you may discuss the information in it with others. Remember: you may have personal preferences for each city, but your goal is to select the city that is most suited to host the event overall. **Be sure to scroll to the bottom of the report to review all details.**\n## Eldoron\n* Friendly and welcoming residents \n* Strong culture of sports and fitness \n* Home of the Kinetica Motors manufacturing plant \n* Higher than average humidity\n## Myloria\n* Vibrant nightlife scene to keep visitors entertained\n* Supportive local businesses \n* Low sun index in the area minimizes risk of sunburn \n* Community of volunteers eager to help with the event\n* Evenings can be warmer than average, causing slight discomfort \n## Cragnio\n* Shopping centers are popular with visitors \n* Comfortable evening temperatures \n* Considered a hub for biotech in the region\n* City's dry season coincides with the event dates, minimizing risk of rain\n* Some visitors with cars complain about parking availability\n",
-            "playerContent_fullinfo": "# General Information\nThe International Sports Federation (ISF) runs an international event similar to the Olympics every 4 years. Historically, the events have been well-received and attracted millions of attendees from around the world. Throughout the years, the ISF has worked with partners and sponsors from various industries to bring the event to various cities and cultures, and the search is on for the city to host the next event.\n\n**As one of 5 decision makers at the ISF, you have been asked to sit on a committee to review the options and select the next host city based on reasonable criteria for a large sporting event.**\n\n**For the event being held this year, 3 cities have submitted a bid to host: Eldoron, Myloria, and Cragnio. All three cities are equally qualified and capable of hosting the event from a sports infrastructure perspective, but may differ in non-critical ways.**\n\n\n\n# Personal report delivered to Pink:\nAs a decision maker named **\"Pink\"** at the International Sports Federation, you have requested a report to get more information on the three cities; this report is shown below, with information split by city. Although this report is personal, you may discuss the information in it with others. Remember: you may have personal preferences for each city, but your goal is to select the city that is most suited to host the event overall. **Be sure to scroll to the bottom of the report to review all details.**\n## Eldoron\n* Has fewer cultural activities for visitors than an average city\n* Strong culture of sports and fitness \n* Popular destination for concerts and conferences\n* Home of the Kinetica Motors manufacturing plant \n* Local botanical garden has one of the highest rates of plant diversity \n* Has a reputation for an easy-to-navigate public transportation experience\n* Rated as a top tourist destination \n* Friendly and welcoming residents \n## Myloria\n* High number of universities and research institutions \n* Has a plan to repurpose facilities for community sports after the event\n* Visitors sometimes comment that city's layout is confusing\n* Supportive local businesses \n* Home of a renowned sweet pastry bakery \n* Visitors occasionally complain about traffic in the city\n* Vibrant nightlife scene to keep visitors entertained\n* Community of volunteers eager to help with the event\n## Cragnio\n* Only a few activities geared towards families with children\n* Residents have a reputation for being friendly and welcoming of visitors \n* Some visitors with cars complain about parking availability\n* Recent archeological dig featured in a magazine\n* Considered a hub for biotech in the region\n* The public transportation system recently added a convenient way for visitors to pay\n* Shopping centers are popular with visitors \n* In the past, residents have complained about noise from large events\n",
-            "hexCode": "F90494"
+          "id": "A-GEN-3",
+          "optionId": "A-OPT1",
+          "text": "Rivermill Center's publicly listed monthly rent is $18,000."
         },
         {
-            "playerName": "Red",
-            "playerContent": "# General Information\nThe International Sports Federation (ISF) runs an international event similar to the Olympics every 4 years. Historically, the events have been well-received and attracted millions of attendees from around the world. Throughout the years, the ISF has worked with partners and sponsors from various industries to bring the event to various cities and cultures, and the search is on for the city to host the next event.\n\n**As one of 5 decision makers at the ISF, you have been asked to sit on a committee to review the options and select the next host city based on reasonable criteria for a large sporting event.**\n\n**For the event being held this year, 3 cities have submitted a bid to host: Eldoron, Myloria, and Cragnio. All three cities are equally qualified and capable of hosting the event from a sports infrastructure perspective, but may differ in non-critical ways.**\n\n\n\n# Personal report delivered to Red:\nAs a decision maker named **\"Red\"** at the International Sports Federation, you have requested a report to get more information on the three cities; this report is shown below, with information split by city. Although this report is personal, you may discuss the information in it with others. Remember: you may have personal preferences for each city, but your goal is to select the city that is most suited to host the event overall. **Be sure to scroll to the bottom of the report to review all details.**\n## Eldoron\n* Rated as a top tourist destination \n* Friendly and welcoming residents \n* Home of the Kinetica Motors manufacturing plant \n* Higher than average humidity\n* Local botanical garden has one of the highest rates of plant diversity \n## Myloria\n* Has a plan to repurpose facilities for community sports after the event\n* Supportive local businesses \n* Low sun index in the area minimizes risk of sunburn \n* Visitors occasionally complain about traffic in the city\n* Vibrant nightlife scene to keep visitors entertained\n## Cragnio\n* City's dry season coincides with the event dates, minimizing risk of rain\n* Comfortable evening temperatures \n* Considered a hub for biotech in the region\n* Variety of international cuisine may be limited \n* Shopping centers are popular with visitors \n",
-            "playerContent_fullinfo": "# General Information\nThe International Sports Federation (ISF) runs an international event similar to the Olympics every 4 years. Historically, the events have been well-received and attracted millions of attendees from around the world. Throughout the years, the ISF has worked with partners and sponsors from various industries to bring the event to various cities and cultures, and the search is on for the city to host the next event.\n\n**As one of 5 decision makers at the ISF, you have been asked to sit on a committee to review the options and select the next host city based on reasonable criteria for a large sporting event.**\n\n**For the event being held this year, 3 cities have submitted a bid to host: Eldoron, Myloria, and Cragnio. All three cities are equally qualified and capable of hosting the event from a sports infrastructure perspective, but may differ in non-critical ways.**\n\n\n\n# Personal report delivered to Red:\nAs a decision maker named **\"Red\"** at the International Sports Federation, you have requested a report to get more information on the three cities; this report is shown below, with information split by city. Although this report is personal, you may discuss the information in it with others. Remember: you may have personal preferences for each city, but your goal is to select the city that is most suited to host the event overall. **Be sure to scroll to the bottom of the report to review all details.**\n## Eldoron\n* Rated as a top tourist destination \n* Has a reputation for an easy-to-navigate public transportation experience\n* Has fewer cultural activities for visitors than an average city\n* Popular destination for concerts and conferences\n* Local botanical garden has one of the highest rates of plant diversity \n* Strong culture of sports and fitness \n* Friendly and welcoming residents \n* Home of the Kinetica Motors manufacturing plant \n## Myloria\n* Vibrant nightlife scene to keep visitors entertained\n* Visitors occasionally complain about traffic in the city\n* High number of universities and research institutions \n* Visitors sometimes comment that city's layout is confusing\n* Home of a renowned sweet pastry bakery \n* Has a plan to repurpose facilities for community sports after the event\n* Community of volunteers eager to help with the event\n* Supportive local businesses \n## Cragnio\n* Shopping centers are popular with visitors \n* The public transportation system recently added a convenient way for visitors to pay\n* Only a few activities geared towards families with children\n* Some visitors with cars complain about parking availability\n* Considered a hub for biotech in the region\n* Residents have a reputation for being friendly and welcoming of visitors \n* In the past, residents have complained about noise from large events\n* Recent archeological dig featured in a magazine\n",
-            "hexCode": "FF0000"
+          "id": "A-GEN-4",
+          "optionId": "A-OPT2",
+          "text": "Oak Hollow Business Park's publicly listed monthly rent is $21,000."
         },
         {
-            "playerName": "Orange",
-            "playerContent": "# General Information\nThe International Sports Federation (ISF) runs an international event similar to the Olympics every 4 years. Historically, the events have been well-received and attracted millions of attendees from around the world. Throughout the years, the ISF has worked with partners and sponsors from various industries to bring the event to various cities and cultures, and the search is on for the city to host the next event.\n\n**As one of 5 decision makers at the ISF, you have been asked to sit on a committee to review the options and select the next host city based on reasonable criteria for a large sporting event.**\n\n**For the event being held this year, 3 cities have submitted a bid to host: Eldoron, Myloria, and Cragnio. All three cities are equally qualified and capable of hosting the event from a sports infrastructure perspective, but may differ in non-critical ways.**\n\n\n\n# Personal report delivered to Orange:\nAs a decision maker named **\"Orange\"** at the International Sports Federation, you have requested a report to get more information on the three cities; this report is shown below, with information split by city. Although this report is personal, you may discuss the information in it with others. Remember: you may have personal preferences for each city, but your goal is to select the city that is most suited to host the event overall. **Be sure to scroll to the bottom of the report to review all details.**\n## Eldoron\n* Higher than average humidity\n* Has a reputation for an easy-to-navigate public transportation experience\n* Popular destination for concerts and conferences\n* Friendly and welcoming residents \n## Myloria\n* Home of a renowned sweet pastry bakery \n* Vibrant nightlife scene to keep visitors entertained\n* High number of universities and research institutions \n* Supportive local businesses \n* Low sun index in the area minimizes risk of sunburn \n## Cragnio\n* Only a few activities geared towards families with children\n* City's dry season coincides with the event dates, minimizing risk of rain\n* Considered a hub for biotech in the region\n* Residents have a reputation for being friendly and welcoming of visitors \n* Shopping centers are popular with visitors \n",
-            "playerContent_fullinfo": "# General Information\nThe International Sports Federation (ISF) runs an international event similar to the Olympics every 4 years. Historically, the events have been well-received and attracted millions of attendees from around the world. Throughout the years, the ISF has worked with partners and sponsors from various industries to bring the event to various cities and cultures, and the search is on for the city to host the next event.\n\n**As one of 5 decision makers at the ISF, you have been asked to sit on a committee to review the options and select the next host city based on reasonable criteria for a large sporting event.**\n\n**For the event being held this year, 3 cities have submitted a bid to host: Eldoron, Myloria, and Cragnio. All three cities are equally qualified and capable of hosting the event from a sports infrastructure perspective, but may differ in non-critical ways.**\n\n\n\n# Personal report delivered to Orange:\nAs a decision maker named **\"Orange\"** at the International Sports Federation, you have requested a report to get more information on the three cities; this report is shown below, with information split by city. Although this report is personal, you may discuss the information in it with others. Remember: you may have personal preferences for each city, but your goal is to select the city that is most suited to host the event overall. **Be sure to scroll to the bottom of the report to review all details.**\n## Eldoron\n* Has fewer cultural activities for visitors than an average city\n* Has a reputation for an easy-to-navigate public transportation experience\n* Local botanical garden has one of the highest rates of plant diversity \n* Friendly and welcoming residents \n* Strong culture of sports and fitness \n* Rated as a top tourist destination \n* Popular destination for concerts and conferences\n* Home of the Kinetica Motors manufacturing plant \n## Myloria\n* High number of universities and research institutions \n* Visitors occasionally complain about traffic in the city\n* Home of a renowned sweet pastry bakery \n* Community of volunteers eager to help with the event\n* Has a plan to repurpose facilities for community sports after the event\n* Vibrant nightlife scene to keep visitors entertained\n* Visitors sometimes comment that city's layout is confusing\n* Supportive local businesses \n## Cragnio\n* Only a few activities geared towards families with children\n* The public transportation system recently added a convenient way for visitors to pay\n* Considered a hub for biotech in the region\n* In the past, residents have complained about noise from large events\n* Residents have a reputation for being friendly and welcoming of visitors \n* Shopping centers are popular with visitors \n* Some visitors with cars complain about parking availability\n* Recent archeological dig featured in a magazine\n",
-            "hexCode": "ff9900"
+          "id": "A-GEN-5",
+          "optionId": "A-OPT3",
+          "text": "Fenwick Crossing Tower's publicly listed monthly rent is $19,500."
         }
-    ],
-    "generalInfo": "# General Information\nThe International Sports Federation (ISF) runs an international event similar to the Olympics every 4 years. Historically, the events have been well-received and attracted millions of attendees from around the world. Throughout the years, the ISF has worked with partners and sponsors from various industries to bring the event to various cities and cultures, and the search is on for the city to host the next event.\n\n**As one of 5 decision makers at the ISF, you have been asked to sit on a committee to review the options and select the next host city based on reasonable criteria for a large sporting event.**\n\n**For the event being held this year, 3 cities have submitted a bid to host: Eldoron, Myloria, and Cragnio. All three cities are equally qualified and capable of hosting the event from a sports infrastructure perspective, but may differ in non-critical ways.**\n"
+      ],
+      "options": [
+        {
+          "id": "A-OPT1",
+          "label": "Rivermill Center",
+          "description": "A mid-rise office building near the downtown core with the lowest publicly listed rent of the three candidates."
+        },
+        {
+          "id": "A-OPT2",
+          "label": "Oak Hollow Business Park",
+          "description": "A suburban office park with the highest publicly listed rent of the three candidates."
+        },
+        {
+          "id": "A-OPT3",
+          "label": "Fenwick Crossing Tower",
+          "description": "A newer tower with a mid-range publicly listed rent."
+        }
+      ],
+      "correctAnswer": {
+        "optionId": "A-OPT2",
+        "rationale": "Shared information alone highlights only headline rent, where Rivermill Center appears cheapest. Once all three private reports are pooled, Oak Hollow Business Park is the only option with no serious drawback in any of the three reviewed areas (logistics, true lease cost, and growth/transit), while Rivermill Center's low headline rent is offset by a large signing fee and steep annual increases (A2-E1), congested shared parking and elevator waits (A1-E1), and poor transit access with no room to grow (A3-E1). Fenwick Crossing Tower avoids Rivermill's cost problems but has its own move-in delay (A1-E3) and lacks nearby amenities and expansion space (A3-E3). Oak Hollow is the only option positively supported across all three private reports (A1-E2, A2-E2, A3-E2).",
+        "requiredEvidenceIds": ["A1-E2", "A2-E2", "A3-E2"]
+      },
+      "privateProfiles": {
+        "A1": {
+          "profileId": "A1",
+          "reportTitle": "Space & Logistics Report",
+          "content": [
+            {
+              "id": "A1-E1",
+              "optionId": "A-OPT1",
+              "text": "Rivermill Center has only one elevator serving all six floors, and tenants in the building report frequent wait times during peak hours. Its parking garage is shared with an adjacent shopping mall, and TechNova's facilities contact was told parking shortages are common on weekday afternoons."
+            },
+            {
+              "id": "A1-E2",
+              "optionId": "A-OPT2",
+              "text": "Oak Hollow Business Park has a dedicated two-elevator bank serving its floors, and its on-site parking garage is reserved exclusively for office tenants, currently at about 60% capacity."
+            },
+            {
+              "id": "A1-E3",
+              "optionId": "A-OPT3",
+              "text": "Fenwick Crossing Tower's available space has a non-standard floor plan that would require substantial build-out before move-in, adding an estimated 10 weeks to the timeline. The building has bike storage but no dedicated car parking; the nearest public garage is a 12-minute walk away."
+            }
+          ]
+        },
+        "A2": {
+          "profileId": "A2",
+          "reportTitle": "Cost & Lease Terms Report",
+          "content": [
+            {
+              "id": "A2-E1",
+              "optionId": "A-OPT1",
+              "text": "Although Rivermill Center's listed rent is the lowest, its lease requires a one-time $45,000 building-improvement fee due at signing, and annual rent increases are set at 6% -- the highest of the three buildings."
+            },
+            {
+              "id": "A2-E2",
+              "optionId": "A-OPT2",
+              "text": "Oak Hollow Business Park's lease has no signing fee, caps annual rent increases at 2.5%, and the landlord is currently offering two months of free rent as a move-in incentive."
+            },
+            {
+              "id": "A2-E3",
+              "optionId": "A-OPT3",
+              "text": "Fenwick Crossing Tower's lease has no signing fee and standard annual rent increases of 4%, with no special incentives currently offered."
+            }
+          ]
+        },
+        "A3": {
+          "profileId": "A3",
+          "reportTitle": "Community & Growth Report",
+          "content": [
+            {
+              "id": "A3-E1",
+              "optionId": "A-OPT1",
+              "text": "Rivermill Center's neighborhood has limited public transit, served by a single bus line whose last departure is 7pm; several current TechNova staff who were surveyed flagged this as a commute concern. The building has no additional space available if TechNova needs to expand."
+            },
+            {
+              "id": "A3-E2",
+              "optionId": "A-OPT2",
+              "text": "Oak Hollow Business Park is within a 5-minute walk of two subway lines. The building also has an additional half-floor available for lease if TechNova grows beyond 40 staff within the next two years."
+            },
+            {
+              "id": "A3-E3",
+              "optionId": "A-OPT3",
+              "text": "Fenwick Crossing Tower has decent bus access, but the surrounding neighborhood has no full-service restaurants within walking distance; a recent staff survey flagged lunch options as a concern. The building has no additional space available for future growth."
+            }
+          ]
+        }
+      }
+    },
+    "B": {
+      "taskVersion": "B",
+      "title": "Fundraising Gala Caterer Selection",
+      "instructions": "Review the general information below together with your group. Then read your own private report -- it contains additional information that only you have received. Discuss the three candidate caterers with your group, and be ready to record your own individual decision both before and after the discussion.",
+      "generalInfo": [
+        {
+          "id": "B-GEN-1",
+          "optionId": null,
+          "text": "Bright Path Youth Foundation is planning its annual fundraising gala for approximately 150 guests. The event committee has shortlisted three catering vendors: Silver Fork Catering, Meridian Table, and Harborlight Catering."
+        },
+        {
+          "id": "B-GEN-2",
+          "optionId": null,
+          "text": "All three vendors have catered nonprofit events of a similar size before and have confirmed availability on the gala date."
+        },
+        {
+          "id": "B-GEN-3",
+          "optionId": "B-OPT1",
+          "text": "Silver Fork Catering's quoted price is $85 per guest."
+        },
+        {
+          "id": "B-GEN-4",
+          "optionId": "B-OPT2",
+          "text": "Meridian Table's quoted price is $95 per guest."
+        },
+        {
+          "id": "B-GEN-5",
+          "optionId": "B-OPT3",
+          "text": "Harborlight Catering's quoted price is $90 per guest."
+        }
+      ],
+      "options": [
+        {
+          "id": "B-OPT1",
+          "label": "Silver Fork Catering",
+          "description": "The lowest quoted per-guest price of the three vendors."
+        },
+        {
+          "id": "B-OPT2",
+          "label": "Meridian Table",
+          "description": "The highest quoted per-guest price of the three vendors."
+        },
+        {
+          "id": "B-OPT3",
+          "label": "Harborlight Catering",
+          "description": "A mid-range quoted per-guest price."
+        }
+      ],
+      "correctAnswer": {
+        "optionId": "B-OPT2",
+        "rationale": "Shared information alone highlights only the quoted per-guest price, where Silver Fork Catering appears cheapest. Once all three private reports are pooled, Meridian Table is the only vendor with no serious drawback in any of the three reviewed areas (menu/dietary accommodation, logistics reliability, and true contract cost), while Silver Fork's low quote is offset by a mandatory service fee, gratuity, and travel surcharge that push its real per-guest cost above Meridian's (B3-E1), a documented history of late starts and a loading-dock conflict (B2-E1), and weak dietary accommodation (B1-E1). Harborlight avoids Silver Fork's worst cost problems but still adds a service fee (B3-E3), has a recent late-start incident (B2-E3), and offers limited dietary flexibility (B1-E3). Meridian Table is the only vendor positively supported across all three private reports (B1-E2, B2-E2, B3-E2).",
+        "requiredEvidenceIds": ["B1-E2", "B2-E2", "B3-E2"]
+      },
+      "privateProfiles": {
+        "B1": {
+          "profileId": "B1",
+          "reportTitle": "Menu & Dietary Report",
+          "content": [
+            {
+              "id": "B1-E1",
+              "optionId": "B-OPT1",
+              "text": "Silver Fork Catering offers a single set menu with only one vegetarian option and no vegan substitution, and does not have a dedicated allergy-safe prep area."
+            },
+            {
+              "id": "B1-E2",
+              "optionId": "B-OPT2",
+              "text": "Meridian Table offers a fully customizable menu, including three vegetarian and vegan options, and prepares allergy-sensitive dishes in a certified separate station."
+            },
+            {
+              "id": "B1-E3",
+              "optionId": "B-OPT3",
+              "text": "Harborlight Catering offers one vegetarian dish and no vegan option; menu substitution requests must be submitted at least 30 days in advance and are not guaranteed."
+            }
+          ]
+        },
+        "B2": {
+          "profileId": "B2",
+          "reportTitle": "Logistics & Reliability Report",
+          "content": [
+            {
+              "id": "B2-E1",
+              "optionId": "B-OPT1",
+              "text": "Silver Fork Catering requires 4 hours of loading-dock access before the event, which conflicts with Bright Path's venue's restricted loading-dock hours. Two reference checks from prior nonprofit events both reported a 30-45 minute late start."
+            },
+            {
+              "id": "B2-E2",
+              "optionId": "B-OPT2",
+              "text": "Meridian Table needs a 2-hour setup window that fits within the venue's loading-dock hours. Two independent reference checks covering the past three years reported zero late-start incidents."
+            },
+            {
+              "id": "B2-E3",
+              "optionId": "B-OPT3",
+              "text": "Harborlight Catering needs a standard 3-hour setup window that fits the venue's hours. One reference check from a recent event reported a late start."
+            }
+          ]
+        },
+        "B3": {
+          "profileId": "B3",
+          "reportTitle": "Contract & Fees Report",
+          "content": [
+            {
+              "id": "B3-E1",
+              "optionId": "B-OPT1",
+              "text": "Silver Fork Catering's $85 quote excludes an 8% service fee and an 18% mandatory gratuity added afterward, plus a $500 travel surcharge because Bright Path's venue is outside their home service district."
+            },
+            {
+              "id": "B3-E2",
+              "optionId": "B-OPT2",
+              "text": "Meridian Table's $95 quote is fully inclusive of service fee and gratuity, with no travel surcharge regardless of venue location."
+            },
+            {
+              "id": "B3-E3",
+              "optionId": "B-OPT3",
+              "text": "Harborlight Catering's $90 quote excludes a 10% service fee; gratuity is optional and not required. There is no travel surcharge."
+            }
+          ]
+        }
+      }
+    }
+  },
+  "profileAssignment": {
+    "schemeId": "cyclic-3-v1",
+    "byParticipantSlot": {
+      "Green": {
+        "A": "A1",
+        "B": "B2"
+      },
+      "Blue": {
+        "A": "A2",
+        "B": "B3"
+      },
+      "Pink": {
+        "A": "A3",
+        "B": "B1"
+      }
+    }
+  }
 }
