@@ -24,12 +24,6 @@ factors:
     values:
       - value: true
 
-  - name: taskVersion
-    desc: Which task/task materials this game uses (see server/src/TaskRegistry.js)
-    values:
-      - value: task1
-      - value: task2
-
 treatments:
   - name: main
     factors:
