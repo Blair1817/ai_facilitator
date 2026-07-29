@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Callbacks Debug UI</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: monospace; background: #1a1a1a; color: #e0e0e0; padding: 16px; font-size: 13px; }
+    h2 { color: #7eb8f7; margin-bottom: 12px; }
+    .top-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+    select, input[type=number] {
+      background: #333; border: 1px solid #555; color: #e0e0e0;
+      padding: 4px 8px; border-radius: 4px; font-family: monospace; font-size: 12px;
+    }
+    button {
+      cursor: pointer; background: #3a5a3a; border: 1px solid #5a8a5a;
+      color: #e0e0e0; padding: 4px 10px; border-radius: 4px; font-family: monospace; font-size: 12px;
+    }
+    button:hover { background: #4a7a4a; }
+    button.danger { background: #5a3a3a; border-color: #8a5a5a; }
+    button.action { background: #3a4a6a; border-color: #5a7aaa; }
+    label { color: #aaa; font-size: 12px; }
+    .status { font-size: 11px; padding: 3px 8px; border-radius: 4px; }
+    .status.ok { background: #2a4a2a; color: #a0e0a0; }
+    .status.err { background: #4a2a2a; color: #e0a0a0; }
+
+    .main-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+    .bottom-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    .panel { background: #2a2a2a; border-radius: 6px; padding: 12px; }
+    .panel h3 { color: #a0c4a0; margin-bottom: 8px; font-size: 11px;
+                text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #444; padding-bottom: 4px; }
+
+    /* Chat */
+    #chat { height: 260px; overflow-y: auto; border: 1px solid #444;
+            padding: 8px; border-radius: 4px; margin-bottom: 8px; background: #1e1e1e; }
+    .msg { margin-bottom: 4px; }
+    .msg .sender { color: #7eb8f7; }
+    .msg.ai-msg .sender { color: #f7a07e; }
+    .msg .meta { color: #555; font-size: 10px; margin-left: 4px; }
+    .input-row { display: flex; gap: 6px; margin-bottom: 6px; }
+    .input-row input { flex: 1; background: #333; border: 1px solid #555;
+                       color: #e0e0e0; padding: 4px 8px; border-radius: 4px;
+                       font-family: monospace; font-size: 12px; }
+    .preset-row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    .cooldown-bar { height: 4px; background: #444; border-radius: 2px; margin-bottom: 6px; }
+    .cooldown-fill { height: 4px; border-radius: 2px; background: #5a8a5a; transition: width 0.3s; }
+    .cooldown-label { font-size: 10px; color: #666; margin-bottom: 4px; }
+
+    /* Features */
+    .feature-row { display: flex; align-items: center; margin-bottom: 5px; gap: 6px; }
+    .feature-name { color: #aaa; width: 90px; flex-shrink: 0; }
+    .bar-wrap { flex: 1; background: #444; border-radius: 3px; height: 12px; }
+    .bar { height: 12px; border-radius: 3px; background: #5a8a5a; transition: width 0.3s; }
+    .val { width: 38px; text-align: right; color: #7eb8f7; flex-shrink: 0; }
+    .threshold-line { position: relative; }
+
+    /* Role */
+    #role-badge { font-size: 20px; font-weight: bold; padding: 8px 0 4px; }
+    .role-silent     { color: #666; }
+    .role-expander   { color: #7eb8f7; }
+    .role-challenger { color: #f7a07e; }
+    .role-synthesiser{ color: #c4a0e0; }
+    .role-facilitator{ color: #a0e0a0; }
+    .score-row { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px; }
+    .score-name { color: #aaa; }
+    .score-val { color: #e0e0e0; }
+    .score-eligible { color: #a0e0a0; }
+    #role-reason { font-size: 11px; color: #888; margin-top: 6px; line-height: 1.5; }
+
+    /* Prompt */
+    #prompt-display { height: 300px; overflow-y: auto; background: #1e1e1e;
+                      border: 1px solid #444; border-radius: 4px; padding: 8px; }
+    .prompt-section { margin-bottom: 10px; }
+    .prompt-label { color: #f7a07e; font-size: 10px; text-transform: uppercase;
+                    letter-spacing: 1px; margin-bottom: 4px; }
+    .prompt-content { color: #ccc; font-size: 11px; line-height: 1.5;
+                      white-space: pre-wrap; background: #252525;
+                      padding: 6px; border-radius: 3px; border-left: 2px solid #555; }
+
+    /* Data log */
+    #data-log { height: 260px; overflow-y: auto; background: #1e1e1e;
+                border: 1px solid #444; border-radius: 4px; padding: 8px; }
+    .log-entry { border-bottom: 1px solid #2a2a2a; padding: 6px 0; font-size: 11px; }
+    .log-field { display: flex; gap: 8px; margin-bottom: 2px; }
+    .log-key { color: #7eb8f7; width: 160px; flex-shrink: 0; }
+    .log-val { color: #ccc; word-break: break-all; }
+    .log-val.highlight { color: #a0e0a0; font-weight: bold; }
+    .log-val.warn { color: #f7a07e; }
+    .log-val.err { color: #e07070; }
+    .log-ts { color: #555; font-size: 10px; margin-bottom: 4px; }
+    .log-section { color: #888; font-size: 10px; text-transform: uppercase;
+                   letter-spacing: 1px; margin: 4px 0 2px; }
+  </style>
+</head>
+<body>
+
+<h2>Callbacks Debug UI</h2>
+
+<div class="top-controls">
+  <label>Facilitation:</label>
+  <select id="facilitation">
+    <option value="adaptive">Adaptive</option>
+    <option value="static">Static</option>
+  </select>
+
+  <label>Remaining (s):</label>
+  <input type="number" id="remaining" value="300" style="width:70px">
+
+  <label>Last role:</label>
+  <select id="lastRole">
+    <option value="">none</option>
+    <option value="expander">expander</option>
+    <option value="challenger">challenger</option>
+    <option value="synthesiser">synthesiser</option>
+    <option value="facilitator">facilitator</option>
+  </select>
+
+  <label><input type="checkbox" id="synthFired"> synthesiserFired</label>
+
+  <button onclick="checkHealth()">Check server</button>
+  <span id="healthStatus" class="status">unknown</span>
+</div>
+
+<div class="main-grid">
+
+  <!-- Col 1: Chat -->
+  <div class="panel">
+    <h3>Chat
+      <span style="float:right; color:#555; font-weight:normal; text-transform:none; letter-spacing:0;">
+        msgs: <span id="msg-count">0</span> |
+        since last: <span id="since-count">0</span>/6
+      </span>
+    </h3>
+    <div class="cooldown-label">Cooldown: <span id="cooldown-text">ready</span></div>
+    <div class="cooldown-bar"><div class="cooldown-fill" id="cooldown-fill" style="width:100%"></div></div>
+    <div id="chat"></div>
+    <div class="input-row">
+      <select id="sender">
+        <option>Red</option>
+        <option>Pink</option>
+        <option>Green</option>
+      </select>
+      <input id="msgInput" placeholder="Type a message..."
+             onkeydown="if(event.key==='Enter')sendMessage()">
+      <button onclick="sendMessage()">Send</button>
+    </div>
+    <div class="preset-row">
+      <button class="action" onclick="loadPreset('challenger')">Challenger</button>
+      <button class="action" onclick="loadPreset('expander')">Expander</button>
+      <button class="action" onclick="loadPreset('facilitator')">Facilitator</button>
+      <button class="action" onclick="loadPreset('productive')">Productive</button>
+      <button class="danger" onclick="clearAll()">Clear</button>
+    </div>
+  </div>
+
+  <!-- Col 2: Features + Role -->
+  <div class="panel">
+    <h3>Feature Scores <span style="float:right;color:#555;font-weight:normal;text-transform:none;letter-spacing:0;" id="feat-latency"></span></h3>
+    <div id="features">
+      <div style="color:#555;">Send 6+ messages to compute features</div>
+    </div>
+
+    <h3 style="margin-top:14px;">Role Selection</h3>
+    <div id="role-badge" class="role-silent">—</div>
+    <div id="state-scores"></div>
+    <div id="role-reason"></div>
+  </div>
+
+  <!-- Col 3: LLM Prompt Preview -->
+  <div class="panel">
+    <h3>LLM Prompt Preview</h3>
+    <div id="prompt-display">
+      <div style="color:#555;">Run detection to see prompt</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="bottom-grid">
+
+  <!-- Data Log -->
+  <div class="panel">
+    <h3>Data Log
+      <button class="danger" onclick="clearLog()"
+              style="float:right;font-size:10px;padding:2px 6px;">Clear</button>
+    </h3>
+    <div id="data-log"></div>
+  </div>
+
+  <!-- Raw JSON -->
+  <div class="panel">
+    <h3>Raw Log Entry (latest)</h3>
+    <div id="raw-json" style="height:260px;overflow-y:auto;background:#1e1e1e;
+         border:1px solid #444;border-radius:4px;padding:8px;
+         font-size:11px;color:#aaa;white-space:pre-wrap;"></div>
+  </div>
+
+</div>
+
+<script>
+// ── THRESHOLDS ────────────────────────────────────────────────────────────────
+const THRESHOLDS = {
+  expander:    { expander_threshold: 0.35, redundancy_threshold: 0.85 },
+  challenger:  { agreement_weight: 0.5, justification_weight: 0.5, threshold: 0.6 },
+  synthesiser: { agreement_weight: 0.5, justification_weight: 0.5, threshold: 0.6, forced_trigger_seconds: 20 },
+  facilitator: { gini_threshold: 0.5 },
+};
+const ROLE_PRIORITY = ["facilitator", "challenger", "expander", "synthesiser"];
+const COOLDOWN = 6;
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let messages = [];
+let logEntries = [];
+let messagesSinceLastIntervention = 0;
+let totalInterventions = 0;
+let msgIdCounter = 0;
+
+// ── Presets ───────────────────────────────────────────────────────────────────
+const PRESETS = {
+  challenger: [
+    ["Red","Yeah I agree Eldoron is the best"],
+    ["Pink","Exactly makes sense to me"],
+    ["Green","Yes definitely Eldoron"],
+    ["Red","Absolutely agreed"],
+    ["Pink","Same here"],
+    ["Green","I agree too"],
+  ],
+  expander: [
+    ["Red","Eldoron is the best choice for the event"],
+    ["Pink","Yes Eldoron is definitely the best choice"],
+    ["Green","Eldoron is the best choice I agree completely"],
+    ["Red","I think Eldoron is clearly the best option"],
+    ["Pink","Eldoron is obviously the best choice we have"],
+    ["Green","Yes Eldoron is the best"],
+  ],
+  facilitator: [
+    ["Red","I think Eldoron is best because of its transport links and weather"],
+    ["Red","Also Eldoron has great sports facilities and welcoming residents"],
+    ["Red","Furthermore Eldoron is a top tourist destination"],
+    ["Red","And the infrastructure is excellent for large scale events"],
+    ["Pink","Ok"],
+    ["Green","Yes"],
+  ],
+  productive: [
+    ["Red","The transportation infrastructure in Eldoron is excellent because of the rail links"],
+    ["Pink","However Myloria has stronger volunteer support according to the local council data"],
+    ["Green","Cragnio benefits from a dry season which means fewer weather cancellation risks"],
+    ["Red","Based on the budget constraints Eldoron may require less facility repurposing"],
+    ["Pink","Since Myloria has supportive local businesses the economic impact would be higher"],
+    ["Green","Therefore we should weigh the long term legacy benefits against short term costs"],
+  ],
+};
+
+// ── Pure functions ────────────────────────────────────────────────────────────
+function computeGini(values) {
+  if (!values.length || values.reduce((a,b)=>a+b,0)===0) return 0;
+  const sorted = [...values].sort((a,b)=>a-b);
+  const n = sorted.length;
+  const cumsum = sorted.reduce((acc,v,i)=>acc+(2*(i+1)-n-1)*v,0);
+  return cumsum/(n*sorted.reduce((a,b)=>a+b,0));
+}
+
+function computeStateScores(f) {
+  return {
+    expander:    0.6*(1-f.novelty_score)+0.4*f.redundancy_score,
+    challenger:  THRESHOLDS.challenger.agreement_weight*f.agreement_score +
+                 THRESHOLDS.challenger.justification_weight*(1-f.justification_score),
+    synthesiser: THRESHOLDS.synthesiser.agreement_weight*f.agreement_score +
+                 THRESHOLDS.synthesiser.justification_weight*f.justification_score,
+    facilitator: f.gini_score,
+  };
+}
+
+function selectRole(features, remainingMs, lastRole, synthFired) {
+  if (remainingMs <= THRESHOLDS.synthesiser.forced_trigger_seconds*1000 && !synthFired)
+    return { role:"synthesiser", forced:true, scores:null, eligibleRoles:["synthesiser"], reason:"Forced: last 20s" };
+
+  const scores = computeStateScores(features);
+  const eligible = {};
+  if (scores.expander    >= THRESHOLDS.expander.expander_threshold)   eligible.expander    = scores.expander;
+  if (scores.challenger  >= THRESHOLDS.challenger.threshold)           eligible.challenger  = scores.challenger;
+  if (scores.synthesiser >= THRESHOLDS.synthesiser.threshold)          eligible.synthesiser = scores.synthesiser;
+  if (scores.facilitator >= THRESHOLDS.facilitator.gini_threshold)     eligible.facilitator = scores.facilitator;
+
+  if (!Object.keys(eligible).length)
+    return { role:"silent", forced:false, scores, eligibleRoles:[], reason:"No role exceeded threshold" };
+
+  for (const role of ROLE_PRIORITY)
+    if (eligible[role] && role !== lastRole)
+      return { role, forced:false, scores, eligibleRoles:Object.keys(eligible),
+               reason:`Priority: ${ROLE_PRIORITY.join(" > ")}` };
+
+  for (const role of ROLE_PRIORITY)
+    if (eligible[role])
+      return { role, forced:false, scores, eligibleRoles:Object.keys(eligible),
+               reason:`All eligible = lastRole (${lastRole}), picked anyway` };
+
+  return { role:"silent", forced:false, scores, eligibleRoles:[], reason:"Fallback silent" };
+}
+
+function buildPromptPreview(features, result, remaining, elapsed) {
+  const facilitation = document.getElementById("facilitation").value;
+  const localMsgs = messages.slice(-6).map(m=>`[${m.sender}]: ${m.text}`).join("\n");
+  const allMsgs   = messages.map(m=>`[${m.sender}]: ${m.text}`).join("\n");
+
+  const systemPrompt = facilitation === "adaptive"
+    ? `[SYSTEM PROMPT — ${result.role.toUpperCase()} ROLE]
+You are an adaptive AI facilitator in a group decision-making discussion.
+Current role: ${result.role}
+
+${result.role === "expander"    ? "Your goal: Introduce new perspectives. The discussion seems repetitive. Ask an open question that broadens the scope." : ""}
+${result.role === "challenger"  ? "Your goal: Challenge the emerging consensus. Agreement has formed without sufficient justification. Ask for evidence or counterarguments." : ""}
+${result.role === "synthesiser" ? "Your goal: Synthesise the discussion. Help the group integrate what has been shared and move toward a decision." : ""}
+${result.role === "facilitator" ? "Your goal: Re-balance participation. Invite the quieter participant to share their perspective." : ""}
+${result.role === "silent"      ? "No intervention needed. Remain silent." : ""}
+
+Constraints:
+- Max 50 words
+- Use question form only
+- Do not recommend a final answer
+- Do not reveal private information
+- Do not repeat recent interventions
+
+Output JSON: { "DECISION": "INTERVENE" | "SILENT", "MESSAGE": "..." }`
+    : `[SYSTEM PROMPT — STATIC FACILITATOR]
+You are a general AI facilitator in a group decision-making discussion.
+Your goal: Support balanced, evidence-based discussion.
+
+Constraints:
+- Max 50 words
+- Use question form only
+- Do not recommend a final answer
+
+Output JSON: { "DECISION": "INTERVENE" | "SILENT", "MESSAGE": "..." }`;
+
+  const mins = Math.floor(remaining/60000);
+  const secs = Math.floor((remaining%60000)/1000);
+
+  const userPrompt = `[TIME REMAINING: ${mins} mins, ${secs} seconds]
+[TIME ELAPSED: ${Math.floor(elapsed/60000)} mins, ${Math.floor((elapsed%60000)/1000)} seconds]
+[PARTICIPANTS: Red, Pink, Green]
+
+[Full discussion so far]
+${allMsgs}
+
+[Last 6 human messages]
+${localMsgs}${facilitation === "adaptive" && result.role !== "silent" ? `
+
+[Detected state: ${result.role}]
+[Feature scores: ${JSON.stringify(features, null, 2)}]` : ""}`;
+
+  return { systemPrompt, userPrompt };
+}
+
+// ── Feature server ────────────────────────────────────────────────────────────
+async function checkHealth() {
+  try {
+    const r = await fetch("http://localhost:5001/health");
+    const d = await r.json();
+    setHealth(d.status==="ok", `✓ model: ${d.model}`);
+  } catch(e) {
+    setHealth(false, "✗ unreachable");
+  }
+}
+
+function setHealth(ok, msg) {
+  const el = document.getElementById("healthStatus");
+  el.className = `status ${ok?"ok":"err"}`;
+  el.textContent = msg;
+}
+
+async function getFeatures(msgs) {
+  const r = await fetch("http://localhost:5001/features", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({
+      messages: msgs.map(m=>({ sender:m.sender, text:m.text })),
+      redundancy_threshold: THRESHOLDS.expander.redundancy_threshold
+    })
+  });
+  return r.json();
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function renderChat() {
+  const el = document.getElementById("chat");
+  el.innerHTML = messages.map((m,i)=>`
+    <div class="msg ${m.sender==="AI"?"ai-msg":""}">
+      <span class="sender">[${m.sender}]</span>
+      ${m.text}
+      <span class="meta">#${m.id} ${m.ts}</span>
+    </div>`).join("");
+  el.scrollTop = el.scrollHeight;
+  document.getElementById("msg-count").textContent = messages.length;
+}
+
+function renderCooldown() {
+  const since = messagesSinceLastIntervention;
+  const pct = Math.min(since / COOLDOWN, 1) * 100;
+  document.getElementById("cooldown-fill").style.width = pct + "%";
+  document.getElementById("since-count").textContent = since;
+  if (since >= COOLDOWN) {
+    document.getElementById("cooldown-text").textContent = "ready ✓";
+    document.getElementById("cooldown-fill").style.background = "#5a8a5a";
+  } else {
+    document.getElementById("cooldown-text").textContent = `waiting (${since}/${COOLDOWN})`;
+    document.getElementById("cooldown-fill").style.background = "#8a6a3a";
+  }
+}
+
+function renderFeatures(f) {
+  const fields = [
+    ["gini",         "gini_score"],
+    ["novelty",      "novelty_score"],
+    ["redundancy",   "redundancy_score"],
+    ["agreement",    "agreement_score"],
+    ["justification","justification_score"],
+  ];
+  document.getElementById("features").innerHTML = fields.map(([label, key])=>`
+    <div class="feature-row">
+      <span class="feature-name">${label}</span>
+      <div class="bar-wrap">
+        <div class="bar" style="width:${Math.round((f[key]||0)*100)}%"></div>
+      </div>
+      <span class="val">${(f[key]||0).toFixed(3)}</span>
+    </div>`).join("");
+}
+
+function renderRole(result) {
+  const badge = document.getElementById("role-badge");
+  badge.textContent = result.forced ? `${result.role} ★ FORCED` : result.role;
+  badge.className = `role-${result.role}`;
+
+  if (result.scores) {
+    document.getElementById("state-scores").innerHTML =
+      Object.entries(result.scores).map(([k,v])=>{
+        const isEligible = result.eligibleRoles.includes(k);
+        return `<div class="score-row">
+          <span class="score-name">${k}</span>
+          <span class="${isEligible?"score-eligible":"score-val"}">${v.toFixed(3)}${isEligible?" ✓":""}</span>
+        </div>`;
+      }).join("");
+  } else {
+    document.getElementById("state-scores").innerHTML = "";
+  }
+
+  document.getElementById("role-reason").innerHTML = `
+    <div>eligible: [${result.eligibleRoles.join(", ")||"none"}]</div>
+    <div>reason: ${result.reason}</div>
+    <div>interventions total: ${totalInterventions}</div>`;
+}
+
+function renderPrompt(systemPrompt, userPrompt) {
+  document.getElementById("prompt-display").innerHTML = `
+    <div class="prompt-section">
+      <div class="prompt-label">System Prompt</div>
+      <div class="prompt-content">${escHtml(systemPrompt)}</div>
+    </div>
+    <div class="prompt-section">
+      <div class="prompt-label">User Prompt</div>
+      <div class="prompt-content">${escHtml(userPrompt)}</div>
+    </div>`;
+}
+
+function renderDataLog(entry) {
+  const el = document.getElementById("data-log");
+  const roleColor = {
+    expander:"#7eb8f7", challenger:"#f7a07e",
+    synthesiser:"#c4a0e0", facilitator:"#a0e0a0", silent:"#666"
+  }[entry.selectedRole] || "#e0e0e0";
+
+  const html = `<div class="log-entry">
+    <div class="log-ts">${new Date(entry.timestamp).toLocaleTimeString()}</div>
+
+    <div class="log-section">── Message Processing ──</div>
+    <div class="log-field"><span class="log-key">humanMessageCount</span>
+      <span class="log-val">${entry.humanMessageCount}</span></div>
+    <div class="log-field"><span class="log-key">messagesSinceLast</span>
+      <span class="log-val ${entry.cooldownActive?"warn":""}">${entry.messagesSinceLast} ${entry.cooldownActive?"(cooldown)":""}</span></div>
+    <div class="log-field"><span class="log-key">contextWindow</span>
+      <span class="log-val">last ${entry.localCount} human msgs</span></div>
+    <div class="log-field"><span class="log-key">cumulativeContext</span>
+      <span class="log-val">all ${entry.cumulativeCount} human msgs</span></div>
+    <div class="log-field"><span class="log-key">remainingTime</span>
+      <span class="log-val">${Math.round(entry.remainingTime/1000)}s</span></div>
+
+    <div class="log-section">── Feature Scores ──</div>
+    <div class="log-field"><span class="log-key">gini_score</span>
+      <span class="log-val">${entry.features?.gini_score?.toFixed(4) ?? "—"}</span></div>
+    <div class="log-field"><span class="log-key">novelty_score</span>
+      <span class="log-val">${entry.features?.novelty_score?.toFixed(4) ?? "—"}</span></div>
+    <div class="log-field"><span class="log-key">redundancy_score</span>
+      <span class="log-val">${entry.features?.redundancy_score?.toFixed(4) ?? "—"}</span></div>
+    <div class="log-field"><span class="log-key">agreement_score</span>
+      <span class="log-val">${entry.features?.agreement_score?.toFixed(4) ?? "—"}</span></div>
+    <div class="log-field"><span class="log-key">justification_score</span>
+      <span class="log-val">${entry.features?.justification_score?.toFixed(4) ?? "—"}</span></div>
+    <div class="log-field"><span class="log-key">featureLatency</span>
+      <span class="log-val">${entry.featureLatency ?? "—"}ms</span></div>
+
+    <div class="log-section">── Controller Decision ──</div>
+    <div class="log-field"><span class="log-key">selectedRole</span>
+      <span class="log-val highlight" style="color:${roleColor}">${entry.selectedRole}</span></div>
+    <div class="log-field"><span class="log-key">eligibleRoles</span>
+      <span class="log-val">[${entry.eligibleRoles?.join(", ")||"none"}]</span></div>
+    <div class="log-field"><span class="log-key">forced</span>
+      <span class="log-val ${entry.forced?"warn":""}">${entry.forced}</span></div>
+    <div class="log-field"><span class="log-key">reason</span>
+      <span class="log-val">${entry.reason}</span></div>
+    <div class="log-field"><span class="log-key">totalInterventions</span>
+      <span class="log-val">${entry.totalInterventions}</span></div>
+
+    ${entry.error ? `<div class="log-section">── Error ──</div>
+    <div class="log-field"><span class="log-key">error</span>
+      <span class="log-val err">${entry.error}</span></div>` : ""}
+  </div>`;
+
+  el.innerHTML = html + el.innerHTML;
+
+  // Raw JSON
+  document.getElementById("raw-json").textContent =
+    JSON.stringify(entry, null, 2);
+}
+
+function escHtml(str) {
+  return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+// ── Main logic ────────────────────────────────────────────────────────────────
+function sendMessage() {
+  const input  = document.getElementById("msgInput");
+  const sender = document.getElementById("sender").value;
+  const text   = input.value.trim();
+  if (!text) return;
+
+  msgIdCounter++;
+  const ts = new Date().toLocaleTimeString();
+  messages.push({ sender, text, id: msgIdCounter, ts, seq: messages.length + 1 });
+  messagesSinceLastIntervention++;
+  input.value = "";
+
+  renderChat();
+  renderCooldown();
+
+  if (messages.length >= 6 && messagesSinceLastIntervention >= COOLDOWN) {
+    runDetection();
+  }
+}
+
+function loadPreset(name) {
+  messages = PRESETS[name].map(([sender, text], i) => ({
+    sender, text,
+    id: ++msgIdCounter,
+    ts: new Date().toLocaleTimeString(),
+    seq: i + 1
+  }));
+  messagesSinceLastIntervention = COOLDOWN; // preset starts ready
+  renderChat();
+  renderCooldown();
+  runDetection();
+}
+
+function clearAll() {
+  messages = [];
+  logEntries = [];
+  messagesSinceLastIntervention = 0;
+  totalInterventions = 0;
+  renderChat();
+  renderCooldown();
+  document.getElementById("features").innerHTML =
+    '<div style="color:#555;">Send 6+ messages to compute features</div>';
+  document.getElementById("role-badge").textContent = "—";
+  document.getElementById("role-badge").className = "role-silent";
+  document.getElementById("state-scores").innerHTML = "";
+  document.getElementById("role-reason").innerHTML = "";
+  document.getElementById("prompt-display").innerHTML =
+    '<div style="color:#555;">Run detection to see prompt</div>';
+  document.getElementById("data-log").innerHTML = "";
+  document.getElementById("raw-json").textContent = "";
+}
+
+function clearLog() {
+  document.getElementById("data-log").innerHTML = "";
+  document.getElementById("raw-json").textContent = "";
+}
+
+async function runDetection() {
+  const remaining  = parseInt(document.getElementById("remaining").value) * 1000;
+  const elapsed    = (600 - parseInt(document.getElementById("remaining").value)) * 1000;
+  const lastRole   = document.getElementById("lastRole").value || null;
+  const synthFired = document.getElementById("synthFired").checked;
+  const facilitation = document.getElementById("facilitation").value;
+  const local      = messages.slice(-6);
+  const cumulative = messages;
+
+  const entry = {
+    timestamp:        Date.now(),
+    humanMessageCount: messages.length,
+    messagesSinceLast: messagesSinceLastIntervention,
+    cooldownActive:   messagesSinceLastIntervention < COOLDOWN,
+    localCount:       local.length,
+    cumulativeCount:  cumulative.length,
+    remainingTime:    remaining,
+    facilitation,
+    features:         null,
+    featureLatency:   null,
+    selectedRole:     "silent",
+    eligibleRoles:    [],
+    stateScores:      null,
+    forced:           false,
+    reason:           "",
+    totalInterventions,
+    error:            null,
+  };
+
+  try {
+    const featureStart = Date.now();
+    const features = await getFeatures(local);
+    entry.featureLatency = Date.now() - featureStart;
+    entry.features = features;
+
+    renderFeatures(features);
+    document.getElementById("feat-latency").textContent = `${entry.featureLatency}ms`;
+
+    const result = selectRole(features, remaining, lastRole, synthFired);
+    entry.selectedRole  = result.role;
+    entry.eligibleRoles = result.eligibleRoles;
+    entry.stateScores   = result.scores;
+    entry.forced        = result.forced;
+    entry.reason        = result.reason;
+
+    renderRole(result);
+
+    // Build and render prompt preview
+    const { systemPrompt, userPrompt } = buildPromptPreview(features, result, remaining, elapsed);
+    renderPrompt(systemPrompt, userPrompt);
+
+    // Update intervention count if role is not silent
+    if (result.role !== "silent") {
+      totalInterventions++;
+      entry.totalInterventions = totalInterventions;
+      messagesSinceLastIntervention = 0;
+      renderCooldown();
+      // Update lastRole dropdown
+      document.getElementById("lastRole").value = result.role;
+    }
+
+  } catch(e) {
+    entry.error = e.message;
+    setHealth(false, `✗ ${e.message}`);
+  }
+
+  renderDataLog(entry);
+}
+
+// Controls change → re-run if enough messages
+["remaining","lastRole","synthFired","facilitation"].forEach(id => {
+  document.getElementById(id).addEventListener("change", () => {
+    if (messages.length >= 6) runDetection();
+  });
+});
+
+checkHealth();
+</script>
+</body>
+</html>
