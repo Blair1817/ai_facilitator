@@ -1,54 +1,43 @@
 // Static/config-level integration tests: verify the real connection between
-// the counterbalancing sequence table (server/src/Counterbalancing.mjs) and
-// server/src/callbacks.js's real LLM-dispatch gate, without executing
-// callbacks.js itself (it registers real Empirica listeners and imports
-// dotenv/fetch on load, which would need heavy mocking to run safely) and
-// without any network request or real LLM call.
+// callbacks.js's own inline S1-S4 sequence table and its real LLM-dispatch
+// gate, without executing callbacks.js itself (it registers real Empirica
+// listeners and imports dotenv/fetch on load, which would need heavy
+// mocking to run safely) and without any network request or real LLM call.
 //
 // These are deliberately *static* checks (reading source as text and
-// asserting structure, plus pure computation over the real, imported
-// SEQUENCES table) -- not a full runtime harness.
+// asserting structure) -- not a full runtime harness.
 //
-// ── Gate 3 (obsolete-contract correction) ──────────────────────────────────
-// This file previously asserted a TREATMENT-LEVEL facilitation design:
-//   - .empirica/treatments.yaml declares a "facilitation" factor
-//     (none/static/adaptive);
-//   - callbacks.js imports and gates dispatch through
-//     ConditionRouting.mjs's resolveFacilitationDispatch(facilitation),
-//     fed by `game.get("treatment").facilitation`.
-// Both premises are now FALSE, verified fresh against the current repo
-// state (not assumed):
-//   - .empirica/treatments.yaml's one treatment ("main") declares no
-//     "facilitation" factor at all -- confirmed by reading the file (only
-//     playerCount/gameDuration/phase1Duration/introDuration/hiddenInfoCue
-//     remain).
-//   - callbacks.js:398 reads `const facilitation =
-//     currentRound?.get("facilitation")` -- i.e. per-Round, sourced from
-//     the counterbalancing sequence assignment (StudyCounterbalanceStore.mjs
-//     -> Counterbalancing.mjs's applyRoundAssignment), never from
-//     `game.get("treatment")`.
-//   - callbacks.js does its own direct `facilitation === "static"` /
-//     `facilitation === "adaptive"` dispatch (handleChat, callbacks.js
-//     :442,472) -- ConditionRouting.mjs's resolveFacilitationDispatch is
-//     not imported by callbacks.js at all (grepped the whole src/ tree:
-//     only test files import it).
-// This is the CURRENT, correct, within-group design (Static vs Adaptive
-// assigned per-Round via the counterbalanced sequence, not once per Game at
-// treatment level) -- per this task's explicit instruction, production
-// routing is NOT changed back to treatment-level to satisfy the old
-// contract. This file is rewritten to validate the real, current contract
-// instead. ConditionRouting.mjs itself is left in place (see its own
-// updated header comment) as an unused, orphaned module from the earlier
-// treatment-level design -- nothing in production imports it, so it is not
-// a live routing bug, and rewiring it into callbacks.js's real dispatch
-// path is out of Prompt 3A's scope (would be a Static/Adaptive execution
-// logic change, explicitly excluded).
+// ── Counterbalancing.mjs removal (cleanup) ──────────────────────────────────
+// This file previously imported SEQUENCE_IDS/SEQUENCES/buildRoundAssignments
+// from server/src/Counterbalancing.mjs to cross-check that module's sequence
+// table against callbacks.js's dispatch behavior. Counterbalancing.mjs has
+// been deleted: it was never imported by any production code (confirmed via
+// `rg "Counterbalancing.mjs"` across the whole tree before deletion -- only
+// this file and Counterbalancing.test.mjs referenced it), because
+// callbacks.js already performs its own S1-S4 randomized-block allocation
+// inline (`SEQUENCES`, `SEQUENCE_IDS`, `claimNextSequence()` in
+// callbacks.js). Full behavioral coverage of that real, live sequence table
+// and allocator lives in Counterbalancing.test.mjs (a faithful reproduction
+// of callbacks.js's actual algorithm, plus structural checks against
+// callbacks.js's real source) -- not duplicated here a second time. This
+// file keeps only its own original, distinct concern: Round-level
+// facilitation dispatch never coming from `game.get("treatment")`.
+//
+// ── Gate 3 (obsolete-contract correction, still valid) ──────────────────────
+// This file previously asserted a TREATMENT-LEVEL facilitation design
+// (.empirica/treatments.yaml declaring a "facilitation" factor, callbacks.js
+// gating through ConditionRouting.mjs's resolveFacilitationDispatch). Both
+// premises are false: callbacks.js reads `const facilitation =
+// currentRound?.get("facilitation")` -- per-Round, sourced from the Round's
+// own facilitation field (set in onGameStart from the sequence table),
+// never from `game.get("treatment")`. ConditionRouting.mjs itself is left in
+// place as an unused, orphaned module from the earlier treatment-level
+// design -- nothing in production imports it.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { SEQUENCE_IDS, SEQUENCES, buildRoundAssignments } from "./Counterbalancing.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const treatmentsPath = path.join(__dirname, "../../.empirica/treatments.yaml");
@@ -131,80 +120,44 @@ test("callbacks.js: handleChat bails out before any dispatch if the current Roun
 });
 
 // ── Round-level facilitation regression coverage (Gate 3) ──────────────────
-// Verified directly against the real, imported SEQUENCES table -- the exact
-// data StudyCounterbalanceStore.mjs's setUpCounterbalancedGame() writes onto
-// each Round via applyRoundAssignment(), and the exact data callbacks.js's
-// handleChat reads back via currentRound.get("facilitation").
+// Structural checks against callbacks.js's own real, live SEQUENCES table
+// (the single source of truth -- no second copy of the S1-S4 mapping is
+// maintained in this file). Full behavioral coverage of the actual mapping
+// values and the allocator's runtime behavior lives in
+// Counterbalancing.test.mjs.
 
-test("every sequence (S1-S4) assigns Round facilitation from exactly {static, adaptive} -- never treatment-level 'none' or any other value", () => {
-  for (const sequenceId of SEQUENCE_IDS) {
-    const { round1, round2 } = SEQUENCES[sequenceId];
-    assert.ok(["static", "adaptive"].includes(round1.facilitation), `${sequenceId} round1.facilitation must be static or adaptive, got ${round1.facilitation}`);
-    assert.ok(["static", "adaptive"].includes(round2.facilitation), `${sequenceId} round2.facilitation must be static or adaptive, got ${round2.facilitation}`);
+test("callbacks.js's SEQUENCES table only ever assigns 'static'/'adaptive' facilitation -- never treatment-level 'none' or any other value", () => {
+  const sequencesBlockStart = callbacksSource.indexOf("const SEQUENCES = {");
+  const sequencesBlockEnd = callbacksSource.indexOf("const SEQUENCE_IDS", sequencesBlockStart);
+  const sequencesBlock = callbacksSource.slice(sequencesBlockStart, sequencesBlockEnd);
+  const facilitationValues = [...sequencesBlock.matchAll(/facilitationOrder:\s*\[([^\]]+)\]/g)]
+    .flatMap((m) => m[1].split(",").map((v) => v.trim().replace(/["']/g, "")));
+  assert.ok(facilitationValues.length > 0, "expected to find facilitationOrder entries in callbacks.js's SEQUENCES table");
+  for (const value of facilitationValues) {
+    assert.ok(["static", "adaptive"].includes(value), `unexpected facilitation value "${value}" in callbacks.js's SEQUENCES table`);
   }
 });
 
-test("a Static Round routes to Static (never Adaptive) and an Adaptive Round routes to Adaptive (never Static) for all four sequences", () => {
-  for (const sequenceId of SEQUENCE_IDS) {
-    const { round1, round2 } = buildRoundAssignments(sequenceId);
-    for (const round of [round1, round2]) {
-      const routesStatic = round.facilitation === "static";
-      const routesAdaptive = round.facilitation === "adaptive";
-      assert.notEqual(routesStatic, routesAdaptive, `${sequenceId} Round with facilitation=${round.facilitation} must route to exactly one of Static/Adaptive, never both or neither`);
-    }
+test("callbacks.js's SEQUENCES table defines exactly S1-S4, each with one static and one adaptive Round (never both or neither)", () => {
+  const sequencesBlockStart = callbacksSource.indexOf("const SEQUENCES = {");
+  const sequencesBlockEnd = callbacksSource.indexOf("const SEQUENCE_IDS", sequencesBlockStart);
+  const sequencesBlock = callbacksSource.slice(sequencesBlockStart, sequencesBlockEnd);
+  const sequenceKeys = [...sequencesBlock.matchAll(/^\s{2}(S\d):\s*\{/gm)].map((m) => m[1]);
+  assert.deepEqual(sequenceKeys.sort(), ["S1", "S2", "S3", "S4"]);
+
+  const perSequenceOrders = [...sequencesBlock.matchAll(/facilitationOrder:\s*\[([^\]]+)\]/g)]
+    .map((m) => m[1].split(",").map((v) => v.trim().replace(/["']/g, "")));
+  assert.equal(perSequenceOrders.length, 4);
+  for (const order of perSequenceOrders) {
+    assert.deepEqual([...order].sort(), ["adaptive", "static"], `expected exactly one static + one adaptive Round, got ${JSON.stringify(order)}`);
   }
 });
 
-test("every sequence's Game contains exactly one Static Round and exactly one Adaptive Round (never two of the same)", () => {
-  for (const sequenceId of SEQUENCE_IDS) {
-    const { round1, round2 } = buildRoundAssignments(sequenceId);
-    const facilitations = [round1.facilitation, round2.facilitation].sort();
-    assert.deepEqual(facilitations, ["adaptive", "static"], `${sequenceId} must have exactly one static + one adaptive Round, got ${JSON.stringify(facilitations)}`);
-  }
-});
-
-test("reversing the counterbalanced condition order (SA <-> AS) reverses which Round is Static vs Adaptive", () => {
-  for (const sequenceId of SEQUENCE_IDS) {
-    const { round1, round2, conditionOrder } = SEQUENCES[sequenceId];
-    if (conditionOrder === "SA") {
-      assert.equal(round1.facilitation, "static", `${sequenceId} (SA) round1 must be static`);
-      assert.equal(round2.facilitation, "adaptive", `${sequenceId} (SA) round2 must be adaptive`);
-    } else if (conditionOrder === "AS") {
-      assert.equal(round1.facilitation, "adaptive", `${sequenceId} (AS) round1 must be adaptive`);
-      assert.equal(round2.facilitation, "static", `${sequenceId} (AS) round2 must be static`);
-    } else {
-      assert.fail(`unexpected conditionOrder ${JSON.stringify(conditionOrder)} for ${sequenceId}`);
-    }
-  }
-  // At least one SA and one AS sequence must exist, or this test would
-  // vacuously pass without ever exercising the reversal.
-  const orders = SEQUENCE_IDS.map((id) => SEQUENCES[id].conditionOrder);
-  assert.ok(orders.includes("SA") && orders.includes("AS"), "both condition orders must be represented across S1-S4");
-});
-
-test("treatment metadata cannot override the Round-level facilitation assignment: buildRoundFields's returned fields never include a treatment reference", () => {
-  // buildRoundFields (Counterbalancing.mjs) returns ROUND_FIELD_KEYS
-  // straight from the sequence table -- confirm none of those keys is
-  // itself sourced from or named after "treatment", which would reopen a
-  // path for treatment-level data to leak into round-level dispatch.
-  const counterbalancingSource = readFileSync(path.join(__dirname, "Counterbalancing.mjs"), "utf8");
-  const bodyStart = counterbalancingSource.indexOf("export function buildRoundFields");
-  const bodyEnd = counterbalancingSource.indexOf("\nexport function validateGamePlayerCount", bodyStart);
-  const buildRoundFieldsBody = counterbalancingSource.slice(bodyStart, bodyEnd !== -1 ? bodyEnd : bodyStart + 600);
-  assert.doesNotMatch(buildRoundFieldsBody, /game\.get\("treatment"\)/, "buildRoundFields must never read game.get(\"treatment\") to determine a Round's facilitation");
-});
-
-test("S1-S4 route according to their exact condition order (SA/AS) and produce the corresponding facilitationOrder", () => {
-  const expected = {
-    S1: { conditionOrder: "SA", facilitationOrder: ["static", "adaptive"] },
-    S2: { conditionOrder: "SA", facilitationOrder: ["static", "adaptive"] },
-    S3: { conditionOrder: "AS", facilitationOrder: ["adaptive", "static"] },
-    S4: { conditionOrder: "AS", facilitationOrder: ["adaptive", "static"] },
-  };
-  for (const sequenceId of SEQUENCE_IDS) {
-    const entry = SEQUENCES[sequenceId];
-    assert.equal(entry.conditionOrder, expected[sequenceId].conditionOrder, `${sequenceId} conditionOrder`);
-    assert.deepEqual([...entry.facilitationOrder], expected[sequenceId].facilitationOrder, `${sequenceId} facilitationOrder`);
-    assert.deepEqual([entry.round1.facilitation, entry.round2.facilitation], [...entry.facilitationOrder], `${sequenceId} round1/round2 facilitation must match facilitationOrder in sequence`);
+test("treatment metadata cannot override the Round-level facilitation assignment: round1/round2 creation reads facilitation only from `sequence`, never from `treatment`", () => {
+  const round1Block = callbacksSource.slice(callbacksSource.indexOf("const round1 = game.addRound("), callbacksSource.indexOf("const round2 = game.addRound("));
+  const round2Block = callbacksSource.slice(callbacksSource.indexOf("const round2 = game.addRound("), callbacksSource.indexOf("// MIGRATED from old 2nd (TEMP-BE-007"));
+  for (const block of [round1Block, round2Block]) {
+    assert.match(block, /facilitation:\s*sequence\.facilitationOrder\[\d\]/, "Round facilitation must come from `sequence` (the claimed S1-S4 entry), not `treatment`");
+    assert.doesNotMatch(block, /facilitation:\s*treatment/, "Round facilitation must never be sourced from `treatment`");
   }
 });

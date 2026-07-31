@@ -54,9 +54,9 @@ server/                # Back-end configuration (game logic, LLM integration)
 
 Follow [this guide](<https://docs.empirica.ly/guides/deploying-my-experiment/ubuntu-tutorial>) for deploying Empirica experiments on Ubuntu servers.
 
-#### Counterbalancing (sequenceId treatments)
+#### Counterbalancing (S1-S4 randomized-block allocation)
 
-Counterbalancing (which of S1-S4 each Game gets -- see `server/src/Counterbalancing.mjs`) is assigned via Empirica's own native treatment mechanism: `.empirica/treatments.yaml` defines four treatments (`sequence-S1` .. `sequence-S4`), and which treatment a given Game runs is decided by however the Batch is configured in the Admin panel (e.g. treatment counts), the same as any other Empirica treatment. There is no study-level allocation ledger and no single-backend-process deployment constraint tied to counterbalancing.
+Counterbalancing (which of S1-S4 each Game gets) is allocated automatically by `server/src/callbacks.js`'s `onGameStart` -- not by an Admin-configured treatment. Every 4 Games get a shuffled permutation of {S1,S2,S3,S4} (a permuted block), guaranteeing each sequence appears exactly once per 4 Games; the assigned `sequenceId` is persisted on the Game (`game.get("sequenceId")`) the first time `onGameStart` runs for it. This is server-process in-memory state only: if the backend process restarts while a block is partially claimed, the remaining positions in that block are lost and a new block starts from the beginning on the next Game. There is no study-level allocation ledger and no single-backend-process deployment constraint tied to counterbalancing.
 
 ### Configuring GRAIL
 

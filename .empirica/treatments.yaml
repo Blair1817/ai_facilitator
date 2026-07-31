@@ -24,53 +24,18 @@ factors:
     values:
       - value: true
 
-  - name: sequenceId
-    desc: >
-      Counterbalancing sequence (S1-S4, see server/src/Counterbalancing.mjs)
-      determining which Round is Static vs Adaptive facilitation and which
-      Round runs Task A vs Task B. Replaces the previous study-level
-      allocation ledger -- assigning games across these four treatments
-      (e.g. via Batch treatment counts in the Admin panel) is how
-      counterbalancing is now achieved, natively, by Empirica itself.
-    values:
-      - value: S1
-      - value: S2
-      - value: S3
-      - value: S4
-
+# S1-S4 counterbalancing sequence assignment is NOT a treatment factor.
+# server/src/callbacks.js's onGameStart allocates each Game's sequenceId
+# itself (randomized-block allocator: SEQUENCES/SEQUENCE_IDS/
+# claimNextSequence(), one Game claims one S1-S4 slot per 4-Game block) and
+# persists it on the Game (game.set("sequenceId", ...)). This is
+# independent of which treatment a Game runs -- there is a single source of
+# truth (game.get("sequenceId")), not an Admin-configurable one.
 treatments:
-  - name: sequence-S1
+  - name: main
     factors:
       playerCount:   3
       gameDuration:  10
       phase1Duration: 2
       introDuration: 2
       hiddenInfoCue: true
-      sequenceId: S1
-
-  - name: sequence-S2
-    factors:
-      playerCount:   3
-      gameDuration:  10
-      phase1Duration: 2
-      introDuration: 2
-      hiddenInfoCue: true
-      sequenceId: S2
-
-  - name: sequence-S3
-    factors:
-      playerCount:   3
-      gameDuration:  10
-      phase1Duration: 2
-      introDuration: 2
-      hiddenInfoCue: true
-      sequenceId: S3
-
-  - name: sequence-S4
-    factors:
-      playerCount:   3
-      gameDuration:  10
-      phase1Duration: 2
-      introDuration: 2
-      hiddenInfoCue: true
-      sequenceId: S4
