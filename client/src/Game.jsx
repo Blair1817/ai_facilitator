@@ -1,4 +1,4 @@
-import { useGame, useStage } from "@empirica/core/player/classic/react";
+import { useGame, useStage, useRound } from "@empirica/core/player/classic/react";
 import { Chat } from "./components/CustomChat";
 import { PlayerList } from "./components/PlayerList.jsx";
 import React from "react";
@@ -23,26 +23,42 @@ const DISCUSSION_STAGE_NAMES = ["Discussion", "Task"];
 export function Game() {
   const game = useGame();
   const stage = useStage();
+  const round = useRound();
   const stageName = stage.get("name");
+  const roundIndex = round?.get("index") ?? null;
+  // MIGRATED from old 2nd: a stable identity for the *current round+stage
+  // combination*, used as a React key below so InitialDecision/Discussion/
+  // FinalDecision fully remount (resetting all local component state)
+  // between Round 1 and Round 2.
+  const roundStageKey = `${round?.id ?? "no-round"}-${stageName}`;
 
   if (stageName == "transitionToIntroduction") {
-    return <StageTransition transitionText="Get ready to meet your group in a quick icebreaker!" />
+    // MIGRATED from old 2nd: Round 2's transitionToIntroduction is also the
+    // only screen that runs between Round 1 ending and Round 2 starting, so
+    // it doubles as the "Round 1 is over, Round 2 is a new task" announcement.
+    const transitionText = roundIndex === 0
+      ? "Get ready to meet your group in a quick icebreaker!"
+      : "Round 1 is complete. Round 2 is a new, independent task with new shared information and a new private report -- nothing from Round 1 carries over. First, a quick icebreaker before we begin.";
+    return <StageTransition transitionText={transitionText} />
   }
 
   if (stageName == "transitionToTask") {
-    return <StageTransition transitionText="Now that we're all acquainted, get ready for the task!" />
+    const transitionText = roundIndex === 0
+      ? "Now that we're all acquainted, get ready for the task!"
+      : "Get ready for Round 2's task -- you'll see new shared information and a new private report.";
+    return <StageTransition transitionText={transitionText} />
   }
 
   if (stageName == "InitialDecision") {
-    return <InitialDecision />
+    return <InitialDecision key={roundStageKey} />
   }
 
   if (DISCUSSION_STAGE_NAMES.includes(stageName)) {
-    return <Discussion />
+    return <Discussion key={roundStageKey} />
   }
 
   if (stageName == "FinalDecision") {
-    return <FinalDecision />
+    return <FinalDecision key={roundStageKey} />
   }
 
   if (stageName == "Introduction") {

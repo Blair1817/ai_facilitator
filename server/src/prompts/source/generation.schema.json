@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Generator Output Schema",
+  "description": "Generator(基于 Spec 第三、四、五节：三个角色约束 + 输出长度约束)只输出一条干预，role 必须与 Controller 已选定的角色一致，不得自行更改。",
+  "type": "object",
+  "properties": {
+    "role": {
+      "type": "string",
+      "enum": [
+        "STATIC",
+        "INFORMATION_EXPANDER",
+        "EVIDENCE_CHALLENGER",
+        "INFORMATION_SYNTHESISER"
+      ],
+      "description": "STATIC 用于 static_ai 条件；其余三项对应 adaptive_ai 条件下 Controller 已选定的角色。该值必须与输入的 SELECTED_ROLE 完全一致。"
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400,
+      "description": "唯一显示给参与者的字段。字数上限待阶段9 pilot后冻结，此处 maxLength 为字符数占位值，非最终值。不得包含 rationale、角色名、内部推理、markdown。"
+    },
+    "groundingMessageIds": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true,
+      "description": "本条干预所依据的、已在讨论中公开分享的消息 ID 列表。若干预不依赖具体消息（如通用开放性问题），可为空数组，但不可省略该字段。"
+    }
+  },
+  "required": ["role", "message", "groundingMessageIds"],
+  "additionalProperties": false
+}

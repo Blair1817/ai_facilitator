@@ -22,13 +22,14 @@ export function Discussion() {
   const game = useGame();
   const round = useRound();
   const roundName = round?.get("name");
-  // Round-first with game-level fallback: the current (unmodified) backend
-  // only ever sets these at the game level, so the fallback is required for
-  // compatibility today. Once callbacks.js sets them per-round, the round
-  // value takes over automatically. See InitialDecision.jsx for the same
-  // pattern applied to the decision stages.
+  // Round-first with game-level fallback (defensive; callbacks.js now always
+  // sets these round-scoped). Field name matches Blair's callbacks.js exactly:
+  // round.set("decisionOptions", task["decisionOptions"]) -- NOT
+  // "taskDecisionOptions" (an old 2nd field name that no longer matches).
   const generalInfo = round?.get("generalInfo") ?? game.get("generalInfo");
-  const decisionOptions = round?.get("taskDecisionOptions") ?? game.get("taskDecisionOptions");
+  // decisionOptions is now an array of {id, label} objects (Blair's
+  // HPTConfig.json schema), not plain strings -- see the .map/.join below.
+  const decisionOptions = round?.get("decisionOptions") ?? game.get("decisionOptions");
   const totalRounds = game.get("totalRounds") ?? 2;
   // round.get("index") is the single source of truth for round ordering:
   // proven framework-set (Empirica's own addRound(), see
@@ -74,7 +75,7 @@ export function Discussion() {
           {decisionOptions && decisionOptions.length > 0 && (
             <div className="mb-4 text-sm text-gray-600">
               <span className="font-semibold">Options under discussion: </span>
-              {decisionOptions.join(", ")}
+              {decisionOptions.map((option) => option.label).join(", ")}
             </div>
           )}
 
@@ -94,15 +95,20 @@ export function Discussion() {
           </div>
           <div className="w-full flex-grow overflow-y-auto overflow-x-hidden px-2">
             {/*
-              scope={game} is intentionally unchanged (not scoped to `round`).
-              server/src/callbacks.js's AI-trigger listener currently reads
-              game.get("chat") directly; switching this to a round-scoped
-              attribute on the client alone -- without a matching server
-              change -- would silently break AI intervention rather than
-              actually isolating chat between rounds. This is reported as a
-              backend integration blocker, not faked here. See final report.
+              MIGRATED from old 2nd: scope={game} (not `round`) is
+              intentional -- Empirica's Chat component itself only supports
+              game-scoped chat storage, and server/src/callbacks.js's
+              AI-trigger listener also reads/writes at the game level -- it
+              isolates rounds via the attribute NAME instead (chat_round_0 /
+              chat_round_1), keyed off the round's own index. This must match
+              callbacks.js's `chatKey = \`chat_round_${roundIndex}\`` exactly,
+              or participant messages and the AI-trigger listener silently
+              stop seeing each other. Without this fix, this stayed on the
+              static "chat" attribute, which callbacks.js's chat_round_0/
+              chat_round_1 listeners never observe -- messages would never
+              reach the AI-trigger logic in either round.
             */}
-            <Chat scope={game} attribute="chat" />
+            <Chat scope={game} attribute={`chat_round_${roundIndex ?? 0}`} />
           </div>
         </div>
       </div>

@@ -54,6 +54,10 @@ server/                # Back-end configuration (game logic, LLM integration)
 
 Follow [this guide](<https://docs.empirica.ly/guides/deploying-my-experiment/ubuntu-tutorial>) for deploying Empirica experiments on Ubuntu servers.
 
+#### Counterbalancing (sequenceId treatments)
+
+Counterbalancing (which of S1-S4 each Game gets -- see `server/src/Counterbalancing.mjs`) is assigned via Empirica's own native treatment mechanism: `.empirica/treatments.yaml` defines four treatments (`sequence-S1` .. `sequence-S4`), and which treatment a given Game runs is decided by however the Batch is configured in the Admin panel (e.g. treatment counts), the same as any other Empirica treatment. There is no study-level allocation ledger and no single-backend-process deployment constraint tied to counterbalancing.
+
 ### Configuring GRAIL
 
 #### Connecting an LLM

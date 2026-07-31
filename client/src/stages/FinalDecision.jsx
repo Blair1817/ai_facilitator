@@ -18,7 +18,12 @@ export function FinalDecision() {
   // only ever sets these at the game level, so the fallback is required for
   // compatibility today. Once callbacks.js sets them per-round, the round
   // value takes over automatically.
-  const decisionOptions = round?.get("taskDecisionOptions") ?? game.get("taskDecisionOptions");
+  // MIGRATED field-name fix (not from old 2nd -- old 2nd read
+  // "taskDecisionOptions", which never matched Blair's actual field name
+  // "decisionOptions"). Also: decisionOptions is now an array of {id, label}
+  // objects (Blair's HPTConfig.json schema), not plain strings -- store
+  // option.id, display option.label (see below).
+  const decisionOptions = round?.get("decisionOptions") ?? game.get("decisionOptions");
   const generalInfo = round?.get("generalInfo") ?? game.get("generalInfo");
   // taskVersion is intentionally round-only, no game-level fallback -- see
   // InitialDecision.jsx for the full rationale. Resolves to null until the
@@ -37,14 +42,16 @@ export function FinalDecision() {
   const [selectedOption, setSelectedOption] = useState("");
   const [confidence, setConfidence] = useState(null);
 
+  // selectedOption holds option.id (a string), not the option object or
+  // its label -- matches how it's saved in the decision record below.
   const buttonClassName = (option) =>
-    `px-4 py-2 border rounded-md mx-2 ${selectedOption === option
+    `px-4 py-2 border rounded-md mx-2 ${selectedOption === option.id
       ? "bg-blue-500 text-white border-blue-500"
       : "bg-gray-200 text-blue-500 border-gray-300"
     }`;
 
   const handleOptionClick = (option) => {
-    setSelectedOption(option);
+    setSelectedOption(option.id);
   };
 
   const handleSliderChange = (event, newValue) => {
@@ -139,11 +146,11 @@ export function FinalDecision() {
         <div className="flex justify-center space-x-4 mb-4">
           {decisionOptions.map((option) => (
             <button
-              key={option}
+              key={option.id}
               className={buttonClassName(option)}
               onClick={() => handleOptionClick(option)}
             >
-              {option}
+              {option.label}
             </button>
           ))}
         </div>
