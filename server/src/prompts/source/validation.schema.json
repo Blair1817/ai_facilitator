@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Semantic Validator Output Schema",
+  "description": "Validator 只审核候选干预，不重新生成、不改写、不选角色、不评价参与者决策。设计说明：（1）所有布尔字段统一为'检测到问题=true'的方向，避免正负极性混用导致的实现错误；（2）本 Schema 只包含 LLM 需要做出的语义判断，'passed' 与 'failedCriteria' 不由 LLM 输出，而是由下游确定性代码根据这些布尔字段计算得出，避免 LLM 自我汇总时出现逻辑矛盾（例如某项检测为异常但仍声称整体通过）；（3）JSON 合法性、字段完整性、role 是否等于 selectedRole、字数、grounding ID 是否存在、是否与前一条 AI 消息重复、是否含 Markdown 等，均由 deterministic validator（代码）负责，不属于本 Schema 范围。",
+  "type": "object",
+  "properties": {
+    "notGrounded": {
+      "type": "boolean",
+      "description": "true 表示候选干预中存在至少一项事实性表述，无法对应到 participant-shared context 中的内容。"
+    },
+    "nonNeutral": {
+      "type": "boolean",
+      "description": "true 表示候选干预未能保持中立，表达了对某个选项/立场的倾向。"
+    },
+    "roleMisaligned": {
+      "type": "boolean",
+      "description": "true 表示候选干预的内容不符合 SELECTED_ROLE 对应角色的允许行为（见 Spec 三个角色定义）。"
+    },
+    "inventedInformation": {
+      "type": "boolean",
+      "description": "true 表示包含 transcript 中未出现过的、被编造的事实或证据。"
+    },
+    "recommendationDetected": {
+      "type": "boolean",
+      "description": "true 表示包含对某个选项的推荐、排名、投票或最终结论。"
+    },
+    "unsupportedInformationDetected": {
+      "type": "boolean",
+      "description": "true 表示干预中引用的信息，无法在 participant-shared context 中找到依据。注意：Validator 只能看到公开讨论内容，无法访问完整 private profiles，因此无法确认这类信息究竟是模型编造，还是真实存在但尚未公开分享的 private evidence——两种情况都应判定为 true，因为无论哪种，都不应出现在干预中。Private-information 泄露风险的主要防线是数据访问边界（Validator 本身不接收 private-profile database）和离线测试，而非依赖这一字段单独判断。"
+    },
+    "unsupportedConsensusClaim": {
+      "type": "boolean",
+      "description": "true 表示在没有实际出现共识的情况下，声称小组已经达成一致。"
+    }
+  },
+  "required": [
+    "notGrounded",
+    "nonNeutral",
+    "roleMisaligned",
+    "inventedInformation",
+    "recommendationDetected",
+    "unsupportedInformationDetected",
+    "unsupportedConsensusClaim"
+  ],
+  "additionalProperties": false
+}

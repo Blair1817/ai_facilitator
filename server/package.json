@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "@empirica/core": "1.12.0",
+    "ajv": "^8.20.0",
     "dotenv": "^16.4.5",
     "lodash": "^4.17.21",
     "minimist": "1.2.6",
@@ -13,7 +14,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "rsync -aP --exclude=node_modules --exclude=*.js --exclude=*.mjs -m src/* dist/ && esbuild src/index.js --color=true --log-level=warning --log-level=warning --platform=node --define:process.env.NODE_ENV='\"production\"' --bundle --minify --outfile=dist/index.js --sourcemap",
+    "build": "rsync -aP --exclude=node_modules --exclude=*.js --exclude=*.mjs -m src/* dist/ && esbuild src/index.js --color=true --log-level=warning --log-level=warning --platform=node --define:process.env.NODE_ENV='\"production\"' --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --bundle --minify --outfile=dist/index.js --sourcemap",
     "dev": "npm run build && node --trace-warnings --enable-source-maps --unhandled-rejections=warn-with-error-code dist/index.js",
     "serve": "node --trace-warnings --enable-source-maps --unhandled-rejections=warn-with-error-code index.js"
   },

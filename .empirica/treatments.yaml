@@ -24,6 +24,13 @@ factors:
     values:
       - value: true
 
+# S1-S4 counterbalancing sequence assignment is NOT a treatment factor.
+# server/src/callbacks.js's onGameStart allocates each Game's sequenceId
+# itself (randomized-block allocator: SEQUENCES/SEQUENCE_IDS/
+# claimNextSequence(), one Game claims one S1-S4 slot per 4-Game block) and
+# persists it on the Game (game.set("sequenceId", ...)). This is
+# independent of which treatment a Game runs -- there is a single source of
+# truth (game.get("sequenceId")), not an Admin-configurable one.
 treatments:
   - name: main
     factors:
