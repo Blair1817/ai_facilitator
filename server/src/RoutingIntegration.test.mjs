@@ -153,6 +153,71 @@ test("callbacks.js's SEQUENCES table defines exactly S1-S4, each with one static
   }
 });
 
+test("callbacks.js's S1-S4 table produces the canonical 8 round-level taskIndex/taskVersion/facilitation mappings", () => {
+  const sequencesBlockStart = callbacksSource.indexOf("const SEQUENCES = {");
+  const sequencesBlockEnd = callbacksSource.indexOf("const SEQUENCE_IDS", sequencesBlockStart);
+  const sequencesBlock = callbacksSource.slice(sequencesBlockStart, sequencesBlockEnd);
+  const parseArray = (entryBody, field) => {
+    const match = entryBody.match(new RegExp(`${field}:\\s*\\[([^\\]]+)\\]`));
+    assert.ok(match, `expected ${field} in every sequence entry`);
+    return match[1].split(",").map((value) => value.trim().replace(/["']/g, ""));
+  };
+
+  const actual = [];
+  for (const match of sequencesBlock.matchAll(/^\s{2}(S[1-4]):\s*\{([\s\S]*?)^\s{2}\},/gm)) {
+    const [, sequenceId, entryBody] = match;
+    const facilitationOrder = parseArray(entryBody, "facilitationOrder");
+    const taskOrder = parseArray(entryBody, "taskOrder").map(Number);
+    const taskVersionOrder = parseArray(entryBody, "taskVersionOrder");
+    assert.deepEqual(
+      taskOrder,
+      taskVersionOrder.map((taskVersion) => ({ A: 0, B: 1 })[taskVersion]),
+      `${sequenceId} taskVersionOrder must preserve the existing HPT material order`,
+    );
+    for (let roundIndex = 0; roundIndex < 2; roundIndex += 1) {
+      actual.push({
+        sequenceId,
+        round: roundIndex + 1,
+        taskIndex: roundIndex,
+        taskVersion: taskVersionOrder[roundIndex],
+        facilitation: facilitationOrder[roundIndex],
+      });
+    }
+  }
+
+  assert.deepEqual(actual, [
+    { sequenceId: "S1", round: 1, taskIndex: 0, taskVersion: "A", facilitation: "static" },
+    { sequenceId: "S1", round: 2, taskIndex: 1, taskVersion: "B", facilitation: "adaptive" },
+    { sequenceId: "S2", round: 1, taskIndex: 0, taskVersion: "A", facilitation: "adaptive" },
+    { sequenceId: "S2", round: 2, taskIndex: 1, taskVersion: "B", facilitation: "static" },
+    { sequenceId: "S3", round: 1, taskIndex: 0, taskVersion: "B", facilitation: "static" },
+    { sequenceId: "S3", round: 2, taskIndex: 1, taskVersion: "A", facilitation: "adaptive" },
+    { sequenceId: "S4", round: 1, taskIndex: 0, taskVersion: "B", facilitation: "adaptive" },
+    { sequenceId: "S4", round: 2, taskIndex: 1, taskVersion: "A", facilitation: "static" },
+  ]);
+
+  assert.deepEqual(
+    [...new Set(actual.map(({ taskVersion, facilitation }) => `${taskVersion}+${facilitation}`))].sort(),
+    ["A+adaptive", "A+static", "B+adaptive", "B+static"],
+  );
+});
+
+test("round creation stores exposure index directly and consumes taskVersion/facilitation from the selected sequence", () => {
+  const round1Block = callbacksSource.slice(callbacksSource.indexOf("const round1 = game.addRound("), callbacksSource.indexOf("const round2 = game.addRound("));
+  const round2Block = callbacksSource.slice(callbacksSource.indexOf("const round2 = game.addRound("), callbacksSource.indexOf("// MIGRATED from old 2nd (TEMP-BE-007"));
+
+  assert.match(round1Block, /taskIndex:\s*0/);
+  assert.match(round1Block, /taskVersion:\s*sequence\.taskVersionOrder\[0\]/);
+  assert.match(round1Block, /facilitation:\s*sequence\.facilitationOrder\[0\]/);
+  assert.match(round2Block, /taskIndex:\s*1/);
+  assert.match(round2Block, /taskVersion:\s*sequence\.taskVersionOrder\[1\]/);
+  assert.match(round2Block, /facilitation:\s*sequence\.facilitationOrder\[1\]/);
+
+  assert.match(callbacksSource, /const TASK_CONFIG_INDEX_BY_VERSION = Object\.freeze\(\{ A: 0, B: 1 \}\)/, "Task A/B must retain their existing HPTConfig.json material indexes");
+  assert.match(callbacksSource, /const taskConfigIndex = TASK_CONFIG_INDEX_BY_VERSION\[taskVersion\]/, "Task materials must be selected by canonical taskVersion");
+  assert.doesNotMatch(callbacksSource, /taskVersion:\s*sequence\.facilitationOrder/, "taskVersion must never be inferred from facilitation");
+});
+
 test("treatment metadata cannot override the Round-level facilitation assignment: round1/round2 creation reads facilitation only from `sequence`, never from `treatment`", () => {
   const round1Block = callbacksSource.slice(callbacksSource.indexOf("const round1 = game.addRound("), callbacksSource.indexOf("const round2 = game.addRound("));
   const round2Block = callbacksSource.slice(callbacksSource.indexOf("const round2 = game.addRound("), callbacksSource.indexOf("// MIGRATED from old 2nd (TEMP-BE-007"));

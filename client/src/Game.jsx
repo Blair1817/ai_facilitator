@@ -8,11 +8,12 @@ import { StageTransition } from "./components/StageTransition.jsx";
 import { InitialDecision } from "./stages/InitialDecision.jsx";
 import { FinalDecision } from "./stages/FinalDecision.jsx";
 import { Discussion } from "./stages/Discussion.jsx";
+import { ReviewQuiz } from "./stages/ReviewQuiz.jsx";
 
 // Formal stage names used by the current design:
-//   InitialDecision, Discussion, FinalDecision
-// server/src/callbacks.js (not modified by this change) still creates a
-// stage literally named "Task" for the discussion stage rather than
+//   ReviewQuiz, InitialDecision, Discussion, FinalDecision
+// server/src/callbacks.js still creates a stage literally named "Task" for
+// the discussion stage rather than
 // "Discussion". This alias list is the minimal compatibility mapping so the
 // same Discussion.jsx page renders either way; if the backend is later
 // updated to name it "Discussion", this keeps working unchanged and the
@@ -51,6 +52,10 @@ export function Game() {
 
   if (stageName == "InitialDecision") {
     return <InitialDecision key={roundStageKey} />
+  }
+
+  if (stageName == "ReviewQuiz") {
+    return <ReviewQuiz key={roundStageKey} />
   }
 
   if (DISCUSSION_STAGE_NAMES.includes(stageName)) {

@@ -1,7 +1,16 @@
 export const generalInfo = `# General Information
-The International Sports Federation (ISF) runs an international event similar to the Olympics every 4 years. Historically, the events have been well-received and attracted millions of attendees from around the world. Throughout the years, the ISF has worked with partners and sponsors from various industries to bring the event to various cities and cultures, and the search is on for the city to host the next event.
 
-**As one of 3 decision makers at the ISF, you have been asked to sit on a committee to review the options and select the next host city based on reasonable criteria for a large sporting event.**
+Your group will complete the following two decision-making tasks. The order of the tasks may vary.
 
-**For the event being held this year, 3 cities have submitted a bid to host: Eldoron, Myloria, and Cragnio. All three cities are equally qualified and capable of hosting the event from a sports infrastructure perspective, but may differ in non-critical ways.**
+## Task A: International Youth Games host city
+
+The International Youth Sports Council organises the International Youth Games every four years. Three cities, Rovenna, Talwick, and Meridia, have submitted bids. All three meet the mandatory requirements for sporting venues, public safety, finance, and legal compliance.
+
+Use only the facts provided in the experiment when evaluating the cities. Do not use outside knowledge or assumptions about the cities. Your task is to judge how the provided non-critical facts affect each city's suitability and then select the city most suitable to host the International Youth Games.
+
+## Task B: Global Innovation Summit host campus
+
+The International Innovation Council organises the Global Innovation Summit every four years. Three university campuses, Fenwick University, Halden University, and Norvale University, have submitted bids. All three meet the mandatory requirements for conference facilities, public safety, finance, and legal compliance.
+
+Use only the facts provided in the experiment when evaluating the university campuses. Do not use outside knowledge or assumptions about the universities. Your task is to judge how the provided non-critical facts affect each campus's suitability and then select the campus most suitable to host the Global Innovation Summit.
 `
