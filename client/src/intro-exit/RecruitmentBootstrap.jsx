@@ -4,11 +4,10 @@ import { Loading } from "@empirica/core/player/react";
 import { getRecruitmentMode, getProlificParams } from "../prolific";
 import { CONSENT_METADATA_KEY } from "./Consent.jsx";
 
-// First introStep (see App.jsx). Runs as early as the Empirica framework
-// allows content tied to the player object to run at all (Consent and
-// PlayerCreate both happen before any player exists yet), so consent +
-// recruitment metadata survive a participant quitting during Introduction,
-// UserInterface, AttentionCheck, or the Lobby wait.
+// Runs immediately after the one-time OverallInstructions introStep (see
+// App.jsx). Consent and PlayerCreate both happen before any player exists;
+// this step copies consent and recruitment metadata onto the player before
+// the Lobby wait and experimental Rounds.
 export function RecruitmentBootstrap({ next }) {
   const player = usePlayer();
   const ran = useRef(false);

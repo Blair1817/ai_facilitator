@@ -162,7 +162,7 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
 // game.append/llmLog path). Invalid output at any stage is logged and
 // treated as Silent -- nothing is ever published before every check passes,
 // and there is no second attempt.
-async function runSharedGeneration(game, chatKey, built, logEntry) {
+async function runSharedGeneration(game, chatKey, built, logEntry, originatingRoundId, originatingStageId) {
   logEntry.promptMetadata = built.metadata;
 
   if (built.blocked) {
@@ -179,6 +179,15 @@ async function runSharedGeneration(game, chatKey, built, logEntry) {
   logEntry.messagesOAIFormat = messages;
 
   const llmResponse = await getLLMResponse(messages);
+  if (
+    game.currentRound?.id !== originatingRoundId ||
+    game.currentStage?.id !== originatingStageId ||
+    game.currentStage?.get("name") !== "Task"
+  ) {
+    logEntry.reason = "Discarded stale AI result after the originating Discussion stage ended";
+    logEntry.outcome = "SILENT";
+    return { published: false };
+  }
   if (!llmResponse.success) {
     logEntry.reason = `API Error: ${llmResponse.error}`;
     logEntry.outcome = "SILENT";
@@ -230,21 +239,42 @@ const SEQUENCES = {
   S1: {
     facilitationOrder: ["static", "adaptive"],
     taskOrder: [0, 1],
+    taskVersionOrder: ["A", "B"],
   },
   S2: {
     facilitationOrder: ["adaptive", "static"],
     taskOrder: [0, 1],
+    taskVersionOrder: ["A", "B"],
   },
   S3: {
     facilitationOrder: ["static", "adaptive"],
     taskOrder: [1, 0],
+    taskVersionOrder: ["B", "A"],
   },
   S4: {
     facilitationOrder: ["adaptive", "static"],
     taskOrder: [1, 0],
+    taskVersionOrder: ["B", "A"],
   },
 };
 const SEQUENCE_IDS = Object.keys(SEQUENCES);
+const TASK_CONFIG_INDEX_BY_VERSION = Object.freeze({ A: 0, B: 1 });
+
+// Empirica requires every Stage to have a positive duration. ReviewQuiz has
+// no research-defined timeout and normally ends only when every participant
+// submits a fully correct attempt; this is an operational safety ceiling, not
+// a participant-facing experimental duration.
+const REVIEW_QUIZ_SAFETY_DURATION_SECONDS = 24 * 60 * 60;
+const TRANSITION_TO_ICEBREAKER_DURATION_SECONDS = 10;
+const TASK_INFORMATION_DURATION_SECONDS = 10 * 60;
+const WALKTHROUGH_DURATION_SECONDS = 10 * 60;
+const TLX_DURATION_SECONDS = 10 * 60;
+const SUBJECTIVE_SURVEY_DURATION_SECONDS = 10 * 60;
+const BREAK_DURATION_SECONDS = 300;
+
+function addReviewQuizStage(round) {
+  round.addStage({ name: "ReviewQuiz", duration: REVIEW_QUIZ_SAFETY_DURATION_SECONDS });
+}
 
 // ── Randomized-block S1-S4 allocation (one claim per Game) ─────────────────
 //
@@ -307,8 +337,6 @@ Empirica.onGameStart(({ game }) => {
   // Initialize game-level state
   game.set("llmLog",              []);
   game.set("totalInterventions",  0);
-  game.set("chat_round_0",        []);
-  game.set("chat_round_1",        []);
   game.set("systemInfo", {
     model:           openaiModel,
     featureServer:   "http://localhost:5001",
@@ -336,6 +364,7 @@ Empirica.onGameStart(({ game }) => {
   // without checking, per this task's explicit instruction).
   game.set("facilitationOrder", sequence.facilitationOrder);
   game.set("taskOrder",         sequence.taskOrder);
+  game.set("taskVersionOrder",  sequence.taskVersionOrder);
 
   // Round/Stage creation -- standard Empirica pattern: the full field set is
   // passed directly into the single game.addRound() call. game.addRound()
@@ -344,33 +373,43 @@ Empirica.onGameStart(({ game }) => {
   // Empirica backend in an earlier audit; @empirica/core@1.12.0). Stages are
   // added immediately via the object that call returns.
   //
-  // BUG FIX (preserved from the pre-refactor codebase, see git history --
-  // Blair's commit afcb2ac had a copy-paste error that left Round 2's
-  // taskIndex permanently undefined): round2's fields are applied to round2
-  // here, never to round1 a second time.
+  // taskIndex is the zero-based exposure position (Round 1 = 0, Round 2 = 1).
+  // taskVersion is the independent Task A/B material identity selected by the
+  // sequence; it must not be inferred from taskIndex or facilitation.
   const round1 = game.addRound({
     name: "Round 1",
     facilitation: sequence.facilitationOrder[0],
-    taskIndex:    sequence.taskOrder[0],
+    taskIndex:    0,
+    taskVersion:  sequence.taskVersionOrder[0],
   });
-  round1.addStage({ name: "transitionToIntroduction", duration: 10 });
+  round1.addStage({ name: "TaskInformation",          duration: TASK_INFORMATION_DURATION_SECONDS });
+  round1.addStage({ name: "Walkthrough",              duration: WALKTHROUGH_DURATION_SECONDS });
+  addReviewQuizStage(round1);
+  round1.addStage({ name: "TransitionToIceBreaker",   duration: TRANSITION_TO_ICEBREAKER_DURATION_SECONDS });
   round1.addStage({ name: "Introduction",             duration: introDuration * 60 });
-  round1.addStage({ name: "transitionToTask",         duration: 10 });
   round1.addStage({ name: "InitialDecision",          duration: phase1Duration * 60 });
   round1.addStage({ name: "Task",                     duration: gameDuration * 60 });
   round1.addStage({ name: "FinalDecision",            duration: 120 });
+  round1.addStage({ name: "TLX",                      duration: TLX_DURATION_SECONDS });
+  round1.addStage({ name: "SubjectiveSurvey",         duration: SUBJECTIVE_SURVEY_DURATION_SECONDS });
+  round1.addStage({ name: "Break",                    duration: BREAK_DURATION_SECONDS });
 
   const round2 = game.addRound({
     name: "Round 2",
     facilitation: sequence.facilitationOrder[1],
-    taskIndex:    sequence.taskOrder[1],
+    taskIndex:    1,
+    taskVersion:  sequence.taskVersionOrder[1],
   });
-  round2.addStage({ name: "transitionToIntroduction", duration: 10 });
+  round2.addStage({ name: "TaskInformation",          duration: TASK_INFORMATION_DURATION_SECONDS });
+  round2.addStage({ name: "Walkthrough",              duration: WALKTHROUGH_DURATION_SECONDS });
+  addReviewQuizStage(round2);
+  round2.addStage({ name: "TransitionToIceBreaker",   duration: TRANSITION_TO_ICEBREAKER_DURATION_SECONDS });
   round2.addStage({ name: "Introduction",             duration: introDuration * 60 });
-  round2.addStage({ name: "transitionToTask",         duration: 10 });
   round2.addStage({ name: "InitialDecision",          duration: phase1Duration * 60 });
   round2.addStage({ name: "Task",                     duration: gameDuration * 60 });
   round2.addStage({ name: "FinalDecision",            duration: 120 });
+  round2.addStage({ name: "TLX",                      duration: TLX_DURATION_SECONDS });
+  round2.addStage({ name: "SubjectiveSurvey",         duration: SUBJECTIVE_SURVEY_DURATION_SECONDS });
 
   // MIGRATED from old 2nd (TEMP-BE-007 there): stable, game-level color-
   // alias assignment. Without this, name/hexCode get reshuffled every round
@@ -408,10 +447,12 @@ Empirica.onGameStart(({ game }) => {
 Empirica.onRoundStart(({ round }) => {
   const game = round.currentGame;
   const taskIndex = round.get("taskIndex");
-  const task = taskConfig["tasks"][taskIndex];
+  const taskVersion = round.get("taskVersion");
+  const taskConfigIndex = TASK_CONFIG_INDEX_BY_VERSION[taskVersion];
+  const task = taskConfig["tasks"][taskConfigIndex];
 
-  if (!task) {
-    console.error(`[onRoundStart] No task found for taskIndex ${taskIndex}`);
+  if (taskConfigIndex === undefined || !task) {
+    console.error(`[onRoundStart] No task found for taskVersion ${JSON.stringify(taskVersion)} (exposure taskIndex ${taskIndex})`);
     return;
   }
 
@@ -444,7 +485,7 @@ Empirica.onRoundStart(({ round }) => {
   const playerConfig = task["playerConfig"];
 
   if (game.players.length > playerConfig.length) {
-    console.error(`[onRoundStart] Not enough player configs for taskIndex ${taskIndex}: need ${game.players.length}, have ${playerConfig.length}`);
+    console.error(`[onRoundStart] Not enough player configs for taskVersion ${taskVersion}: need ${game.players.length}, have ${playerConfig.length}`);
     return;
   }
 
@@ -530,6 +571,8 @@ async function handleChat(env, { game }) {
 
   const currentStageName = game.currentStage?.get("name");
   if (currentStageName !== "Task") return;
+  const originatingRoundId = currentRound.id;
+  const originatingStageId = game.currentStage.id;
 
   const humanMessageCount = (game.get("humanMessageCount") || 0) + 1;
   game.set("humanMessageCount", humanMessageCount);
@@ -584,6 +627,16 @@ async function handleChat(env, { game }) {
     const localMessages = buildLocalContext(getHumanMessages(chat), 6);
     const featureStart  = Date.now();
     const featureResult = await extractFeatures(localMessages);
+    if (
+      game.currentRound?.id !== originatingRoundId ||
+      game.currentStage?.id !== originatingStageId ||
+      game.currentStage?.get("name") !== "Task"
+    ) {
+      logEntry.reason = "Discarded stale feature result after the originating Discussion stage ended";
+      game.set("llmLog", [...(game.get("llmLog") || []), logEntry]);
+      Empirica.flush();
+      return;
+    }
     logEntry.featureLatency = Date.now() - featureStart;
 
     if (!featureResult.success) {
@@ -623,7 +676,14 @@ async function handleChat(env, { game }) {
 
   // ── Shared: build context, call the LLM once, validate, publish once, log ──
   const built  = buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, facilitation, role);
-  const result = await runSharedGeneration(game, chatKey, built, logEntry);
+  const result = await runSharedGeneration(
+    game,
+    chatKey,
+    built,
+    logEntry,
+    originatingRoundId,
+    originatingStageId
+  );
 
   if (result.published && facilitation === "adaptive") {
     // Adaptive-only Controller cooldown bookkeeping (unchanged from the

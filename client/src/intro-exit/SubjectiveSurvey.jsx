@@ -1,16 +1,16 @@
-import { usePlayer, useGame } from "@empirica/core/player/classic/react";
+import { usePlayer, useRound } from "@empirica/core/player/classic/react";
 import React, { useState } from "react";
 import { Alert } from "../components/Alert";
 import { Button } from "../components/Button";
 
-export function SubjectiveSurvey({ next }) {
+export function SubjectiveSurvey() {
     const labelClassName = "block text-md font-bold text-gray-700 my-2";
     const listClassName = "block text-md font-medium text-gray-700 my-2";
     const inputClassName =
         "appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-empirica-500 focus:border-empirica-500 sm:text-sm";
     const player = usePlayer();
-    const game = useGame();
-    const { facilitation } = game.get("treatment");
+    const round = useRound();
+    const facilitation = round?.get("facilitation");
     const playerName = player.get("name");
 
     // Define state variables for each question
@@ -29,14 +29,30 @@ export function SubjectiveSurvey({ next }) {
     const [question13, setQuestion13] = useState("");
     const [submitting, setSubmitting] = useState(false);
 
+    const alwaysVisibleComplete = [question1, question2, question3, question4, question5, question6]
+        .every((answer) => String(answer).trim());
+    const facilitatorRoleComplete = playerName != "Facilitator" || String(question7).trim();
+    const facilitatorQuestionsComplete =
+        facilitation == "none" ||
+        playerName == "Facilitator" ||
+        [question8, question9, question10, question11, question12]
+            .every((answer) => String(answer).trim());
+    const facilitatorPreferenceComplete =
+        playerName == "Facilitator" || String(question13).trim();
+    const isComplete = Boolean(
+        alwaysVisibleComplete &&
+        facilitatorRoleComplete &&
+        facilitatorQuestionsComplete &&
+        facilitatorPreferenceComplete
+    );
 
     function handleSubmit(event) {
         event.preventDefault();
-        if (submitting) {
+        if (submitting || !isComplete) {
             return;
         }
         setSubmitting(true);
-        player.set("subjectiveSurvey", {
+        player.round.set("subjectiveSurvey", {
             groupFreeText: question1,
             groupContribution: question2,
             groupInfluence: question3,
@@ -52,7 +68,19 @@ export function SubjectiveSurvey({ next }) {
             facilitatorPreference: question13,
 
         });
-        next();
+        player.stage.set("submit", true);
+    }
+
+    if (player.stage.get("submit")) {
+        return (
+            <div className="h-full w-full flex items-center justify-center">
+                <div className="text-center text-gray-400 pointer-events-none">
+                    Task questionnaire submitted.
+                    <br />
+                    Please wait for the other participant(s).
+                </div>
+            </div>
+        );
     }
 
     return (
@@ -69,8 +97,7 @@ export function SubjectiveSurvey({ next }) {
                                     Please take a moment to describe your experience during the task
                                 </h3>
                                 <p className="mt-1 text-sm text-gray-500">
-                                    Please answer the following short survey. You do not have to
-                                    provide any information you feel uncomfortable with.
+                                    Please answer every question shown below before continuing.
                                 </p>
                             </div>
 
@@ -89,6 +116,7 @@ export function SubjectiveSurvey({ next }) {
                                             className={inputClassName}
                                             value={question1}
                                             onChange={(e) => setQuestion1(e.target.value)}
+                                            required
                                         />
                                     </div>
                                 </div>
@@ -182,6 +210,7 @@ export function SubjectiveSurvey({ next }) {
                                                 className={inputClassName}
                                                 value={question7}
                                                 onChange={(e) => setQuestion7(e.target.value)}
+                                                required
                                             />
                                         </div>
                                     </div>
@@ -203,6 +232,7 @@ export function SubjectiveSurvey({ next }) {
                                             className={inputClassName}
                                             value={question8}
                                             onChange={(e) => setQuestion8(e.target.value)}
+                                            required
                                         />
                                     </div>
                                 </div>
@@ -280,8 +310,14 @@ export function SubjectiveSurvey({ next }) {
                                     />
                                 </>}
 
+                                {!isComplete && (
+                                    <Alert title="Survey incomplete">
+                                        Please answer every question shown above before continuing.
+                                    </Alert>
+                                )}
+
                                 <div className="mb-12 text-right">
-                                    <Button type="submit" disabled={submitting}>Next</Button>
+                                    <Button type="submit" disabled={submitting || !isComplete}>Next</Button>
                                 </div>
                             </div>
                         </div>
@@ -337,6 +373,7 @@ export function LikertScale({ selected, name, onChange, showLabels = true }) {
                             value={option.value}
                             checked={selected === option.value}
                             onChange={onChange}
+                            required
                             className="my-2"
                         />
                     </div>
@@ -363,6 +400,7 @@ export function RadioGroup({ question, options, selectedOption, onChange }) {
                             value={option.value}
                             checked={selectedOption === option.value}
                             onChange={onChange}
+                            required
                         />
                         {option.label}
                     </label>
