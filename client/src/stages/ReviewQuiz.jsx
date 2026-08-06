@@ -101,7 +101,9 @@ export function ReviewQuiz() {
             ))}
           </div>
           <div className="mt-8 text-right">
-            <Button handleClick={returnToQuiz}>Return to Review Quiz</Button>
+            <Button className="ml-0" handleClick={returnToQuiz}>
+              Return to Review Quiz
+            </Button>
           </div>
         </div>
       </div>
@@ -110,7 +112,10 @@ export function ReviewQuiz() {
 
   return (
     <div className="h-full w-full overflow-y-auto bg-gray-50">
-      <form className="max-w-4xl mx-auto px-8 py-8" onSubmit={handleSubmit}>
+      <form
+        className="w-full max-w-4xl mx-auto px-4 sm:px-8 py-8 flex flex-col"
+        onSubmit={handleSubmit}
+      >
         <p className="text-xs uppercase tracking-wide text-gray-400 text-center mb-2">
           {round?.get("name")} · Task {taskVersion}
         </p>
@@ -120,8 +125,11 @@ export function ReviewQuiz() {
 
         <div className="space-y-8">
           {quiz.questions.map((question, questionIndex) => (
-            <fieldset key={question.id} className="bg-white border border-gray-200 rounded-lg p-5">
-              <legend className="font-semibold text-gray-800 px-1">
+            <fieldset
+              key={question.id}
+              className="w-full min-w-0 bg-white border border-gray-200 rounded-lg p-5"
+            >
+              <legend className="max-w-full whitespace-normal font-semibold leading-6 text-gray-800 px-1">
                 {questionIndex + 1}. {question.prompt}
               </legend>
 
@@ -137,16 +145,19 @@ export function ReviewQuiz() {
               ) : (
                 <div className="mt-4 grid gap-3">
                   {question.options.map((option) => (
-                    <label key={option.value} className="flex items-start gap-2 text-sm text-gray-700">
+                    <label
+                      key={option.value}
+                      className="flex w-full min-w-0 items-start gap-3 text-sm leading-5 text-gray-700"
+                    >
                       <input
                         type="radio"
                         name={question.id}
                         value={option.value}
                         checked={answers[question.id] === option.value}
                         onChange={(event) => setAnswer(question.id, event.target.value)}
-                        className="mt-1"
+                        className="mt-1 h-4 w-4 flex-none shrink-0 p-0 rounded-full"
                       />
-                      <span>{option.label}</span>
+                      <span className="min-w-0 flex-1">{option.label}</span>
                     </label>
                   ))}
                 </div>
@@ -160,7 +171,7 @@ export function ReviewQuiz() {
         )}
 
         <div className="mt-6 text-right">
-          <Button type="submit" disabled={!isComplete || isProcessing}>
+          <Button className="ml-0" type="submit" disabled={!isComplete || isProcessing}>
             {isProcessing ? "Submitting…" : "Submit Review Quiz"}
           </Button>
         </div>

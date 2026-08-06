@@ -16,7 +16,7 @@ export function Stage() {
   const stage = useStage();
   const introInstructions = `## Before we start the main task, take a minute to get to know your group
   * Try using "@" in the chat window to tag at least 2 other group members in a message
-  * When the timer for this icebreaker stage ends, you'll automatically proceed to the next stage where you will discuss the decision of where to host the event`;
+  * When the timer for this icebreaker stage ends, you'll automatically proceed to your initial individual decision`;
 
   if (player.stage.get("submit")) {
     if (players.length === 1) {

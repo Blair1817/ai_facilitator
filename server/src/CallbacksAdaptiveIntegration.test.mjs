@@ -27,8 +27,19 @@ import path from "node:path";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const callbacksPath = path.join(__dirname, "callbacks.js");
 const callbacksSource = readFileSync(callbacksPath, "utf8");
+const customChatSource = readFileSync(
+  path.join(__dirname, "../../client/src/components/CustomChat.jsx"),
+  "utf8",
+);
 
 // ── structural assertions on callbacks.js ────────────────────────────────
+
+test("round chats are created by vector append without scalar initialization", () => {
+  assert.doesNotMatch(callbacksSource, /game\.set\(\s*["']chat_round_0["']/);
+  assert.doesNotMatch(callbacksSource, /game\.set\(\s*["']chat_round_1["']/);
+  assert.match(customChatSource, /scope\.append\(attribute,\s*\{/);
+  assert.match(customChatSource, /scope\.getAttribute\(attribute\)\?\.items\s*\|\|\s*\[\]/);
+});
 
 test("callbacks.js imports the shared, basic validator (GeneratorContract.mjs) -- not the removed semantic-validator/regeneration/AdaptivePipeline infrastructure", () => {
   assert.match(callbacksSource, /import\s*\{[^}]*parseGeneratorOutputStrict[^}]*\}\s*from\s*"\.\/prompts\/GeneratorContract\.mjs"/s);

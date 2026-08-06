@@ -1,16 +1,14 @@
-import { usePlayer, useGame } from "@empirica/core/player/classic/react";
+import { usePlayer } from "@empirica/core/player/classic/react";
 import React, { useState } from "react";
 import { Alert } from "../components/Alert";
 import { Button } from "../components/Button";
 
-export function TLX({ next }) {
+export function TLX() {
     const labelClassName = "block text-md font-bold text-gray-700 my-2";
     const listClassName = "block text-md font-medium text-gray-700 my-2";
     const inputClassName =
         "appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-empirica-500 focus:border-empirica-500 sm:text-sm";
     const player = usePlayer();
-    const game = useGame();
-    const { facilitation } = game.get("treatment");
 
     // Define state variables for each question
     const [question1, setQuestion1] = useState("");
@@ -31,7 +29,7 @@ export function TLX({ next }) {
             return;
         }
         setSubmitting(true);
-        player.set("tlxSurvey", {
+        player.round.set("tlxSurvey", {
             tlxMentalDemand: question1,
             tlxPhysicalDemand: question2,
             tlxTemporalDemand: question3,
@@ -39,7 +37,19 @@ export function TLX({ next }) {
             tlxEffort: question5,
             tlxFrustration:question6,
         });
-        next();
+        player.stage.set("submit", true);
+    }
+
+    if (player.stage.get("submit")) {
+        return (
+            <div className="h-full w-full flex items-center justify-center">
+                <div className="text-center text-gray-400 pointer-events-none">
+                    TLX submitted.
+                    <br />
+                    Please wait for the other participant(s).
+                </div>
+            </div>
+        );
     }
 
     // Based on Hart and Staveland’s NASA Task Load Index (TLX): https://humansystems.arc.nasa.gov/groups/tlx/downloads/TLXScale.pdf

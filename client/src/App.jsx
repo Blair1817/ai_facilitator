@@ -3,19 +3,16 @@ import { EmpiricaContext } from "@empirica/core/player/classic/react";
 import { EmpiricaMenu, EmpiricaParticipant } from "@empirica/core/player/react";
 import React from "react";
 import { Game } from "./Game";
-import { Introduction } from "./intro-exit/Introduction";
-import { UserInterface } from "./intro-exit/UserInterface";
-import { AttentionCheck } from "./intro-exit/AttentionCheck";
-import { SubjectiveSurvey } from "./intro-exit/SubjectiveSurvey";
 import { Consent } from "./intro-exit/Consent.jsx";
 import { GamesFull } from "./intro-exit/GamesFull";
-import { TLX } from "./intro-exit/TLX";
 import { NoGames } from "./intro-exit/NoGames";
+import { OverallInstructions } from "./intro-exit/OverallInstructions";
 import { PlayerCreate } from "./intro-exit/PlayerCreate"
 import { ProlificPlayerCreate } from "./intro-exit/ProlificPlayerCreate";
 import { RecruitmentBootstrap } from "./intro-exit/RecruitmentBootstrap";
 import { Debriefing } from "./intro-exit/Debriefing";
 import { ExpFeedback } from "./intro-exit/ExpFeedback";
+import { FinalQuestions } from "./intro-exit/FinalQuestions";
 import { FinishedExitCode } from "./intro-exit/FinishedExitCode";
 import { CustomLobby } from "./intro-exit/CustomLobby";
 import { getRecruitmentMode } from "./prolific";
@@ -30,25 +27,30 @@ export default function App() {
   const recruitmentMode = getRecruitmentMode();
 
   function introSteps({ game, player }) {
-    // Uncomment line below for debugging without intro steps
-    // return [];
-    return [RecruitmentBootstrap, Introduction, UserInterface, AttentionCheck];
+    // One-time global guidance followed by the invisible metadata bootstrap.
+    // Participant-facing task information, walkthrough, and ReviewQuiz remain
+    // inside each Round.
+    return [OverallInstructions, RecruitmentBootstrap];
   }
 
   function exitSteps({ game, player }) {
-    if (player.get("ended") == "game ended" || player.get("ended") == "game terminated") {
-      // SubmitAnswer is intentionally no longer registered here: FinalDecision
-      // is now a per-round Stage (client/src/stages/FinalDecision.jsx), so the
-      // exit-step flow goes straight from the last round's FinalDecision into
-      // TLX. SubmitAnswer.jsx itself is left on disk, unused, in case it's
-      // needed again.
+    if (player.get("ended") == "game ended") {
+      // FinalDecision is now a per-round Stage
+      // (client/src/stages/FinalDecision.jsx), so the
+      // exit-step flow now begins only after Round 2's round-level TLX and
+      // SubjectiveSurvey.
       //
       // ExpFeedback is unconditional: the formal design is within-subject --
       // every Game includes both a Static and an Adaptive round -- so there is
       // no single per-game `treatment.facilitation` value left to gate on.
-      // After Round 2 finishes, the flow is always TLX -> SubjectiveSurvey ->
-      // ExpFeedback -> Debriefing.
-      return [TLX, SubjectiveSurvey, ExpFeedback, Debriefing];
+      // After Round 2 finishes, the experiment-level flow is always
+      // FinalQuestions -> ExpFeedback -> Debriefing.
+      return [FinalQuestions, ExpFeedback, Debriefing];
+    }
+    if (player.get("ended") == "game terminated") {
+      // Preserve the existing early-termination exit path without presenting
+      // cross-round questions to a participant who did not complete both rounds.
+      return [ExpFeedback, Debriefing];
     }
     else{
       return [GamesFull];

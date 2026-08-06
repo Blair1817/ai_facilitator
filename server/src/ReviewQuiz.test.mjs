@@ -10,13 +10,15 @@ import {
   getReviewQuiz,
   getReviewQuizRemediation,
 } from "../../client/src/stages/reviewQuizConfig.js";
-import { generalInfo as globalIntroContent } from "../../client/src/intro-exit/IntroContent.js";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const callbacksSource = readFileSync(path.join(dirname, "callbacks.js"), "utf8");
 const gameSource = readFileSync(path.join(dirname, "../../client/src/Game.jsx"), "utf8");
 const reviewQuizSource = readFileSync(path.join(dirname, "../../client/src/stages/ReviewQuiz.jsx"), "utf8");
-const attentionCheckSource = readFileSync(path.join(dirname, "../../client/src/intro-exit/AttentionCheck.jsx"), "utf8");
+const introductionSource = readFileSync(path.join(dirname, "../../client/src/intro-exit/Introduction.jsx"), "utf8");
+const userInterfaceSource = readFileSync(path.join(dirname, "../../client/src/intro-exit/UserInterface.jsx"), "utf8");
+const tlxSource = readFileSync(path.join(dirname, "../../client/src/intro-exit/TLX.jsx"), "utf8");
+const subjectiveSurveySource = readFileSync(path.join(dirname, "../../client/src/intro-exit/SubjectiveSurvey.jsx"), "utf8");
 const appSource = readFileSync(path.join(dirname, "../../client/src/App.jsx"), "utf8");
 const discussionSource = readFileSync(path.join(dirname, "../../client/src/stages/Discussion.jsx"), "utf8");
 const treatmentsSource = readFileSync(path.join(dirname, "../../.empirica/treatments.yaml"), "utf8");
@@ -42,17 +44,13 @@ test("Task A and Task B each define the five retained ReviewQuiz questions under
   assert.doesNotMatch(JSON.stringify(REVIEW_QUIZZES), /12 minutes|"12"/);
 });
 
-test("global Introduction and HPT briefings use the same canonical Task A/B identities as ReviewQuiz", () => {
+test("HPT briefings use the same canonical Task A/B identities as ReviewQuiz", () => {
   const participantFacingText = [
-    globalIntroContent,
     hptConfig.tasks[0].generalInfo,
     hptConfig.tasks[1].generalInfo,
   ].join("\n");
 
   assert.doesNotMatch(participantFacingText, /International Sports Federation|Eldoron|Myloria|Cragnio|Academic Summit Campus|An academic organisation/);
-  assert.match(globalIntroContent, /The order of the tasks may vary/);
-  assert.match(globalIntroContent, /International Youth Sports Council/);
-  assert.match(globalIntroContent, /International Innovation Council/);
   assert.match(hptConfig.tasks[0].generalInfo, /Task A: International Youth Games host city/);
   assert.match(hptConfig.tasks[0].generalInfo, /Do not use outside knowledge or assumptions about the cities/);
   assert.match(hptConfig.tasks[1].generalInfo, /Task B: Global Innovation Summit host campus/);
@@ -117,16 +115,41 @@ test("taskVersion selection fails closed for every non-canonical value", () => {
   }
 });
 
-test("ReviewQuiz is created exactly once per Round, after Introduction and before InitialDecision", () => {
+test("both Rounds implement the approved task lifecycle in order", () => {
   assert.equal([...callbacksSource.matchAll(/addReviewQuizStage\(round1\)/g)].length, 1);
   assert.equal([...callbacksSource.matchAll(/addReviewQuizStage\(round2\)/g)].length, 1);
 
-  const round1Stages = callbacksSource.slice(callbacksSource.indexOf('round1.addStage({ name: "transitionToIntroduction"'), callbacksSource.indexOf("const round2 = game.addRound("));
-  const round2Stages = callbacksSource.slice(callbacksSource.indexOf('round2.addStage({ name: "transitionToIntroduction"'), callbacksSource.indexOf("// MIGRATED from old 2nd (TEMP-BE-007"));
+  const round1Stages = callbacksSource.slice(callbacksSource.indexOf('round1.addStage({ name: "TaskInformation"'), callbacksSource.indexOf("const round2 = game.addRound("));
+  const round2Stages = callbacksSource.slice(callbacksSource.indexOf('round2.addStage({ name: "TaskInformation"'), callbacksSource.indexOf("// MIGRATED from old 2nd (TEMP-BE-007"));
   for (const stages of [round1Stages, round2Stages]) {
-    assert.ok(stages.indexOf('name: "Introduction"') < stages.indexOf("addReviewQuizStage("));
-    assert.ok(stages.indexOf("addReviewQuizStage(") < stages.indexOf('name: "InitialDecision"'));
+    const orderedTokens = [
+      'name: "TaskInformation"',
+      'name: "Walkthrough"',
+      "addReviewQuizStage(",
+      'name: "Introduction"',
+      'name: "InitialDecision"',
+      'name: "Task"',
+      'name: "FinalDecision"',
+      'name: "TLX"',
+      'name: "SubjectiveSurvey"',
+    ];
+    let previousIndex = -1;
+    for (const token of orderedTokens) {
+      const index = stages.indexOf(token);
+      assert.ok(index > previousIndex, `${token} must occur in lifecycle order`);
+      previousIndex = index;
+    }
   }
+
+  assert.equal([...callbacksSource.matchAll(/name: "Break"/g)].length, 1);
+  assert.match(callbacksSource, /const TASK_INFORMATION_DURATION_SECONDS = 10 \* 60;/);
+  assert.match(callbacksSource, /const WALKTHROUGH_DURATION_SECONDS = 10 \* 60;/);
+  assert.match(callbacksSource, /const TLX_DURATION_SECONDS = 10 \* 60;/);
+  assert.match(callbacksSource, /const SUBJECTIVE_SURVEY_DURATION_SECONDS = 10 \* 60;/);
+  assert.match(callbacksSource, /const BREAK_DURATION_SECONDS = 300;/);
+  assert.match(round1Stages, /name: "SubjectiveSurvey"[\s\S]*name: "Break",\s+duration: BREAK_DURATION_SECONDS/);
+  assert.doesNotMatch(round2Stages, /name: "Break"/);
+  assert.ok(callbacksSource.indexOf('round1.addStage({ name: "Break"') < callbacksSource.indexOf('round2.addStage({ name: "TaskInformation"'));
 });
 
 test("client routes ReviewQuiz, keeps retries local, guards double-submit, and persists no ReviewQuiz data", () => {
@@ -144,11 +167,30 @@ test("client routes ReviewQuiz, keeps retries local, guards double-submit, and p
   assert.doesNotMatch(readFileSync(path.join(dirname, "../../client/src/stages/reviewQuizConfig.js"), "utf8"), /addReviewQuizAttempt|attemptCount|submittedAt|passedAt/);
 });
 
-test("the old global quiz is removed while the one-time global captcha remains", () => {
-  assert.match(appSource, /RecruitmentBootstrap, Introduction, UserInterface, AttentionCheck/);
-  assert.match(attentionCheckSource, /Security Check/);
-  assert.match(attentionCheckSource, /captchaMessage/);
-  assert.doesNotMatch(attentionCheckSource, /<h\d[^>]*>Review Quiz|sports facilities|infrastructure grant|const \[question1|const \[question2/);
+test("global intro keeps only one-time global steps and round screens use round context", () => {
+  assert.match(appSource, /return \[OverallInstructions, RecruitmentBootstrap\];/);
+  assert.doesNotMatch(appSource, /return \[[^\]]*(Introduction|UserInterface|AttentionCheck)/);
+  assert.match(introductionSource, /round\?\.get\("generalInfo"\)/);
+  assert.match(introductionSource, /round\?\.get\("taskVersion"\)/);
+  assert.doesNotMatch(introductionSource, /IntroContent/);
+  assert.match(userInterfaceSource, /round\?\.get\("facilitation"\)/);
+  assert.doesNotMatch(userInterfaceSource, /game\.get\("treatment"\).*facilitation/);
+});
+
+test("round questionnaires preserve payloads on player.round and leave the global exit", () => {
+  assert.match(tlxSource, /player\.round\.set\("tlxSurvey"/);
+  assert.match(subjectiveSurveySource, /player\.round\.set\("subjectiveSurvey"/);
+  assert.match(tlxSource, /player\.stage\.set\("submit", true\)/);
+  assert.match(subjectiveSurveySource, /player\.stage\.set\("submit", true\)/);
+  assert.match(appSource, /return \[ExpFeedback, Debriefing\];/);
+  assert.doesNotMatch(appSource, /return \[[^\]]*(TLX|SubjectiveSurvey)/);
+});
+
+test("stale async Discussion results are discarded after their originating stage or Round ends", () => {
+  assert.match(callbacksSource, /game\.currentRound\?\.id !== originatingRoundId/);
+  assert.match(callbacksSource, /game\.currentStage\?\.id !== originatingStageId/);
+  assert.match(callbacksSource, /Discarded stale AI result after the originating Discussion stage ended/);
+  assert.match(callbacksSource, /Discarded stale feature result after the originating Discussion stage ended/);
 });
 
 test("Discussion remains 10 minutes with unchanged timer/early-ready wiring", () => {
