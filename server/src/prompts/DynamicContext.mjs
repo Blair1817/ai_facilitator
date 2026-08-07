@@ -47,8 +47,17 @@ export function formatMessagesWithIds(messages) {
  * never controller thresholds/reasoning. AI messages are kept out of
  * CUMULATIVE_PUBLIC_CONTEXT/LOCAL_CONTEXT entirely and surfaced only via
  * recentAiMessageTexts, matching RECENT_AI_MESSAGES.
+ *
+ * `plan` (optional, added 2026-08-07): PolicyCompiler.js's output for an
+ * Adaptive checkpoint. When present, its `gap` fills RELEVANT_DISCUSSION_STATE
+ * (see promptLoader.js's assembleDynamicUserContext) and its `evidenceIds`
+ * is returned as `allowedGroundingIds` so callbacks.js can pass a
+ * plan-scoped (rather than whole-transcript-scoped) grounding check into
+ * GeneratorContract.mjs's runDeterministicValidation. Omitting `plan`
+ * (every pre-existing call site, and every Static call) leaves this
+ * function's return value byte-for-byte identical to before.
  */
-export function buildDynamicUserContext({ chat, checkpointDescriptor, selectedRoleForDisplay, generalInfo }) {
+export function buildDynamicUserContext({ chat, checkpointDescriptor, selectedRoleForDisplay, generalInfo, plan = null }) {
   const chatWithIds = withMessageIds(chat);
   const allHumanWithIds = chatWithIds.filter((m) => m.sender.id !== "ai");
   const aiWithIds = chatWithIds.filter((m) => m.sender.id === "ai");
@@ -66,6 +75,7 @@ export function buildDynamicUserContext({ chat, checkpointDescriptor, selectedRo
     cumulativePublicContext,
     localContext,
     recentAiMessages: recentAiMessagesText,
+    relevantDiscussionState: plan ? plan.gap : undefined,
   });
 
   return {
@@ -74,5 +84,6 @@ export function buildDynamicUserContext({ chat, checkpointDescriptor, selectedRo
     eligibleMessageIds: allHumanWithIds.map((m) => m.messageId),
     aiOrSystemMessageIds: aiWithIds.map((m) => m.messageId),
     recentAiMessageTexts: recentAiWithIds.map((m) => m.text),
+    allowedGroundingIds: plan ? plan.evidenceIds : null,
   };
 }

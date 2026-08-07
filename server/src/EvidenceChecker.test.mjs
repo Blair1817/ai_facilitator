@@ -1,0 +1,144 @@
+// Architecture doc Step 6. Pure-function tests -- no network, no Empirica,
+// no filesystem reads (EvidenceChecker.js never reads prompt source
+// files), so no fake-entry.js / process.argv[1] trick is needed here.
+import assert from "node:assert/strict";
+import test from "node:test";
+import { checkEvidence, FACTOR_KEYS } from "./EvidenceChecker.js";
+
+function humanMsg(name, text, idx) {
+  return { text, ts: idx, sender: { id: `human-${name}`, name }, messageId: `m${idx}` };
+}
+
+// checkEvidence() re-derives message IDs from `chat` itself via
+// withMessageIds (positional, append-order) -- these fixtures rely on that
+// same m0/m1/m2/... scheme, matching DynamicContext.mjs's own convention.
+function makeChat() {
+  return [
+    { text: "I think Eldoron is best", ts: 1, sender: { id: "human-1", name: "Red" } },   // m0
+    { text: "Eldoron is best for us too", ts: 2, sender: { id: "human-2", name: "Pink" } }, // m1
+    { text: "Sounds fine to me", ts: 3, sender: { id: "human-3", name: "Green" } },          // m2
+  ];
+}
+
+function present(overrides = {}) {
+  return { status: "present", strength: 0.8, message_ids: [], span: "", ...overrides };
+}
+function absent() {
+  return { status: "absent", strength: 0, message_ids: [], span: "" };
+}
+function emptyRaw() {
+  const raw = {};
+  for (const key of FACTOR_KEYS) raw[key] = absent();
+  return raw;
+}
+
+test("all-absent input stays all-absent", () => {
+  const checked = checkEvidence(emptyRaw(), { chat: makeChat() });
+  for (const key of FACTOR_KEYS) {
+    assert.equal(checked[key].status, "absent");
+  }
+});
+
+// ── Rule 2: span must actually occur in a cited message ─────────────────────
+
+test("Rule 2: a fabricated span (not present in the cited message) is downgraded to uncertain", () => {
+  const raw = { ...emptyRaw(), breadth_deficiency: present({ message_ids: ["m0"], span: "this text was never said" }) };
+  const checked = checkEvidence(raw, { chat: makeChat() });
+  assert.equal(checked.breadth_deficiency.status, "uncertain");
+  assert.equal(checked.breadth_deficiency.strength, 0);
+});
+
+test("Rule 2: a genuine verbatim span from the cited message survives", () => {
+  const raw = { ...emptyRaw(), breadth_deficiency: present({ message_ids: ["m0"], span: "Eldoron is best" }) };
+  const checked = checkEvidence(raw, { chat: makeChat() });
+  assert.equal(checked.breadth_deficiency.status, "present");
+});
+
+test("Rule 2: message_ids referencing a message ID that doesn't exist downgrades the factor", () => {
+  const raw = { ...emptyRaw(), breadth_deficiency: present({ message_ids: ["m99"], span: "Eldoron is best" }) };
+  const checked = checkEvidence(raw, { chat: makeChat() });
+  assert.equal(checked.breadth_deficiency.status, "uncertain");
+});
+
+// ── Rule 1: group_preference requires >1 distinct participant ───────────────
+
+test("Rule 1: group_preference from a single participant's message is downgraded, even if the LLM cited two message_ids from that same person", () => {
+  const chat = [
+    { text: "Eldoron is best, no doubt", ts: 1, sender: { id: "human-1", name: "Red" } }, // m0
+    { text: "Eldoron is best, seriously", ts: 2, sender: { id: "human-1", name: "Red" } }, // m1 (same sender)
+  ];
+  const raw = { ...emptyRaw(), group_preference: present({ message_ids: ["m0", "m1"], span: "Eldoron is best" }) };
+  const checked = checkEvidence(raw, { chat });
+  assert.equal(checked.group_preference.status, "uncertain");
+  assert.equal(checked.group_preference.downgradedReason, "GROUP_PREFERENCE_SINGLE_PARTICIPANT_ONLY");
+});
+
+test("Rule 1: group_preference genuinely spanning two distinct participants survives", () => {
+  const raw = { ...emptyRaw(), group_preference: present({ message_ids: ["m0", "m1"], span: "Eldoron is best" }) };
+  const checked = checkEvidence(raw, { chat: makeChat() });
+  assert.equal(checked.group_preference.status, "present");
+});
+
+test("Rule 1 does not apply to other factors -- a single-participant breadth_deficiency is fine", () => {
+  const raw = { ...emptyRaw(), breadth_deficiency: present({ message_ids: ["m0"], span: "Eldoron is best" }) };
+  const checked = checkEvidence(raw, { chat: makeChat() });
+  assert.equal(checked.breadth_deficiency.status, "present");
+});
+
+// ── Rule 3: feature/LLM conflict discount ────────────────────────────────────
+
+test("Rule 3: LLM claims breadth_deficiency present but the feature-only Candidate Gate never flagged expander -> strength halved", () => {
+  const raw = { ...emptyRaw(), breadth_deficiency: present({ strength: 0.8, message_ids: ["m0"], span: "Eldoron is best" }) };
+  // High novelty, low redundancy -> expander is NOT a feature candidate.
+  const features = { novelty_score: 0.9, redundancy_score: 0.0, agreement_score: 0.1, justification_score: 0.5 };
+  const checked = checkEvidence(raw, { chat: makeChat(), features });
+  assert.equal(checked.breadth_deficiency.status, "present"); // status unchanged, only strength discounted
+  assert.equal(checked.breadth_deficiency.strength, 0.4);
+  assert.equal(checked.breadth_deficiency.conflictDiscount, "FEATURE_CANDIDATE_GATE_DID_NOT_FLAG_THIS_ROLE");
+});
+
+test("Rule 3: no discount when the feature-level candidate gate agrees", () => {
+  const raw = { ...emptyRaw(), breadth_deficiency: present({ strength: 0.8, message_ids: ["m0"], span: "Eldoron is best" }) };
+  const features = { novelty_score: 0.1, redundancy_score: 0.9, agreement_score: 0.1, justification_score: 0.5 };
+  const checked = checkEvidence(raw, { chat: makeChat(), features });
+  assert.equal(checked.breadth_deficiency.strength, 0.8);
+  assert.equal(checked.breadth_deficiency.conflictDiscount, undefined);
+});
+
+// ── Rule 4: self_correction discounts other factors ─────────────────────────
+
+test("Rule 4: self_correction present discounts other present factors proportionally to its own strength", () => {
+  const raw = {
+    ...emptyRaw(),
+    breadth_deficiency: present({ strength: 0.8, message_ids: ["m0"], span: "Eldoron is best" }),
+    self_correction: present({ strength: 1.0, message_ids: ["m1"], span: "Eldoron is best for us too" }),
+  };
+  const checked = checkEvidence(raw, { chat: makeChat() });
+  // discountFactor = 1 - 0.5*1.0 = 0.5
+  assert.ok(Math.abs(checked.breadth_deficiency.strength - 0.4) < 1e-9);
+  assert.equal(checked.breadth_deficiency.selfCorrectionDiscounted, true);
+  // self_correction itself is never discounted by its own rule
+  assert.equal(checked.self_correction.strength, 1.0);
+});
+
+test("Rule 4: absent self_correction leaves other factors untouched", () => {
+  const raw = { ...emptyRaw(), breadth_deficiency: present({ strength: 0.8, message_ids: ["m0"], span: "Eldoron is best" }) };
+  const checked = checkEvidence(raw, { chat: makeChat() });
+  assert.equal(checked.breadth_deficiency.strength, 0.8);
+  assert.equal(checked.breadth_deficiency.selfCorrectionDiscounted, undefined);
+});
+
+// ── Robustness against malformed/missing input ──────────────────────────────
+
+test("missing or malformed raw factor is treated as absent, not thrown", () => {
+  const checked = checkEvidence({}, { chat: makeChat() });
+  for (const key of FACTOR_KEYS) {
+    assert.equal(checked[key].status, "absent");
+  }
+});
+
+test("present factor with no span/message_ids is downgraded rather than trusted", () => {
+  const raw = { ...emptyRaw(), breadth_deficiency: { status: "present", strength: 0.9, message_ids: [], span: "" } };
+  const checked = checkEvidence(raw, { chat: makeChat() });
+  assert.equal(checked.breadth_deficiency.status, "uncertain");
+});

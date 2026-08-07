@@ -38,6 +38,17 @@ knitr::opts_chunk$set(echo = FALSE)
 
 **版本**: v0.1（草稿，待冻结）
 
+> **2026-08-07 addendum（未升版本号，仅记录冲突与决定，详见
+> `server/src/prompts/PROMPT_MODULE_STATUS.md`的对应addendum）**：
+> 本文档下方"已确认"的两条结论——(1) 不存在独立的LLM语义判断组件；
+> (2) Frequency/Silent 采用方案A（每个checkpoint必须发消息，不允许
+> 因未检测到需求而Abstain）——与`Delibra_Agent_System_Architecture_A0(2).docx`
+> 和Methods manuscript描述的shared gate设计冲突。研究者已在2026-08-07
+> 明确决定推翻这两条，改为：新增Semantic Assessor LLM + Evidence Checker
+> （见架构文档Step 5-6），Frequency/Silent改用方案B（允许基于阈值的
+> Abstain）。本addendum不代表本文档已经按规范重新走版本流程冻结——
+> 只是先记录下这次决定，避免后续读者误以为下方内容仍然作数。
+
 ---
 
 # 研究问题与核心比较

@@ -1,0 +1,52 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Semantic Assessor Output Schema",
+  "description": "Semantic Assessor（Delibra_Agent_System_Architecture Step 5）只对Candidate Gate选出的候选角色对应的语义因子做判断，不生成干预消息，不选择角色。固定返回全部5个因子键，未被候选角色覆盖的因子应保持status='absent'、strength=0、message_ids=[]、span=''，禁止为未被候选覆盖的因子编造证据。每个status='present'或'uncertain'的因子，span必须是transcript中确实出现过的原文片段（由下游EvidenceChecker.js做确定性核验，不在这里核验）。",
+  "type": "object",
+  "properties": {
+    "breadth_deficiency": { "$ref": "#/definitions/factor" },
+    "group_preference": { "$ref": "#/definitions/factor" },
+    "justification_deficiency": { "$ref": "#/definitions/factor" },
+    "integration_deficiency": { "$ref": "#/definitions/factor" },
+    "self_correction": { "$ref": "#/definitions/factor" }
+  },
+  "required": [
+    "breadth_deficiency",
+    "group_preference",
+    "justification_deficiency",
+    "integration_deficiency",
+    "self_correction"
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "factor": {
+      "type": "object",
+      "description": "单个语义因子的判断结果。",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["present", "absent", "uncertain"],
+          "description": "present=该因子在当前讨论中确实存在；absent=不存在；uncertain=证据不足以判断，不得因为'不确定'就默认为present。"
+        },
+        "strength": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "status='present'时的强度估计；status='absent'或'uncertain'时必须为0。"
+        },
+        "message_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "description": "支撑该判断的消息ID列表；status='absent'时必须为空数组。"
+        },
+        "span": {
+          "type": "string",
+          "description": "支撑该判断的原文引用（逐字，不得改写或概括）；status='absent'时必须为空字符串。EvidenceChecker.js会核验这段文字是否真的出现在transcript中。"
+        }
+      },
+      "required": ["status", "strength", "message_ids", "span"],
+      "additionalProperties": false
+    }
+  }
+}

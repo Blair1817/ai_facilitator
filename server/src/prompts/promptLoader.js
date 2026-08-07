@@ -224,17 +224,18 @@ export function getAdaptivePromptBundle(selectedRole) {
  * available via round.get("generalInfo") but was not previously passing to
  * the LLM) -- it does not author new facilitation policy text.
  *
- * RELEVANT_DISCUSSION_STATE is UNDEFINED and is not sent to the LLM at all.
- * Corrected per explicit instruction: this field must not contain any
- * self-authored explanatory text, and no engineering-status commentary may
- * be sent to the model. The spec defines this as a required Generator input
- * field but does not specify its wording, and base.md's HARD CONSTRAINTS
- * forbid exposing raw feature values/thresholds/scoring to the model.
- * Until the research team defines this field, the section is omitted
- * entirely from the assembled text (no header, no placeholder line, no
- * content). Its undefined status is recorded only in
- * PROMPT_MODULE_STATUS.md and in code comments -- never in what gets sent
- * to the LLM.
+ * 2026-08-07 update: RELEVANT_DISCUSSION_STATE was previously UNDEFINED and
+ * omitted entirely (no header, no content) because nothing in the live
+ * pipeline produced a value for it that didn't risk leaking internal
+ * feature values/thresholds/reasoning, which base.md's HARD CONSTRAINTS
+ * forbid. Now that PolicyCompiler.js (Step 8, added the same day -- see
+ * PROMPT_MODULE_STATUS.md's addendum) produces a `plan` with an
+ * already-safe, plain-language `gap` description (built only from
+ * EvidenceChecker-verified spans, never from raw scores/thresholds), that
+ * plan's `gap` is what fills this field for Adaptive checkpoints. Static
+ * (and any Adaptive call made without a plan) still omits the section
+ * exactly as before -- passing no `relevantDiscussionState` argument is
+ * unchanged, additive-only behavior for every existing caller.
  */
 export function assembleDynamicUserContext({
   checkpoint,
@@ -243,15 +244,23 @@ export function assembleDynamicUserContext({
   cumulativePublicContext,
   localContext,
   recentAiMessages,
+  relevantDiscussionState,
 }) {
   const sections = [
     [`[CHECKPOINT]`, checkpoint ?? "(not provided)"],
     [`[SELECTED_ROLE]`, selectedRoleForDisplay ?? "(not provided)"],
     [`[TASK_GENERAL_CONTEXT]`, taskGeneralContext || "(not provided)"],
-    // RELEVANT_DISCUSSION_STATE intentionally omitted -- see doc comment above.
+  ];
+  // Only added when a caller actually supplies a value (PolicyCompiler's
+  // plan.gap, for Adaptive checkpoints with a plan) -- omitted entirely
+  // otherwise, preserving the exact prior behavior for every other caller.
+  if (relevantDiscussionState) {
+    sections.push([`[RELEVANT_DISCUSSION_STATE]`, relevantDiscussionState]);
+  }
+  sections.push(
     [`[CUMULATIVE_PUBLIC_CONTEXT]`, cumulativePublicContext || "(no messages yet)"],
     [`[LOCAL_CONTEXT]`, localContext || "(no messages yet)"],
     [`[RECENT_AI_MESSAGES]`, recentAiMessages || "(none yet)"],
-  ];
+  );
   return sections.map(([header, body]) => `${header}\n${body}`).join("\n\n");
 }

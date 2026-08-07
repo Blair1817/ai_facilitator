@@ -132,7 +132,22 @@ function normalizeForDuplicateCheck(text) {
  */
 export function runDeterministicValidation(
   parsed,
-  { selectedRole, eligibleMessageIds = [], aiOrSystemMessageIds = [], recentAiMessageTexts = [] } = {}
+  {
+    selectedRole,
+    eligibleMessageIds = [],
+    aiOrSystemMessageIds = [],
+    recentAiMessageTexts = [],
+    // 2026-08-07 addition: PolicyCompiler.js's plan.evidenceIds, passed
+    // through as DynamicContext.mjs's allowedGroundingIds. When present
+    // (Adaptive checkpoints with a plan only -- Static and any Adaptive
+    // call without a plan pass null/undefined here, unchanged from
+    // before), grounding IDs must be a subset of THIS narrower list, not
+    // just of eligibleMessageIds (the whole public transcript). This is
+    // the Brief's Step 9 "evidenceIds: 允许引用的message IDs" constraint --
+    // the Generator may only cite what the plan specifically identified as
+    // supporting evidence for the detected gap, not any public message.
+    allowedGroundingIds = null,
+  } = {}
 ) {
   const failedCriteria = [];
 
@@ -167,6 +182,13 @@ export function runDeterministicValidation(
   }
   if (groundingIds.some((id) => !eligibleSet.has(id))) {
     failedCriteria.push("UNKNOWN_GROUNDING_ID");
+  }
+
+  if (Array.isArray(allowedGroundingIds)) {
+    const allowedSet = new Set(allowedGroundingIds);
+    if (groundingIds.some((id) => !allowedSet.has(id))) {
+      failedCriteria.push("GROUNDING_ID_OUTSIDE_PLAN_EVIDENCE");
+    }
   }
 
   if (typeof message === "string") {

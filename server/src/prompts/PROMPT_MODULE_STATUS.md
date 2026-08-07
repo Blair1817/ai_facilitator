@@ -48,6 +48,48 @@ pending freeze). Two separate axes are now tracked, matching
 
 Static and Adaptive now share ONE post-prompt-selection pipeline: Generator call (GRAIL's existing `getLLMResponse`) → strict JSON parser → `generation.schema.json` (per-request `role` const) → deterministic validation (role/length/markdown/unexpected-field/grounding-ID checks) → publish once if valid, otherwise logged and treated as Silent. No semantic Validator LLM call, no regeneration/retry, no per-condition duplicate logic. See `prompts/GeneratorContract.mjs` (parser/schema/deterministic validation -- unchanged from the Prompt 3B revision, since this *is* "the one shared basic schema validator" the scope-reduction refactor asks for), `prompts/DynamicContext.mjs` (the one shared, id-annotated context builder for both conditions), and `callbacks.js`'s `buildGeneratorContext`/`runSharedGeneration`/`handleChat`. `selectedRole` for Adaptive still comes from the real, existing Controller (`utils.js`'s `selectRole()`, unmodified) -- the only condition-specific step is prompt/role selection, before this shared pipeline runs.
 
+## 2026-08-07 addendum: Semantic Assessor layer reinstated (research-team decision)
+
+The "GRAIL scope-reduction refactor" section above records a deliberate
+removal of the semantic Validator LLM and regeneration loop. Separately,
+`prompt_design_specification.Rmd`'s front matter records an even earlier
+"confirmed" decision that **no independent LLM judgment component** exists
+at all -- only Generator + Validator -- and recommends "Frequency/Silent
+方案A" (every checkpoint always produces a visible message; Adaptive is
+never allowed a plain, no-need-detected silence).
+
+On 2026-08-07 the study PI (via this implementation session) explicitly
+reversed both of those points, after being shown the direct conflict with
+`Delibra_Agent_System_Architecture_A0(2).docx` (the architecture document
+this reversal implements) and with the Methods manuscript's description of
+a single shared Act/Abstain gate:
+
+1. **A Semantic Assessor LLM + deterministic Evidence Checker are being
+   added** to the live Adaptive/Static-shared detection path (architecture
+   doc Steps 5-6). This is a new LLM call, distinct from the Generator and
+   from the still-dormant semantic Validator (`validatorPlaceholder.js`,
+   unchanged by this task).
+2. **"Frequency/Silent" is set to 方案B**, not 方案A: both conditions now
+   share one feature-plus-semantic-factor Act/Abstain gate computed
+   identically regardless of condition; a checkpoint can produce no message
+   at all when nothing clears threshold, not only on API/validation
+   failure.
+
+This addendum does not retroactively make `prompt_design_specification.Rmd`
+correct-as-written -- that document's own front matter requires it to be
+re-versioned before downstream prompts change on the strength of it. This
+addendum is the record of that reversal; the Rmd itself carries a short
+pointer to this section (see its own added addendum). The semantic Validator
+LLM and regeneration/retry loop (Methods 3.2.4) remain OUT of scope for this
+task and are unchanged -- only the detection-side Assessor/Evidence Checker
+and the Act/Abstain frequency question were in scope for this reversal.
+
+New files this addendum's implementation adds: `server/src/SemanticAssessor.js`,
+`server/src/EvidenceChecker.js`, `server/src/PolicyCompiler.js`,
+`server/src/prompts/source/assessor.md` (DRAFT, engineering-authored, not
+research-approved -- see that file's own header), and
+`server/src/prompts/source/assessor.schema.json`.
+
 ## What this means for the currently running system
 
 - **Static condition intervention is currently always blocked.** `static.md` is a skeleton; every Static-condition checkpoint will log a blocked reason and skip the LLM call. This is a correct, intended consequence of the real content's actual state, and now flows through the exact same `buildGeneratorContext`/`runSharedGeneration` path Adaptive uses (not a separate code path).

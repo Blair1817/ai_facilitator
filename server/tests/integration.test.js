@@ -1,13 +1,28 @@
 /**
- * Integration tests: feature server → selectRole
+ * Integration tests: feature server -> getCandidateRoles (Step 4 only)
  * Requires feature server to be running:
  *   python src/feature_server.py
+ *
+ * 2026-08-07 rewrite: the old version of this file called selectRole()
+ * directly on live feature-server output to get a final role, with no
+ * semantic layer involved -- that whole code path no longer exists (see
+ * utils.js's header comment / server/src/prompts/PROMPT_MODULE_STATUS.md's
+ * addendum). Role selection now requires a Semantic Assessor LLM call
+ * (SemanticAssessor.js) + Evidence Checker (EvidenceChecker.js) between
+ * features and evaluateGate()/chooseRole() -- that full path is covered by
+ * server/src/SemanticAssessor.test.mjs and server/src/EvidenceChecker.test.mjs
+ * using a mocked LLM, not here.
+ *
+ * This file keeps its original, narrower purpose (a cheap check against
+ * the REAL feature server, no LLM key needed) by testing only the part of
+ * the pipeline that is still purely feature-based: getCandidateRoles(),
+ * Step 4's high-recall pre-filter.
  *
  * Run:
  *   NODE_OPTIONS=--experimental-vm-modules npx jest tests/integration.test.js
  */
 
-import { selectRole } from "../src/utils.js";
+import { getCandidateRoles } from "../src/utils.js";
 
 const FEATURE_SERVER = "http://localhost:5001";
 
@@ -30,10 +45,10 @@ describe("Feature server", () => {
   });
 });
 
-// ── Challenger scenario ────────────────────────────────────────────────────────
+// ── Challenger candidate ─────────────────────────────────────────────────────
 
-describe("Integration: Challenger scenario", () => {
-  test("high agreement + no reasoning → challenger selected", async () => {
+describe("Integration: Challenger candidate", () => {
+  test("high agreement + no reasoning -> challenger becomes a candidate", async () => {
     const features = await getFeatures([
       ["Red",   "Yeah I agree Eldoron is the best"],
       ["Pink",  "Exactly makes sense to me"],
@@ -46,35 +61,14 @@ describe("Integration: Challenger scenario", () => {
     expect(features.agreement_score).toBeGreaterThan(0.5);
     expect(features.justification_score).toBeLessThan(0.4);
 
-    const result = selectRole(features, 300000, null, false);
-    expect(result.role).toBe("challenger");
+    expect(getCandidateRoles(features)).toContain("challenger");
   });
 });
 
-// ── Facilitator scenario ───────────────────────────────────────────────────────
+// ── Expander candidate ────────────────────────────────────────────────────────
 
-describe("Integration: Facilitator scenario", () => {
-  test("one dominant speaker → facilitator selected", async () => {
-    const features = await getFeatures([
-      ["Red", "I think Eldoron is the best choice because of its transport links"],
-      ["Red", "Also Eldoron has great sports facilities and welcoming residents"],
-      ["Red", "Furthermore Eldoron is a top tourist destination with good weather"],
-      ["Red", "And the infrastructure is excellent for large scale international events"],
-      ["Pink",  "Ok"],
-      ["Green", "Yes"],
-    ]);
-
-    expect(features.gini_score).toBeGreaterThan(0.4);
-
-    const result = selectRole(features, 300000, null, false);
-    expect(result.role).toBe("facilitator");
-  });
-});
-
-// ── Expander scenario ──────────────────────────────────────────────────────────
-
-describe("Integration: Expander scenario", () => {
-  test("repetitive messages → expander selected", async () => {
+describe("Integration: Expander candidate", () => {
+  test("repetitive messages -> expander becomes a candidate", async () => {
     const features = await getFeatures([
       ["Red",   "Eldoron is the best choice for the event"],
       ["Pink",  "Yes Eldoron is definitely the best choice"],
@@ -85,35 +79,14 @@ describe("Integration: Expander scenario", () => {
     ]);
 
     expect(features.novelty_score).toBeLessThan(0.6);
-
-    const result = selectRole(features, 300000, null, false);
-    expect(["expander", "challenger"]).toContain(result.role);
+    expect(getCandidateRoles(features)).toContain("expander");
   });
 });
 
-// ── Forced synthesiser ─────────────────────────────────────────────────────────
-
-describe("Integration: Forced synthesiser", () => {
-  test("fires in last 15 seconds regardless of features", async () => {
-    const features = await getFeatures([
-      ["Red",   "I think Eldoron is the best choice"],
-      ["Pink",  "What about Myloria though"],
-      ["Green", "Cragnio has some good points too"],
-      ["Red",   "We need to make a decision soon"],
-      ["Pink",  "Let me share what I know"],
-      ["Green", "The weather is an important factor"],
-    ]);
-
-    const result = selectRole(features, 15000, null, false);
-    expect(result.role).toBe("synthesiser");
-    expect(result.forced).toBe(true);
-  });
-});
-
-// ── Productive discussion ──────────────────────────────────────────────────────
+// ── No candidates -- Candidate Gate resolves Abstain without an LLM call ───────
 
 describe("Integration: Productive discussion", () => {
-  test("diverse substantive discussion → silent", async () => {
+  test("diverse substantive discussion -> no candidate roles (Candidate Gate would Abstain without calling the Semantic Assessor)", async () => {
     const features = await getFeatures([
       ["Red",   "The transportation infrastructure in Eldoron is excellent because of the new rail links"],
       ["Pink",  "However Myloria has stronger volunteer support according to the local council data"],
@@ -125,8 +98,6 @@ describe("Integration: Productive discussion", () => {
 
     expect(features.justification_score).toBeGreaterThan(0.5);
     expect(features.novelty_score).toBeGreaterThan(0.4);
-
-    const result = selectRole(features, 300000, null, false);
-    expect(result.role).toBe("silent");
+    expect(getCandidateRoles(features)).toEqual([]);
   });
 });
