@@ -75,32 +75,27 @@ test("callbacks.js: no direct facilitation === \"LLM\" style comparison remains"
   assert.doesNotMatch(callbacksSource, /facilitation\s*===?\s*["']LLM["']/);
 });
 
-// ── GRAIL scope-reduction refactor correction ───────────────────────────────
-// This file previously asserted TWO independent getLLMResponse call sites,
-// one textually inside each of the Static/Adaptive branches. That premise
-// is now FALSE, verified fresh against the current repo state: the scope-
-// reduction refactor's whole point is that Static and Adaptive share ONE
-// post-selection generation/validation/publication path
-// (runSharedGeneration, called once, unconditionally, after the condition-
-// specific prompt/role selection step). Asserting two separate call sites
-// would be asserting the OLD, now-intentionally-removed duplication. This
-// file is rewritten to validate the real, current, shared-path contract.
+// ── Approved condition-specific intervention permission ────────────────────
+// Static and Adaptive retain one checkpoint and one shared implementation of
+// generation/validation/publication, but reach it from separate permission
+// paths: Static directly; Adaptive only after its controller returns ACT.
 
-test("callbacks.js: Static and Adaptive select their prompt/role differently, but call the SAME shared generation path exactly once (no per-condition duplication)", () => {
+test("callbacks.js: Static bypasses Adaptive assessment while both conditions reuse the same shared generation implementation", () => {
   const handleChatSource = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
-  assert.match(handleChatSource, /facilitation\s*===\s*"adaptive"/, "the adaptive-only Controller/role-selection step must still be gated by facilitation===\"adaptive\"");
+  const staticStart = handleChatSource.indexOf('if (facilitation === "static")');
+  const staticEnd = handleChatSource.indexOf('if (facilitation !== "adaptive")', staticStart);
+  const featureStart = handleChatSource.indexOf("extractFeatures(", staticEnd);
+  const staticBlock = handleChatSource.slice(staticStart, staticEnd);
 
-  const buildCallSites = [...handleChatSource.matchAll(/buildGeneratorContext\(/g)];
-  const sharedCallSites = [...handleChatSource.matchAll(/runSharedGeneration\(/g)];
-  assert.equal(buildCallSites.length, 1, "buildGeneratorContext must be called exactly once per checkpoint, for both conditions");
-  assert.equal(sharedCallSites.length, 1, "runSharedGeneration must be called exactly once per checkpoint, for both conditions");
+  assert.ok(staticStart !== -1 && staticEnd !== -1 && featureStart !== -1);
+  assert.ok(staticStart < featureStart, "Static must branch before Adaptive feature extraction");
+  assert.match(staticBlock, /buildGeneratorContext\([\s\S]*?"static"[\s\S]*?null[\s\S]*?null/);
+  assert.match(staticBlock, /runSharedGeneration\(/);
+  assert.match(staticBlock, /return;/, "Static must return before entering the Adaptive assessment path");
+  assert.doesNotMatch(staticBlock, /extractFeatures|getCandidateRoles|assessSemanticFactors|checkEvidence|evaluateGate|chooseRole|compilePlan/);
 
-  // Neither call site may be textually nested inside a static-only or
-  // adaptive-only branch -- both conditions must reach the same call.
-  const adaptiveOnlyBlockStart = handleChatSource.indexOf('if (facilitation === "adaptive")');
-  const adaptiveOnlyBlockEnd = handleChatSource.indexOf("// ── Shared:");
-  assert.ok(adaptiveOnlyBlockStart !== -1 && adaptiveOnlyBlockEnd !== -1 && adaptiveOnlyBlockStart < adaptiveOnlyBlockEnd);
-  assert.ok(sharedCallSites[0].index >= adaptiveOnlyBlockEnd, "runSharedGeneration must be called after (outside) the adaptive-only role-selection block, not nested inside it");
+  assert.equal([...callbacksSource.matchAll(/async function runSharedGeneration\(/g)].length, 1, "there must still be exactly one shared generation implementation");
+  assert.equal([...handleChatSource.matchAll(/runSharedGeneration\(/g)].length, 2, "one Static branch and one Adaptive branch should call the same implementation");
 });
 
 test("callbacks.js: getLLMResponse has exactly one INVOCATION site in the whole file (the shared generation path), not one per facilitation branch", () => {

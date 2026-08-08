@@ -1,14 +1,14 @@
-// GRAIL scope-reduction refactor: verifies callbacks.js's collapsed,
-// SHARED Static/Adaptive generation path (requirement D.7-D.9). Two kinds
+// Verifies condition-specific intervention permission plus the shared
+// Static/Adaptive generation path. Two kinds
 // of coverage, matching this repo's existing convention (see
 // RoutingIntegration.test.mjs's header comment) of not executing
 // callbacks.js directly (it registers real Empirica listeners and imports
 // dotenv/fetch on load):
 //
 //   1. Structural assertions on callbacks.js's own source text, proving
-//      Static and Adaptive route through the same shared functions after
-//      prompt/role selection, with no per-condition duplicate generation/
-//      validation/publication/logging logic.
+//      Static bypasses Adaptive assessment, Adaptive ABSTAIN returns before
+//      generation, and both successful routes reuse the same generation/
+//      validation/publication implementation.
 //   2. A genuine behavioral run of the real production modules
 //      (LLMConfig.js's llmSystemPrompts, prompts/DynamicContext.mjs's
 //      buildDynamicUserContext, prompts/GeneratorContract.mjs's parser/
@@ -82,8 +82,9 @@ test("callbacks.js: invalid output at any stage sets outcome SILENT and returns 
 test("callbacks.js: an unsupported/unknown Adaptive role never reaches the shared LLM call (blocked before buildGeneratorContext returns usable content)", () => {
   const handleChatStart = callbacksSource.indexOf("async function handleChat");
   const handleChatBody = callbacksSource.slice(handleChatStart);
-  const buildIndex = handleChatBody.indexOf("buildGeneratorContext(");
-  const sharedCallIndex = handleChatBody.indexOf("runSharedGeneration(");
+  const adaptiveSelectionIndex = handleChatBody.indexOf("const chosenRole = chooseRole(");
+  const buildIndex = handleChatBody.indexOf("buildGeneratorContext(", adaptiveSelectionIndex);
+  const sharedCallIndex = handleChatBody.indexOf("runSharedGeneration(", adaptiveSelectionIndex);
   assert.ok(buildIndex !== -1 && sharedCallIndex !== -1 && buildIndex < sharedCallIndex, "buildGeneratorContext (which returns blocked:true for an unsupported role) must run before runSharedGeneration");
   // runSharedGeneration itself checks built.blocked before making any LLM call (see the shared-path ordering test above).
 });
@@ -93,12 +94,74 @@ test("callbacks.js: a per-Round checkpoint marker (lastHandledCheckpoint) guards
   assert.match(callbacksSource, /currentRound\.set\("lastHandledCheckpoint",\s*humanMessageCount\)/);
 });
 
+test("routing: Static reaches generation before and without every Adaptive assessment/selection function", () => {
+  const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
+  const staticStart = handleChatBody.indexOf('if (facilitation === "static")');
+  const staticEnd = handleChatBody.indexOf('if (facilitation !== "adaptive")', staticStart);
+  const staticBlock = handleChatBody.slice(staticStart, staticEnd);
+  const featureIndex = handleChatBody.indexOf("extractFeatures(", staticEnd);
+
+  assert.ok(staticStart !== -1 && staticEnd !== -1 && featureIndex !== -1);
+  assert.ok(staticStart < featureIndex, "Static branch must be entered before feature extraction");
+  assert.match(staticBlock, /routingDecision\s*=\s*"STATIC_REQUIRED_MESSAGE"/);
+  assert.match(staticBlock, /buildGeneratorContext\([\s\S]*?"static"[\s\S]*?null[\s\S]*?null/);
+  assert.match(staticBlock, /runSharedGeneration\(/);
+  assert.match(staticBlock, /return;/, "Static must terminate before Adaptive assessment begins");
+  for (const forbiddenCall of [
+    "extractFeatures(",
+    "getCandidateRoles(",
+    "assessSemanticFactors(",
+    "checkEvidence(",
+    "evaluateGate(",
+    "chooseRole(",
+    "compilePlan(",
+  ]) {
+    assert.equal(staticBlock.includes(forbiddenCall), false, `Static branch must not call ${forbiddenCall}`);
+  }
+  assert.doesNotMatch(staticBlock, /selectedRole|candidateRoles|gateDecision|ABSTAIN|\bWAIT\b|\bINTERVENE\b/);
+});
+
+test("routing: Adaptive ABSTAIN returns before prompt construction and Generator invocation", () => {
+  const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
+  const gateIndex = handleChatBody.indexOf("const gateResult = evaluateGate(");
+  const abstainStart = handleChatBody.indexOf("if (!gateResult.act)", gateIndex);
+  const roleSelectionIndex = handleChatBody.indexOf("const chosenRole = chooseRole(", abstainStart);
+  const adaptiveBuildIndex = handleChatBody.indexOf("buildGeneratorContext(", roleSelectionIndex);
+  const abstainBlock = handleChatBody.slice(abstainStart, roleSelectionIndex);
+
+  assert.ok(gateIndex !== -1 && abstainStart !== -1 && roleSelectionIndex !== -1 && adaptiveBuildIndex !== -1);
+  assert.match(abstainBlock, /gateResult\.reason/);
+  assert.match(abstainBlock, /game\.set\("llmLog"/);
+  assert.match(abstainBlock, /return;/);
+  assert.doesNotMatch(abstainBlock, /buildGeneratorContext|runSharedGeneration|chooseRole|compilePlan/);
+  assert.ok(abstainStart < roleSelectionIndex && roleSelectionIndex < adaptiveBuildIndex);
+});
+
+test("routing: Static and Adaptive retain the same existing six-human-message checkpoint opportunity", () => {
+  const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
+  const checkpointIndex = handleChatBody.indexOf("if (messagesSince < 6) return;");
+  const staticIndex = handleChatBody.indexOf('if (facilitation === "static")');
+  const adaptiveFeatureIndex = handleChatBody.indexOf("extractFeatures(");
+  assert.ok(checkpointIndex !== -1 && checkpointIndex < staticIndex && staticIndex < adaptiveFeatureIndex);
+  assert.equal([...handleChatBody.matchAll(/messagesSince\s*<\s*6/g)].length, 1, "there must be one shared checkpoint threshold, not one per condition");
+});
+
+test("routing: no requireLLMMessage switch or Generator-level WAIT/INTERVENE/ABSTAIN contract was introduced", () => {
+  assert.doesNotMatch(callbacksSource, /requireLLMMessage/);
+  const sharedFn = callbacksSource.slice(
+    callbacksSource.indexOf("async function runSharedGeneration"),
+    callbacksSource.indexOf("// ── onGameStart"),
+  );
+  assert.doesNotMatch(sharedFn, /\bWAIT\b|\bINTERVENE\b|Generator-level ABSTAIN/);
+});
+
 // ── behavioral: real production modules wired the same way callbacks.js wires them ──
 
 process.argv[1] = path.join(__dirname, "fake-entry.js");
 const { llmSystemPrompts } = await import("./LLMConfig.js");
 const { buildDynamicUserContext } = await import("./prompts/DynamicContext.mjs");
 const { parseGeneratorOutputStrict, validateAgainstGenerationSchema, runDeterministicValidation } = await import("./prompts/GeneratorContract.mjs");
+const { evaluateGate, THRESHOLDS } = await import("./utils.js");
 
 function humanMsg(name, text, ts) {
   return { text, ts, sender: { id: `human-${name}`, name, avatar: "x" } };
@@ -132,9 +195,9 @@ function postIfValid(game, llmAction, expectedRole) {
 // a logEntry object with the same reason/outcome fields runSharedGeneration
 // writes onto the real game.llmLog entry, so tests can assert an explicit
 // failure reason is actually produced, not just that nothing was published.
-async function runProductionCheckpoint({ game, facilitation, role, chat, generalInfo, generatorCall }) {
+async function runProductionCheckpoint({ game, facilitation, role, chat, generalInfo, generatorCall, promptResultOverride = null }) {
   const logEntry = { requestMade: false, requestSuccess: false, outcome: "SILENT", reason: "" };
-  const promptResult = llmSystemPrompts(facilitation, role);
+  const promptResult = promptResultOverride || llmSystemPrompts(facilitation, role);
   if (promptResult.blocked) {
     logEntry.reason = `AI request blocked: ${promptResult.reason}`;
     return { blocked: true, reason: promptResult.reason, logEntry };
@@ -208,6 +271,182 @@ test("integration: Adaptive (challenger role) and Static both go through the ide
   });
   assert.equal(staticResult.blocked, true);
   assert.equal(staticGame.chat.length, 0);
+});
+
+const READY_STATIC_PROMPT_FIXTURE = {
+  blocked: false,
+  content: "Return the required Static JSON message.",
+  metadata: {
+    promptName: "static-test-fixture",
+    promptVersion: "test-only",
+    promptStatus: "test-only",
+    sourceCompleteness: "test-only",
+    condition: "static",
+    selectedRole: null,
+    generationRole: "STATIC",
+  },
+};
+
+test("integration: a ready Static prompt requires no candidate approval and publishes one schema-valid STATIC message", async () => {
+  const game = new MockGame();
+  let generatorCallCount = 0;
+  const result = await runProductionCheckpoint({
+    game,
+    facilitation: "static",
+    role: null,
+    chat: [humanMsg("Alice", "hello", 1)],
+    generalInfo: "task",
+    promptResultOverride: READY_STATIC_PROMPT_FIXTURE,
+    generatorCall: async () => {
+      generatorCallCount += 1;
+      return { success: true, rawText: JSON.stringify({ role: "STATIC", message: "Please continue the discussion.", groundingMessageIds: [] }) };
+    },
+  });
+  assert.equal(generatorCallCount, 1);
+  assert.equal(result.published, true);
+  assert.equal(game.chat.length, 1);
+  assert.equal(result.candidate.role, "STATIC");
+});
+
+test("integration: Static API, parser, schema, and deterministic-validation failures remain non-public and explicitly logged", async (t) => {
+  const cases = [
+    {
+      name: "API",
+      generatorCall: async () => ({ success: false, error: "test API failure" }),
+      expectedReason: /API Error/,
+    },
+    {
+      name: "parser",
+      generatorCall: async () => ({ success: true, rawText: "not-json" }),
+      expectedReason: /Invalid Generator output/,
+    },
+    {
+      name: "schema/WAIT role",
+      generatorCall: async () => ({ success: true, rawText: JSON.stringify({ role: "WAIT", message: "wait", groundingMessageIds: [] }) }),
+      expectedReason: /generation\.schema\.json/,
+    },
+    {
+      name: "deterministic duplicate",
+      chat: [
+        humanMsg("Alice", "hello", 1),
+        { text: "Please continue the discussion.", ts: 2, sender: { id: "ai", name: "Facilitator", avatar: "x" } },
+      ],
+      generatorCall: async () => ({ success: true, rawText: JSON.stringify({ role: "STATIC", message: "Please continue the discussion.", groundingMessageIds: [] }) }),
+      expectedReason: /DUPLICATE_OF_RECENT_AI_MESSAGE/,
+    },
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async () => {
+      const game = new MockGame();
+      const result = await runProductionCheckpoint({
+        game,
+        facilitation: "static",
+        role: null,
+        chat: scenario.chat || [humanMsg("Alice", "hello", 1)],
+        generalInfo: "task",
+        promptResultOverride: READY_STATIC_PROMPT_FIXTURE,
+        generatorCall: scenario.generatorCall,
+      });
+      assert.equal(result.published, false);
+      assert.equal(game.chat.length, 0);
+      assert.equal(result.logEntry.outcome, "SILENT");
+      assert.match(result.logEntry.reason, scenario.expectedReason);
+    });
+  }
+});
+
+test("integration: selected Adaptive Generator output cannot add a WAIT/INTERVENE decision or change its E/C/S role", async () => {
+  for (const invalidCandidate of [
+    { role: "WAIT", message: "wait", groundingMessageIds: [] },
+    { role: "INTERVENE", message: "act", groundingMessageIds: [] },
+    { role: "INFORMATION_EXPANDER", message: "act", groundingMessageIds: [], decision: "INTERVENE" },
+  ]) {
+    const game = new MockGame();
+    const result = await runProductionCheckpoint({
+      game,
+      facilitation: "adaptive",
+      role: "expander",
+      chat: [humanMsg("Alice", "hello", 1)],
+      generalInfo: "task",
+      generatorCall: async () => ({ success: true, rawText: JSON.stringify(invalidCandidate) }),
+    });
+    assert.equal(result.published, false);
+    assert.equal(game.chat.length, 0);
+    assert.match(result.logEntry.reason, /generation\.schema\.json/);
+  }
+});
+
+test("integration: Adaptive E/C/S selections each call exactly one matching Generator", async () => {
+  const cases = [
+    ["expander", "INFORMATION_EXPANDER"],
+    ["challenger", "EVIDENCE_CHALLENGER"],
+    ["synthesiser", "INFORMATION_SYNTHESISER"],
+  ];
+  for (const [controllerRole, generationRole] of cases) {
+    const game = new MockGame();
+    let generatorCallCount = 0;
+    const result = await runProductionCheckpoint({
+      game,
+      facilitation: "adaptive",
+      role: controllerRole,
+      chat: [humanMsg("Alice", "hello", 1)],
+      generalInfo: "task",
+      generatorCall: async () => {
+        generatorCallCount += 1;
+        return { success: true, rawText: JSON.stringify({ role: generationRole, message: `Message for ${controllerRole}`, groundingMessageIds: [] }) };
+      },
+    });
+    assert.equal(generatorCallCount, 1, `${controllerRole} must call exactly one Generator`);
+    assert.equal(result.published, true);
+    assert.equal(result.candidate.role, generationRole);
+    assert.equal(game.chat.length, 1);
+  }
+});
+
+test("integration: uncertain semantic evidence leaves Adaptive at ABSTAIN before any Generator call", () => {
+  const features = {
+    novelty_score: 0.1,
+    redundancy_score: 0.9,
+    agreement_score: 0.9,
+    justification_score: 0.9,
+  };
+  const uncertain = { status: "uncertain", strength: 0, message_ids: [], span: "" };
+  const checkedFactors = {
+    breadth_deficiency: uncertain,
+    group_preference: uncertain,
+    justification_deficiency: uncertain,
+    integration_deficiency: uncertain,
+    self_correction: uncertain,
+  };
+  const gateResult = evaluateGate(
+    features,
+    checkedFactors,
+    ["expander", "challenger", "synthesiser"],
+    { remainingTime: 300000, previousCheckedFactors: null, lastRole: null },
+  );
+  let generatorCallCount = 0;
+  if (gateResult.act) generatorCallCount += 1;
+  assert.equal(gateResult.act, false);
+  assert.match(gateResult.reason, /semantic factors|Evidence Checker/);
+  assert.equal(generatorCallCount, 0);
+});
+
+test("routing regression: feature, candidate, score, margin, and time thresholds are unchanged", () => {
+  assert.deepEqual(THRESHOLDS, {
+    expander: { novelty_weight: 0.6, redundancy_weight: 0.4, expander_threshold: 0.35, redundancy_threshold: 0.85 },
+    challenger: { agreement_weight: 0.5, justification_weight: 0.5, threshold: 0.6 },
+    synthesiser: { agreement_weight: 0.5, justification_weight: 0.5, threshold: 0.6, forced_trigger_seconds: 20 },
+    candidate: {
+      expander_novelty_max: 0.5,
+      expander_redundancy_min: 0.5,
+      challenger_agreement_min: 0.4,
+      synthesiser_agreement_min: 0.4,
+      synthesiser_justification_min: 0.4,
+    },
+    weights: { feature: 0.6, semantic: 0.4, persistence: 0, stage_fit: 0, penalty: 0 },
+    gate: { min_time_for_intervention_seconds: 10, margin: 0.05 },
+  });
 });
 
 test("integration: unsupported/unknown Adaptive role (e.g. Controller's 'facilitator') makes no LLM request and is not silently mapped to Static", async () => {
