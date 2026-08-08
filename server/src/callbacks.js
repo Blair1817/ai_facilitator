@@ -49,11 +49,10 @@ async function getLLMResponse(messages) {
       return { success: false, error: "LLM response missing output text" };
     }
     // rawText is additive (existing "data" field/behavior for callers is
-    // unchanged) -- it exists so the Adaptive path's strict parser
+    // unchanged) -- it exists so the shared Generator path's strict parser
     // (server/src/prompts/GeneratorContract.mjs) can parse the untouched
     // response text itself, rather than trust this function's own
-    // best-effort JSON.parse below (which the Static path still relies on
-    // unchanged).
+    // best-effort JSON.parse below.
     return { success: true, data: JSON.parse(text), rawText: text };
   } catch (error) {
     console.error("LLM endpoint error:", error);
@@ -622,14 +621,48 @@ async function handleChat(env, { game }) {
     reason:         "",
   };
 
-  // ── Shared Steps 1-3: feature extraction now runs for BOTH conditions.
-  // Before 2026-08-07 this whole block was inside `if (facilitation ===
-  // "adaptive")` -- Static had NO feature-based gate at all and fired
-  // unconditionally whenever static.md's content was ready, while only
-  // Adaptive could Abstain on low scores. That directly violated Methods
-  // 3.2.2 / the architecture doc's single shared Act/Abstain gate. See
-  // server/src/prompts/PROMPT_MODULE_STATUS.md's addendum for the full
-  // decision record. ───────────────────────────────────────────────────
+  // Static and Adaptive share the checkpoint opportunity above, but not the
+  // intervention-permission policy. Static's fixed policy requires a message
+  // attempt at every checkpoint, so it bypasses every discussion-state
+  // assessment step and goes directly to the shared Generator/validation/
+  // publication path. A blocked prompt or technical failure remains SILENT
+  // and logged; it is not a discussion-state ABSTAIN and never fabricates a
+  // fallback participant-facing message.
+  if (facilitation === "static") {
+    logEntry.routingDecision = "STATIC_REQUIRED_MESSAGE";
+    const built = buildGeneratorContext(
+      game,
+      players,
+      chat,
+      remainingTime,
+      timeElapsed,
+      "static",
+      null,
+      null,
+    );
+    await runSharedGeneration(
+      game,
+      chatKey,
+      built,
+      logEntry,
+      originatingRoundId,
+      originatingStageId,
+    );
+    game.set("llmLog", [...(game.get("llmLog") || []), logEntry]);
+    Empirica.flush();
+    return;
+  }
+
+  // Fail closed on an unexpected Round condition without sending it through
+  // either policy. The real S1-S4 table assigns only static/adaptive.
+  if (facilitation !== "adaptive") {
+    logEntry.reason = `Unrecognized facilitation condition: ${JSON.stringify(facilitation)}`;
+    game.set("llmLog", [...(game.get("llmLog") || []), logEntry]);
+    Empirica.flush();
+    return;
+  }
+
+  // ── Adaptive-only Steps 1-3: discussion feature extraction ───────────
   const localMessages = buildLocalContext(getHumanMessages(chat), 6);
   const featureStart  = Date.now();
   const featureResult = await extractFeatures(localMessages);
@@ -646,7 +679,7 @@ async function handleChat(env, { game }) {
   logEntry.featureLatency = Date.now() - featureStart;
 
   if (!featureResult.success) {
-    logEntry.reason = `Feature server unavailable: ${featureResult.error} — skipping intervention (both conditions share this gate)`;
+    logEntry.reason = `Feature server unavailable: ${featureResult.error} — Adaptive intervention skipped`;
     game.set("llmLog", [...(game.get("llmLog") || []), logEntry]);
     Empirica.flush();
     return;
@@ -655,17 +688,15 @@ async function handleChat(env, { game }) {
   const features = featureResult.data;
   logEntry.featureScores = features;
 
-  // Step 4: Candidate Gate -- shared, deterministic, no LLM call. An empty
+  // Step 4: Candidate Gate -- Adaptive-only, deterministic, no LLM call. An empty
   // result resolves straight to Abstain below without ever calling the
   // Semantic Assessor (Brief Step 4: "如果候选角色为空 -> Abstain，不调用LLM").
   const candidateRoles = getCandidateRoles(features);
   logEntry.candidateRoles = candidateRoles;
 
-  // Steps 5-6: Semantic Assessor LLM + Evidence Checker. Only run when the
-  // Candidate Gate found something worth investigating. This is the ONE
-  // semantic-layer LLM call per checkpoint, made identically regardless of
-  // `facilitation` -- Static is bound by its outcome exactly like
-  // Adaptive, even though Static ignores which role it points to.
+  // Steps 5-6: Semantic Assessor LLM + Evidence Checker. Only run for
+  // Adaptive and only when the Candidate Gate found something worth
+  // investigating.
   let checkedFactors = null;
   if (candidateRoles.length > 0) {
     const assessorStart = Date.now();
@@ -695,15 +726,13 @@ async function handleChat(env, { game }) {
     } else {
       // Assessor unavailable/invalid this checkpoint: checkedFactors stays
       // null (never fabricated). evaluateGate() below correctly finds no
-      // role can clear its hard gate without checked factors -- for both
-      // conditions equally, not just Adaptive.
+      // role can clear its hard gate without checked factors.
       logEntry.assessorError = `${assessorResult.code}: ${assessorResult.error}`;
     }
   }
 
-  // Step 7: THE shared Act/Abstain gate. Same call, same inputs, for
-  // Static and Adaptive -- this is what actually closes the missing-
-  // shared-gate gap.
+  // Step 7: Adaptive intervention-permission gate. ABSTAIN returns before
+  // any Generator prompt is built or any Generator request is made.
   const lastRole                = game.get("lastRole");
   const previousCheckedFactors  = game.get("lastCheckedFactors") || null;
   const gateResult = evaluateGate(features, checkedFactors, candidateRoles, {
@@ -729,41 +758,30 @@ async function handleChat(env, { game }) {
     logEntry.reason = gateResult.reason;
     game.set("llmLog", [...(game.get("llmLog") || []), logEntry]);
     Empirica.flush();
-    return; // Abstain applies identically to Static and Adaptive here.
+    return;
   }
 
-  // ── Condition-specific step: now that the shared gate has said Act,
-  // decide the prompt/plan. This is the ONLY remaining difference between
-  // Static and Adaptive -- everything after this point (context building,
-  // the Generator LLM call, parsing, validation, publication, logging) is
-  // the single shared path both conditions use. ─────────────────────────
-  let role       = null;  // Static always uses the fixed STATIC prompt, no role.
-  let plan       = null;  // Static never gets a PolicyCompiler plan.
-  let chosenRole = null;  // Adaptive-only bookkeeping, used after publication below.
+  // Adaptive-only role selection and plan compilation. The Generator receives
+  // the already-selected E/C/S identity and has no WAIT/INTERVENE decision.
+  const synthesiserFired = game.get("synthesiserFired");
+  const chosenRole = chooseRole(gateResult, { remainingTime, lastRole, synthesiserFired });
 
-  if (facilitation === "adaptive") {
-    const synthesiserFired = game.get("synthesiserFired");
-    chosenRole = chooseRole(gateResult, { remainingTime, lastRole, synthesiserFired });
+  logEntry.selectedRole = chosenRole.role;
+  logEntry.forced       = chosenRole.forced;
+  logEntry.reasoning    = chosenRole.reasoning;
 
-    logEntry.selectedRole = chosenRole.role;
-    logEntry.forced       = chosenRole.forced;
-    logEntry.reasoning    = chosenRole.reasoning;
-
-    const chatWithIds        = withMessageIds(chat);
-    const eligibleMessageIds = chatWithIds.filter((m) => m.sender.id !== "ai").map((m) => m.messageId);
-    plan = compilePlan(chosenRole.role, checkedFactors, {
-      score:     gateResult.scores[chosenRole.role],
-      threshold: getRoleThreshold(chosenRole.role),
-      eligibleMessageIds,
-    });
-    logEntry.plan = plan;
-
-    role = chosenRole.role;
-  }
+  const chatWithIds        = withMessageIds(chat);
+  const eligibleMessageIds = chatWithIds.filter((m) => m.sender.id !== "ai").map((m) => m.messageId);
+  const plan = compilePlan(chosenRole.role, checkedFactors, {
+    score:     gateResult.scores[chosenRole.role],
+    threshold: getRoleThreshold(chosenRole.role),
+    eligibleMessageIds,
+  });
+  logEntry.plan = plan;
 
   // ── Shared: build context, call the Generator LLM once, validate,
   // publish once, log ──────────────────────────────────────────────────
-  const built  = buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, facilitation, role, plan);
+  const built  = buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, "adaptive", chosenRole.role, plan);
   const result = await runSharedGeneration(
     game,
     chatKey,
@@ -773,10 +791,9 @@ async function handleChat(env, { game }) {
     originatingStageId
   );
 
-  if (result.published && facilitation === "adaptive") {
-    // Adaptive-only Controller cooldown bookkeeping -- not part of the
-    // shared publication path itself, just updates state the Controller
-    // reads on its next turn.
+  if (result.published) {
+    // Controller cooldown bookkeeping is updated only after an Adaptive
+    // specialist message is actually published.
     game.set("lastRole", chosenRole.role);
     if (chosenRole.role === "synthesiser" && chosenRole.forced) {
       game.set("synthesiserFired", true);
