@@ -6,6 +6,7 @@ import {
 } from "@empirica/core/player/classic/react";
 import { Loading } from "@empirica/core/player/react";
 import { Button } from "../components/Button";
+import { clearDraftKeys, draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
 import {
   clearIncorrectReviewQuizAnswers,
   evaluateReviewQuiz,
@@ -19,7 +20,13 @@ export function ReviewQuiz() {
   const round = useRound();
   const taskVersion = round?.get("taskVersion") ?? null;
   const quiz = getReviewQuiz(taskVersion);
-  const [answers, setAnswers] = useState({});
+  const answersDraftKey = draftKey({
+    playerId: player.id,
+    roundId: round?.id,
+    form: "reviewQuiz",
+    field: "answers",
+  });
+  const [answers, setAnswers] = usePersistentDraft(answersDraftKey, {});
   const [remediationSections, setRemediationSections] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const processingRef = useRef(false);
@@ -64,8 +71,21 @@ export function ReviewQuiz() {
     processingRef.current = true;
     setIsProcessing(true);
     const evaluation = evaluateReviewQuiz(taskVersion, answers);
+    const previousAttempts = player.round.get("reviewQuizAttempts") || [];
+    const attempt = {
+      attemptNumber: previousAttempts.length + 1,
+      taskVersion,
+      answers: { ...answers },
+      questionCorrectness: evaluation.questionCorrectness,
+      incorrectQuestionIds: evaluation.incorrectQuestionIds,
+      allCorrect: evaluation.allCorrect,
+      submittedAt: Date.now(),
+    };
+    player.round.set("reviewQuizAttempts", [...previousAttempts, attempt]);
 
     if (evaluation.allCorrect) {
+      player.round.set("reviewQuizResult", attempt);
+      clearDraftKeys([answersDraftKey]);
       player.stage.set("submit", true);
       return;
     }

@@ -2,6 +2,7 @@ import { usePlayer, useRound } from "@empirica/core/player/classic/react";
 import React, { useState } from "react";
 import { Alert } from "../components/Alert";
 import { Button } from "../components/Button";
+import { clearDraftKeys, draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
 
 export function SubjectiveSurvey() {
     const labelClassName = "block text-md font-bold text-gray-700 my-2";
@@ -13,20 +14,24 @@ export function SubjectiveSurvey() {
     const facilitation = round?.get("facilitation");
     const playerName = player.get("name");
 
-    // Define state variables for each question
-    const [question1, setQuestion1] = useState("");
-    const [question2, setQuestion2] = useState("");
-    const [question3, setQuestion3] = useState("");
-    const [question4, setQuestion4] = useState("");
-    const [question5, setQuestion5] = useState("");
-    const [question6, setQuestion6] = useState("");
-    const [question7, setQuestion7] = useState("");
-    const [question8, setQuestion8] = useState("");
-    const [question9, setQuestion9] = useState("");
-    const [question10, setQuestion10] = useState("");
-    const [question11, setQuestion11] = useState("");
-    const [question12, setQuestion12] = useState("");
-    const [question13, setQuestion13] = useState("");
+    // Drafts stay in this browser until final submission. This survives a
+    // refresh/reconnect without adding every keystroke to Tajriba's immutable
+    // research event log.
+    const keyFor = (field) => draftKey({ playerId: player.id, roundId: round?.id, form: "subjectiveSurvey", field });
+    const draftKeys = Array.from({ length: 13 }, (_, index) => keyFor(`question${index + 1}`));
+    const [question1, setQuestion1] = usePersistentDraft(draftKeys[0], "");
+    const [question2, setQuestion2] = usePersistentDraft(draftKeys[1], "");
+    const [question3, setQuestion3] = usePersistentDraft(draftKeys[2], "");
+    const [question4, setQuestion4] = usePersistentDraft(draftKeys[3], "");
+    const [question5, setQuestion5] = usePersistentDraft(draftKeys[4], "");
+    const [question6, setQuestion6] = usePersistentDraft(draftKeys[5], "");
+    const [question7, setQuestion7] = usePersistentDraft(draftKeys[6], "");
+    const [question8, setQuestion8] = usePersistentDraft(draftKeys[7], "");
+    const [question9, setQuestion9] = usePersistentDraft(draftKeys[8], "");
+    const [question10, setQuestion10] = usePersistentDraft(draftKeys[9], "");
+    const [question11, setQuestion11] = usePersistentDraft(draftKeys[10], "");
+    const [question12, setQuestion12] = usePersistentDraft(draftKeys[11], "");
+    const [question13, setQuestion13] = usePersistentDraft(draftKeys[12], "");
     const [submitting, setSubmitting] = useState(false);
 
     const alwaysVisibleComplete = [question1, question2, question3, question4, question5, question6]
@@ -66,8 +71,10 @@ export function SubjectiveSurvey() {
             facilitatorSynthesis: question11,
             facilitatorFocus: question12,
             facilitatorPreference: question13,
+            submittedAt: Date.now(),
 
         });
+        clearDraftKeys(draftKeys);
         player.stage.set("submit", true);
     }
 

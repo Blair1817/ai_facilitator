@@ -3,6 +3,11 @@
 *.zip
 *.csv
 **/.DS_Store
+**/__pycache__/
+*.py[cod]
 archive/**
+reversible_baselines/*.tar.gz
 TODO.md
 .empirica/empirica.toml
+.empirica/backups/
+client/vite.config.js.timestamp-*.mjs

@@ -90,3 +90,111 @@ test("synthesiser plan pulls from integration_deficiency only", () => {
   assert.deepEqual([...plan.evidenceIds].sort(), ["m2", "m3"]); // m5 (breadth_deficiency) excluded -- not this role's factor
   assert.match(plan.gap, /organised or compared/);
 });
+
+test("synthesiser plan includes validated attributed-but-uncompared relation messages", () => {
+  const checked = {
+    breadth_deficiency: absent(),
+    group_preference: absent(),
+    justification_deficiency: absent(),
+    integration_deficiency: present({ message_ids: ["m0"], span: "fragmented evidence" }),
+    self_correction: absent(),
+    evidenceRelations: [
+      { messageId: "m0", attributed: true, compared: false, integrated: false },
+      { messageId: "m1", attributed: true, compared: false, integrated: false },
+      { messageId: "m2", attributed: true, compared: true, integrated: false },
+    ],
+  };
+  const plan = compilePlan("synthesiser", checked, {
+    score: 0.8,
+    threshold: 0.6,
+    eligibleMessageIds: ["m0", "m1", "m2"],
+  });
+  assert.deepEqual(plan.evidenceIds, ["m0", "m1"]);
+});
+
+// ── Delibra spec §11 additions: target / requiredReasoningAct / answerableQuestionTemplate
+//    (added 2026-08-11 to close the spec gap; the Validator's
+//    `requiredReasoningActMissing` and `unanswerable` booleans check
+//    the Generator actually executed the act / produced an answerable
+//    question matching the template's intent). ─────────────────────────────────
+
+test("plan includes requiredReasoningAct + answerableQuestionTemplate, frozen per role", () => {
+  const checked = {
+    breadth_deficiency: present({ message_ids: ["m0"], span: "x" }),
+    group_preference: absent(), justification_deficiency: absent(), integration_deficiency: absent(), self_correction: absent(),
+  };
+  const expander = compilePlan("expander", checked, { score: 0.9, threshold: 0.5, eligibleMessageIds: ["m0"] });
+  const challenger = compilePlan("challenger", { ...checked, group_preference: present(), justification_deficiency: present() }, { score: 0.9, threshold: 0.5, eligibleMessageIds: ["m0"] });
+  const synthesiser = compilePlan("synthesiser", { ...checked, integration_deficiency: present() }, { score: 0.9, threshold: 0.5, eligibleMessageIds: ["m0"] });
+
+  assert.equal(expander.requiredReasoningAct, "invite_missing_task_relevant_information_or_consideration");
+  assert.match(expander.answerableQuestionTemplate, /additional task-relevant facts/);
+
+  assert.equal(challenger.requiredReasoningAct, "ask_for_evidence_or_justification");
+  assert.match(challenger.answerableQuestionTemplate, /What evidence or reasoning supports/);
+
+  assert.equal(synthesiser.requiredReasoningAct, "request_specific_comparison_or_tradeoff");
+  assert.match(synthesiser.answerableQuestionTemplate, /How do.*compare on/);
+});
+
+test("expander target: missing_label with span when factor has one; generic label otherwise", () => {
+  const withSpan = compilePlan(
+    "expander",
+    { breadth_deficiency: present({ message_ids: [], span: "no one mentioned commute time" }), group_preference: absent(), justification_deficiency: absent(), integration_deficiency: absent(), self_correction: absent() },
+    { score: 0.9, threshold: 0.5, eligibleMessageIds: [] }
+  );
+  assert.equal(withSpan.target.kind, "missing_label");
+  assert.match(withSpan.target.label, /commute time/);
+
+  const withoutSpan = compilePlan(
+    "expander",
+    { breadth_deficiency: present({ message_ids: [], span: "" }), group_preference: absent(), justification_deficiency: absent(), integration_deficiency: absent(), self_correction: absent() },
+    { score: 0.9, threshold: 0.5, eligibleMessageIds: [] }
+  );
+  assert.equal(withoutSpan.target.kind, "missing_label");
+  assert.match(withoutSpan.target.label, /missing task-relevant information/);
+});
+
+test("challenger target: message-id of the first group_preference message (the preference owner)", () => {
+  const plan = compilePlan(
+    "challenger",
+    {
+      breadth_deficiency: absent(),
+      group_preference: present({ message_ids: ["m3", "m7"], span: "Eldoron is best" }),
+      justification_deficiency: present({ message_ids: ["m3"], span: "no real reason" }),
+      integration_deficiency: absent(),
+      self_correction: absent(),
+    },
+    { score: 0.9, threshold: 0.5, eligibleMessageIds: ["m3", "m7"] }
+  );
+  assert.equal(plan.target.kind, "message");
+  assert.equal(plan.target.messageId, "m3"); // first message_id of the group_preference factor, not m7
+});
+
+test("synthesiser target: message-id of the first integration_deficiency message (the spot of fragmented evidence)", () => {
+  const plan = compilePlan(
+    "synthesiser",
+    {
+      breadth_deficiency: absent(),
+      group_preference: absent(),
+      justification_deficiency: absent(),
+      integration_deficiency: present({ message_ids: ["m10", "m11"], span: "fragmented" }),
+      self_correction: absent(),
+    },
+    { score: 0.9, threshold: 0.5, eligibleMessageIds: ["m10", "m11"] }
+  );
+  assert.equal(plan.target.kind, "message");
+  assert.equal(plan.target.messageId, "m10");
+});
+
+test("target is null when role's factors have no usable source (score-only selection with no verified span)", () => {
+  // The "no single verified span available" fallback path.
+  const plan = compilePlan(
+    "synthesiser",
+    { breadth_deficiency: absent(), group_preference: absent(), justification_deficiency: absent(), integration_deficiency: absent(), self_correction: absent() },
+    { score: 0.65, threshold: 0.6, eligibleMessageIds: [] }
+  );
+  assert.equal(plan.target, null);
+  // Other spec-§11 fields should still be present (they're role-fixed, not factor-derived).
+  assert.equal(plan.requiredReasoningAct, "request_specific_comparison_or_tradeoff");
+});

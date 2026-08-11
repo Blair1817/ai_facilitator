@@ -9,6 +9,14 @@ Source provenance: user-provided Prompt source package (not attributed to
 any specific author), originally at
 `/Users/apple/Library/CloudStorage/OneDrive-UniversityCollegeLondon/UG/Non-academic Info/U1 科研/LLM/untitled folder`.
 
+**v2 design (Phase 2, 2026-08-10)**: the experiment is now run by **TWO
+independent facilitator agents** -- the **Static AI facilitator**
+(Alsobay 2026 D.2 replication) and the **Adaptive AI facilitator**
+(specialist + generalist modes). Each is a separate system with its own
+prompt path, its own role enum entry, and its own runtime identity; they
+must not be confused or have their prompt files mixed. See the v2 entries
+in the table below and `audit-phase1.md` §0, §2 contract 4, §3.1, §3.2.
+
 ## File-by-file status
 
 **Correction**: an earlier version of this document used "Complete" to

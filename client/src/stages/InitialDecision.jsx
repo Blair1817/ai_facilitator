@@ -1,10 +1,11 @@
-import React, { useState } from "react";
+import React from "react";
 import { usePlayer, usePlayers, useGame, useRound } from "@empirica/core/player/classic/react";
 import { Loading } from "@empirica/core/player/react";
 import Slider from "@mui/material/Slider";
 import { Button } from "../components/Button";
 import { PlayerSpecificInfo } from "../components/PlayerSpecificInfo.jsx";
 import { RenderMarkdown } from "../components/RenderMarkdown.jsx";
+import { clearDraftKeys, draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
 
 export function InitialDecision() {
   const player = usePlayer();
@@ -38,8 +39,10 @@ export function InitialDecision() {
   // decision record.
   const roundIndex = round?.get("index") ?? null;
   const roundNumber = typeof roundIndex === "number" ? roundIndex + 1 : null;
-  const [selectedOption, setSelectedOption] = useState("");
-  const [confidence, setConfidence] = useState(null);
+  const selectedOptionDraftKey = draftKey({ playerId: player.id, roundId: round?.id, form: "initialDecision", field: "selectedOption" });
+  const confidenceDraftKey = draftKey({ playerId: player.id, roundId: round?.id, form: "initialDecision", field: "confidence" });
+  const [selectedOption, setSelectedOption] = usePersistentDraft(selectedOptionDraftKey, "");
+  const [confidence, setConfidence] = usePersistentDraft(confidenceDraftKey, null);
 
   // selectedOption holds option.id (a string), not the option object or
   // its label -- matches how it's saved in the decision record below.
@@ -80,6 +83,7 @@ export function InitialDecision() {
       submittedAt: Date.now(),
     });
     player.set("empiricaPlayerID", player.id);
+    clearDraftKeys([selectedOptionDraftKey, confidenceDraftKey]);
     player.stage.set("submit", true);
   };
 

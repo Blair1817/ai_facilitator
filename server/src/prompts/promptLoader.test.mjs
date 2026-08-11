@@ -16,7 +16,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // sit in server/src/, the parent of this prompts/ directory, not inside it.
 process.argv[1] = path.join(__dirname, "..", "fake-entry.js");
 
-const { getAdaptivePromptBundle, getStaticPromptBundle } = await import("./promptLoader.js");
+const { getAdaptivePromptBundle, getStaticPromptBundle, getGeneralistPromptBundle } = await import("./promptLoader.js");
 
 const SOURCE_DIR = path.join(__dirname, "source");
 const baseText = fs.readFileSync(path.join(SOURCE_DIR, "base.md"), "utf8");
@@ -105,7 +105,11 @@ test("concurrent prompt loading for different roles does not contaminate either 
   assert.notEqual(challengerBundle.content, synthesiserBundle.content);
 });
 
-test("Static condition is unaffected by Adaptive mapping work (still gated by static.md's own completeness, per requirement #1)", () => {
-  const bundle = getStaticPromptBundle();
-  assert.equal(typeof bundle.blocked, "boolean");
+test("Static and Adaptive-Generalist use the exact same frozen prompt content", () => {
+  const staticBundle = getStaticPromptBundle();
+  const generalistBundle = getGeneralistPromptBundle();
+  assert.equal(staticBundle.blocked, generalistBundle.blocked);
+  if (!staticBundle.blocked) {
+    assert.equal(staticBundle.content, generalistBundle.content);
+  }
 });

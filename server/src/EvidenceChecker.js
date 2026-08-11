@@ -11,11 +11,7 @@
  *   Rule 2: every span the Assessor returned must actually occur, verbatim,
  *           in a message it cited via message_ids -- a fabricated or
  *           paraphrased span invalidates that factor.
- *   Rule 3: when the Assessor's judgement conflicts sharply with the
- *           feature-only signal for the same role (i.e. the role never
- *           even cleared the loose Candidate Gate bar), the factor's
- *           strength is discounted rather than trusted outright.
- *   Rule 4: when self_correction is present, the other factors' strengths
+ *   Rule 3: when self_correction is present, the other factors' strengths
  *           are discounted proportionally (participants already doing the
  *           work an intervention would ask for reduces confidence that an
  *           intervention is still needed).
@@ -26,25 +22,34 @@
  */
 
 import { withMessageIds } from "./prompts/DynamicContext.mjs";
-import { getCandidateRoles } from "./utils.js";
 
+// v2 design (Phase 4): expanded to the 8 factors listed in the
+// architecture doc §2 节点 6 ("覆盖: breadth deficiency; group
+// preference/closure; justification deficiency; integration/comparison
+// deficiency; unresolved counterevidence; claim–evidence/option/
+// criterion linkage; self-correction; reasoning uptake"). The 3 new
+// factors (unresolved_counterevidence, claim_evidence_linkage,
+// reasoning_uptake) are validated by the same 4 rules as the original
+// 5, and routed to the role that most naturally consumes them in the
+// Controller (see FACTOR_ROLE below).
 export const FACTOR_KEYS = [
   "breadth_deficiency",
   "group_preference",
   "justification_deficiency",
   "integration_deficiency",
+  "unresolved_counterevidence",
+  "claim_evidence_linkage",
   "self_correction",
+  "reasoning_uptake",
 ];
 
-// Which Candidate-Gate role (utils.js getCandidateRoles' output) each
-// factor is tied to, for Rule 3's feature-conflict check. self_correction
-// has no associated role -- it is a global signal, exempt from Rule 3.
-const FACTOR_ROLE = {
-  breadth_deficiency: "expander",
-  group_preference: "challenger",
-  justification_deficiency: "challenger",
-  integration_deficiency: "synthesiser",
-};
+// Deficiency factors discounted when the detector also finds that the group
+// is already self-correcting. self_correction and reasoning_uptake are global
+// signals and are not themselves reduced by this rule.
+const DEFICIENCY_FACTOR_KEYS = [
+  "breadth_deficiency", "group_preference", "justification_deficiency",
+  "integration_deficiency", "unresolved_counterevidence", "claim_evidence_linkage",
+];
 
 const EMPTY_FACTOR = Object.freeze({ status: "absent", strength: 0, message_ids: [], span: "" });
 
@@ -108,26 +113,6 @@ function verifySpanAndParticipants(key, factor, messageById) {
  * halve the strength rather than either ignoring the conflict or
  * discarding the LLM's judgement outright.
  */
-function applyFeatureConflictDiscount(checked, features) {
-  if (!features) return checked;
-  const candidateRoles = getCandidateRoles(features);
-
-  const result = { ...checked };
-  for (const key of Object.keys(FACTOR_ROLE)) {
-    const factor = result[key];
-    if (factor.status !== "present") continue;
-    const role = FACTOR_ROLE[key];
-    if (!candidateRoles.includes(role)) {
-      result[key] = {
-        ...factor,
-        strength: factor.strength * 0.5,
-        conflictDiscount: "FEATURE_CANDIDATE_GATE_DID_NOT_FLAG_THIS_ROLE",
-      };
-    }
-  }
-  return result;
-}
-
 /**
  * Rule 4: self_correction present discounts the other (deficiency) factors
  * proportionally to its own strength. self_correction itself is never
@@ -140,7 +125,7 @@ function applySelfCorrectionDiscount(checked) {
   }
   const discountFactor = 1 - 0.5 * selfCorrection.strength; // strength in [0,1] -> multiplier in [0.5,1]
   const result = { ...checked };
-  for (const key of Object.keys(FACTOR_ROLE)) {
+  for (const key of DEFICIENCY_FACTOR_KEYS) {
     const factor = result[key];
     if (factor.status !== "present") continue;
     result[key] = { ...factor, strength: factor.strength * discountFactor, selfCorrectionDiscounted: true };
@@ -149,13 +134,63 @@ function applySelfCorrectionDiscount(checked) {
 }
 
 /**
+ * Delibra spec §3 Node 3 (2026-08-11): per-evidence-relations tracking.
+ * The Assessor's `evidenceRelations` field is an array of
+ * `{messageId, mentioned, attributed, evaluated, compared, countered,
+ * integrated}` records, one per participant message whose evidence is
+ * in a non-trivial state. This function validates that:
+ *   (a) each `messageId` exists in the chat (catches typos / fabricated
+ *       IDs / off-by-one — same defensive rule as Rule 2 above);
+ *   (b) the 6 booleans are all actually booleans (catches the LLM
+ *       dropping a field or returning a string);
+ *   (c) there are no duplicate `messageId` entries (one row per
+ *       participant message — duplicates would inflate state);
+ *   (d) every message the Assessor named has a 6-boolean vector (not
+ *       a partial one) — partial records would make "no uptake" /
+ *       "surface uptake" / "reasoning uptake" classification
+ *       unreliable downstream.
+ *
+ * Returns the cleaned, validated array. Drops records that fail any
+ * check rather than throwing — the Assessor's main 8-factor output
+ * is independent and can still be useful even if the relations
+ * tracking is partial.
+ */
+function checkEvidenceRelations(rawRelations, messageById) {
+  if (!Array.isArray(rawRelations)) return [];
+  const seenMessageIds = new Set();
+  const out = [];
+  for (const rel of rawRelations) {
+    if (!rel || typeof rel !== "object") continue;
+    const id = rel.messageId;
+    if (typeof id !== "string" || !messageById.has(id)) continue;     // (a)
+    if (seenMessageIds.has(id)) continue;                              // (c)
+    const booleans = ["mentioned", "attributed", "evaluated", "compared", "countered", "integrated"];
+    const validated = { messageId: id };
+    let allPresent = true;
+    for (const b of booleans) {
+      if (typeof rel[b] !== "boolean") { allPresent = false; break; } // (b) and (d)
+      validated[b] = rel[b];
+    }
+    if (!allPresent) continue;
+    seenMessageIds.add(id);
+    out.push(validated);
+  }
+  return out;
+}
+
+/**
  * Main entry point. `rawFactors` is SemanticAssessor.js's output (already
  * schema-validated by that module). `chat` is the same raw Empirica chat
  * array the Assessor saw (message IDs are re-derived here with the same
- * withMessageIds() scheme, not trusted from the LLM). `features` is this
- * checkpoint's feature-score object (for Rule 3).
+ * withMessageIds() scheme, not trusted from the LLM).
+ *
+ * 2026-08-11: also returns `evidenceRelations` (the cleaned, validated
+ * per-evidence-relations array) on the result, alongside the 8 checked
+ * factors. The Controller can use it to drive role decisions (e.g.
+ * "any message is mentioned but not compared" → Synthesiser). Existing
+ * callers that only read `result[<factorKey>]` are unaffected.
  */
-export function checkEvidence(rawFactors, { chat, features } = {}) {
+export function checkEvidence(rawFactors, { chat } = {}) {
   const chatWithIds = withMessageIds(chat || []);
   const messageById = new Map(chatWithIds.map((m) => [m.messageId, m]));
 
@@ -164,8 +199,9 @@ export function checkEvidence(rawFactors, { chat, features } = {}) {
     checked[key] = verifySpanAndParticipants(key, asFactor(rawFactors?.[key]), messageById);
   }
 
-  checked = applyFeatureConflictDiscount(checked, features);
   checked = applySelfCorrectionDiscount(checked);
+
+  checked.evidenceRelations = checkEvidenceRelations(rawFactors?.evidenceRelations, messageById);
 
   return checked;
 }

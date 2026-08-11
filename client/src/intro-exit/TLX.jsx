@@ -1,7 +1,8 @@
-import { usePlayer } from "@empirica/core/player/classic/react";
+import { usePlayer, useRound } from "@empirica/core/player/classic/react";
 import React, { useState } from "react";
 import { Alert } from "../components/Alert";
 import { Button } from "../components/Button";
+import { clearDraftKeys, draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
 
 export function TLX() {
     const labelClassName = "block text-md font-bold text-gray-700 my-2";
@@ -9,14 +10,17 @@ export function TLX() {
     const inputClassName =
         "appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-empirica-500 focus:border-empirica-500 sm:text-sm";
     const player = usePlayer();
+    const round = useRound();
 
     // Define state variables for each question
-    const [question1, setQuestion1] = useState("");
-    const [question2, setQuestion2] = useState("");
-    const [question3, setQuestion3] = useState("");
-    const [question4, setQuestion4] = useState("");
-    const [question5, setQuestion5] = useState("");
-    const [question6, setQuestion6] = useState("");
+    const keyFor = (field) => draftKey({ playerId: player.id, roundId: round?.id, form: "tlx", field });
+    const draftKeys = [1, 2, 3, 4, 5, 6].map((number) => keyFor(`question${number}`));
+    const [question1, setQuestion1] = usePersistentDraft(draftKeys[0], "");
+    const [question2, setQuestion2] = usePersistentDraft(draftKeys[1], "");
+    const [question3, setQuestion3] = usePersistentDraft(draftKeys[2], "");
+    const [question4, setQuestion4] = usePersistentDraft(draftKeys[3], "");
+    const [question5, setQuestion5] = usePersistentDraft(draftKeys[4], "");
+    const [question6, setQuestion6] = usePersistentDraft(draftKeys[5], "");
     const [submitting, setSubmitting] = useState(false);
 
     const isComplete = Boolean(
@@ -36,7 +40,9 @@ export function TLX() {
             tlxPerformance: question4,
             tlxEffort: question5,
             tlxFrustration:question6,
+            submittedAt: Date.now(),
         });
+        clearDraftKeys(draftKeys);
         player.stage.set("submit", true);
     }
 

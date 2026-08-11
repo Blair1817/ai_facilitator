@@ -1,7 +1,8 @@
 import { usePlayer } from "@empirica/core/player/classic/react";
 import Slider from "@mui/material/Slider";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Button } from "../components/Button";
+import { clearDraftKeys, draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
 
 const CHANGE_OPTIONS = [
   { value: "yes", label: "Yes" },
@@ -76,15 +77,33 @@ function OptionalDescription({ id, prompt, value, onChange }) {
 
 export function FinalQuestions({ next }) {
   const player = usePlayer();
-  const [discussionApproachChanged, setDiscussionApproachChanged] = useState("");
-  const [discussionApproachChangeDescription, setDiscussionApproachChangeDescription] = useState("");
-  const [firstTaskCarryover, setFirstTaskCarryover] = useState("");
-  const [firstTaskCarryoverDescription, setFirstTaskCarryoverDescription] = useState("");
-  const [facilitatorDifference, setFacilitatorDifference] = useState(null);
-  const [preferredFacilitator, setPreferredFacilitator] = useState("");
-  const [betterNeedsFacilitator, setBetterNeedsFacilitator] = useState("");
+  const keyFor = (field) => draftKey({ playerId: player.id, form: "finalQuestions", field });
+  const draftKeys = {
+    discussionApproachChanged: keyFor("discussionApproachChanged"),
+    discussionApproachChangeDescription: keyFor("discussionApproachChangeDescription"),
+    firstTaskCarryover: keyFor("firstTaskCarryover"),
+    firstTaskCarryoverDescription: keyFor("firstTaskCarryoverDescription"),
+    facilitatorDifference: keyFor("facilitatorDifference"),
+    preferredFacilitator: keyFor("preferredFacilitator"),
+    betterNeedsFacilitator: keyFor("betterNeedsFacilitator"),
+  };
+  const [discussionApproachChanged, setDiscussionApproachChanged] = usePersistentDraft(draftKeys.discussionApproachChanged, "");
+  const [discussionApproachChangeDescription, setDiscussionApproachChangeDescription] = usePersistentDraft(draftKeys.discussionApproachChangeDescription, "");
+  const [firstTaskCarryover, setFirstTaskCarryover] = usePersistentDraft(draftKeys.firstTaskCarryover, "");
+  const [firstTaskCarryoverDescription, setFirstTaskCarryoverDescription] = usePersistentDraft(draftKeys.firstTaskCarryoverDescription, "");
+  const [facilitatorDifference, setFacilitatorDifference] = usePersistentDraft(draftKeys.facilitatorDifference, null);
+  const [preferredFacilitator, setPreferredFacilitator] = usePersistentDraft(draftKeys.preferredFacilitator, "");
+  const [betterNeedsFacilitator, setBetterNeedsFacilitator] = usePersistentDraft(draftKeys.betterNeedsFacilitator, "");
   const [submitting, setSubmitting] = useState(false);
+  const [pendingSubmissionId, setPendingSubmissionId] = useState(null);
   const submittingRef = useRef(false);
+
+  const storedSubmission = player.get("finalQuestions");
+  useEffect(() => {
+    if (!pendingSubmissionId || storedSubmission?.submissionId !== pendingSubmissionId) return;
+    clearDraftKeys(Object.values(draftKeys));
+    next();
+  }, [pendingSubmissionId, storedSubmission?.submissionId]);
 
   const isComplete = Boolean(
     discussionApproachChanged &&
@@ -102,8 +121,11 @@ export function FinalQuestions({ next }) {
 
     submittingRef.current = true;
     setSubmitting(true);
+    const submissionId = `${player.id}:${Date.now()}`;
+    setPendingSubmissionId(submissionId);
 
     player.set("finalQuestions", {
+      submissionId,
       discussionApproachChanged,
       discussionApproachChangeDescription: descriptionApplies(discussionApproachChanged)
         ? discussionApproachChangeDescription
@@ -115,8 +137,8 @@ export function FinalQuestions({ next }) {
       facilitatorDifference: Number(facilitatorDifference),
       preferredFacilitator,
       betterNeedsFacilitator,
+      submittedAt: Date.now(),
     });
-    next();
   }
 
   return (

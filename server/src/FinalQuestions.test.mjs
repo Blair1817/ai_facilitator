@@ -89,7 +89,7 @@ test("the final question retains its four intended options and excludes a human 
   assert.doesNotMatch(needsOptions[1], /human facilitator/i);
 });
 
-test("FinalQuestions stores one participant-level payload before advancing independently", () => {
+test("FinalQuestions stores one participant-level payload and waits until that submission is observable before advancing", () => {
   assert.match(finalQuestionsSource, /submittingRef\.current/);
   assert.match(finalQuestionsSource, /player\.set\("finalQuestions", \{/);
   for (const key of [
@@ -103,9 +103,8 @@ test("FinalQuestions stores one participant-level payload before advancing indep
   ]) {
     assert.match(finalQuestionsSource, new RegExp(`\\b${key}\\b`));
   }
-  assert.ok(
-    finalQuestionsSource.indexOf('player.set("finalQuestions"') < finalQuestionsSource.indexOf("next();"),
-    "participant-level data must be written before advancing",
-  );
+  assert.match(finalQuestionsSource, /storedSubmission\?\.submissionId !== pendingSubmissionId/);
+  assert.match(finalQuestionsSource, /submissionId,/);
+  assert.match(finalQuestionsSource, /submittedAt: Date\.now\(\)/);
   assert.doesNotMatch(finalQuestionsSource, /usePlayers|useRound|useStage|player\.stage\.set\("submit"/);
 });

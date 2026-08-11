@@ -1,12 +1,21 @@
 import React from "react";
-import { usePlayers, usePlayer, useGame } from "@empirica/core/player/classic/react";
+import { usePlayers, usePlayer, useGame, useRound } from "@empirica/core/player/classic/react";
 import { Avatar } from "../components/Avatar";
 
 export function PlayerList() {
     const players = usePlayers();
     const focalPlayer = usePlayer();
     const game = useGame();
-    const { facilitation } = game.get("treatment");
+    const round = useRound();
+    // Phase 6.2 (Q10 = "不显示"): the v2 design dropped the
+    // treatment-level `facilitation` factor (.empirica/treatments.yaml
+    // no longer declares it; only the round-level value exists), so
+    // reading from `game.get("treatment").facilitation` returned
+    // undefined and the AI Facilitator card never rendered. Read from
+    // the round instead. v2 design only has "static" and "adaptive" (both
+    // AI), so the card shows in every practical case; the != "none"
+    // guard is kept for the theoretical no-facilitator case.
+    const facilitation = round?.get("facilitation");
 
     return (
         <div style={styles.container}>

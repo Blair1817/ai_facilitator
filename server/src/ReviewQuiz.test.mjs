@@ -89,6 +89,20 @@ test("failed submission clearing removes only incorrect answers and preserves co
   assert.equal(answers.outsideKnowledge, "yes", "the helper must not mutate the previous local state object");
 });
 
+test("ReviewQuiz persists every scored attempt and a final passing result before stage submission", () => {
+  assert.match(reviewQuizSource, /player\.round\.get\("reviewQuizAttempts"\)/);
+  assert.match(reviewQuizSource, /player\.round\.set\("reviewQuizAttempts", \[\.\.\.previousAttempts, attempt\]\)/);
+  assert.match(reviewQuizSource, /attemptNumber:/);
+  assert.match(reviewQuizSource, /questionCorrectness:/);
+  assert.match(reviewQuizSource, /incorrectQuestionIds:/);
+  assert.match(reviewQuizSource, /allCorrect:/);
+  assert.match(reviewQuizSource, /player\.round\.set\("reviewQuizResult", attempt\)/);
+  assert.ok(
+    reviewQuizSource.indexOf('player.round.set("reviewQuizResult"') < reviewQuizSource.indexOf('player.stage.set("submit", true)'),
+    "the durable passing result must be issued before advancing the Stage",
+  );
+});
+
 test("all five questions map to canonical remediation, duplicate sources collapse, and tasks stay isolated", () => {
   for (const taskVersion of ["A", "B"]) {
     const quiz = getReviewQuiz(taskVersion);
@@ -152,7 +166,7 @@ test("both Rounds implement the approved task lifecycle in order", () => {
   assert.ok(callbacksSource.indexOf('round1.addStage({ name: "Break"') < callbacksSource.indexOf('round2.addStage({ name: "TaskInformation"'));
 });
 
-test("client routes ReviewQuiz, keeps retries local, guards double-submit, and persists no ReviewQuiz data", () => {
+test("client routes ReviewQuiz, guards double-submit, preserves drafts locally, and persists scored attempts", () => {
   assert.match(gameSource, /stageName == "ReviewQuiz"/);
   assert.match(gameSource, /<ReviewQuiz key=\{roundStageKey\}/);
   assert.match(reviewQuizSource, /round\?\.get\("taskVersion"\)/);
@@ -161,8 +175,9 @@ test("client routes ReviewQuiz, keeps retries local, guards double-submit, and p
   assert.match(reviewQuizSource, /disabled=\{!isComplete \|\| isProcessing\}/);
   assert.match(reviewQuizSource, /clearIncorrectReviewQuizAnswers/);
   assert.match(reviewQuizSource, /Return to Review Quiz/);
-  assert.doesNotMatch(reviewQuizSource, /player\.round\.set|player\.set\(|round\.set\(|game\.set\(/);
-  assert.doesNotMatch(reviewQuizSource, /attemptCount|attempts\s*[:=]|submittedAt|passedAt/);
+  assert.match(reviewQuizSource, /usePersistentDraft/);
+  assert.match(reviewQuizSource, /player\.round\.set\("reviewQuizAttempts"/);
+  assert.match(reviewQuizSource, /submittedAt/);
   assert.doesNotMatch(reviewQuizSource, /retryCount|maxRetries|maxAttempts/);
   assert.doesNotMatch(readFileSync(path.join(dirname, "../../client/src/stages/reviewQuizConfig.js"), "utf8"), /addReviewQuizAttempt|attemptCount|submittedAt|passedAt/);
 });
@@ -190,7 +205,7 @@ test("stale async Discussion results are discarded after their originating stage
   assert.match(callbacksSource, /game\.currentRound\?\.id !== originatingRoundId/);
   assert.match(callbacksSource, /game\.currentStage\?\.id !== originatingStageId/);
   assert.match(callbacksSource, /Discarded stale AI result after the originating Discussion stage ended/);
-  assert.match(callbacksSource, /Discarded stale feature result after the originating Discussion stage ended/);
+  assert.match(callbacksSource, /Discarded stale LLM detector result after the originating Discussion stage ended/);
 });
 
 test("Discussion remains 10 minutes with unchanged timer/early-ready wiring", () => {
@@ -198,7 +213,7 @@ test("Discussion remains 10 minutes with unchanged timer/early-ready wiring", ()
   assert.equal([...callbacksSource.matchAll(/name: "Task",\s+duration: gameDuration \* 60/g)].length, 2);
   assert.match(callbacksSource, /now \+ gameDuration \* 60 \* 1000/);
   assert.match(discussionSource, /player\.stage\.set\("submit", !isReady\)/);
-  assert.match(callbacksSource, /if \(messagesSince < 6\) return;/);
+  assert.match(callbacksSource, /shouldEvaluateCheckpoint\(\{/);
 });
 
 test("existing HPT fact-bank shape and private-profile assignment remain intact", () => {

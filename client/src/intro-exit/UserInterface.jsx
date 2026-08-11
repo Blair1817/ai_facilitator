@@ -8,6 +8,13 @@ export function UserInterface() {
   const game = useGame();
   const round = useRound();
   const { gameDuration } = game.get("treatment");
+  // Phase 6.2 (Q10 = "不显示"): the round-level facilitation condition is
+  // a research-side concept only. The walkthrough used to vary the visible
+  // text based on it ("a human" vs "an AI"), which would unblind the
+  // participant to the between-condition manipulation. v2 design has only
+  // AI facilitators (Static and Adaptive) so the text is unconditional
+  // (modulo the "no facilitator at all" guard, kept for the theoretical
+  // facilitation=none case the YAML still allows).
   const facilitation = round?.get("facilitation");
 
   if (player.stage.get("submit")) {
@@ -29,7 +36,7 @@ export function UserInterface() {
         <ul className="space-y-4">
           <li><strong>During the task, you'll be assigned a color as a nickname, and be able to chat with your group members using the chat window in the right half of the screen.</strong></li>
           <li><strong>In the chat window, you can use "@" to tag another member of the committee in your message.</strong></li>
-          {facilitation != "none" && <li><strong>Other than the members of the committee, there will be {facilitation == "human" ? "a human": "an AI"} facilitator whose role is to listen to the conversation and support the group as you reach a decision.</strong> You can also tag the facilitator in your messages using "@" to address them directly.</li>}
+          {facilitation != "none" && <li><strong>Other than the members of the committee, there will be an AI facilitator whose role is to listen to the conversation and support the group as you reach a decision.</strong> You can also tag the facilitator in your messages using "@" to address them directly.</li>}
           <li><strong>On the left side of the screen, you'll be able to review information about the task, and view a research report that was prepared for you before the meeting.</strong></li>
           <li><strong>You will have a total of {gameDuration} minutes to discuss the decision as a group;</strong> the remaining time is shown at the top of the screen. After the timer is up, you will:
             <ol>

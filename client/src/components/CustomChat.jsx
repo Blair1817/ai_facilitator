@@ -3,11 +3,12 @@ import React, {
     useRef,
     useState,
 } from "react";
-import { usePlayer, usePlayers, useGame, useStage} from "@empirica/core/player/classic/react";
+import { usePlayer, usePlayers, useGame, useRound, useStage} from "@empirica/core/player/classic/react";
 import { Loading } from "@empirica/core/player/react";
 import { MentionsInput, Mention } from 'react-mentions';
 import ReactMentionsStyling from "./ReactMentionsStyling.jsx";
 import reactStringReplace from "react-string-replace";
+import { draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
 
 
 
@@ -202,17 +203,25 @@ function MessageComp({ attribute }) {
 }
 
 function Input({ onNewMessage }) {
-    const [text, setText] = useState("");
     const player = usePlayer();
     const game = useGame();
-    const { facilitation } = game.get("treatment");
+    const round = useRound();
+    const messageDraftKey = draftKey({ playerId: player.id, roundId: round?.id, form: "chat", field: "message" });
+    const [text, setText] = usePersistentDraft(messageDraftKey, "");
+    // Phase 6.2 (Q10 = "不显示"): the v2 design dropped the
+    // treatment-level `facilitation` factor; the round-level value is
+    // what gates the @Facilitator mention option today. v2 design only
+    // has "static" and "adaptive" (both AI), so the @Facilitator option
+    // is available in every practical case; the != "none" guard is kept
+    // for the theoretical no-facilitator case.
+    const facilitation = round?.get("facilitation");
 
     const mentionUsers = usePlayers().map((player) => ({
         id: player.id,
         display: player.get("name"),
     }));
 
-    if (facilitation != "none" && facilitation != "human") {
+    if (facilitation != "none") {
         mentionUsers.push({
             id: "ai",
             display: "Facilitator",
