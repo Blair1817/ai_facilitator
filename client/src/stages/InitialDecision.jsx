@@ -1,195 +1,51 @@
-import React, { useState } from "react";
-import { usePlayer, usePlayers, useGame, useRound } from "@empirica/core/player/classic/react";
+import React, { useRef, useState } from "react";
+import { usePlayer, usePlayers, useRound } from "@empirica/core/player/classic/react";
 import { Loading } from "@empirica/core/player/react";
-import Slider from "@mui/material/Slider";
 import { Button } from "../components/Button";
-import { PlayerSpecificInfo } from "../components/PlayerSpecificInfo.jsx";
-import { RenderMarkdown } from "../components/RenderMarkdown.jsx";
+import { PlayerSpecificInfo } from "../components/PlayerSpecificInfo";
+import { ConfidenceSlider, OptionChoice } from "../components/DecisionControls";
 
 export function InitialDecision() {
   const player = usePlayer();
   const players = usePlayers();
-  const game = useGame();
   const round = useRound();
-  // Round-first with game-level fallback: the current (unmodified) backend
-  // only ever sets these at the game level, so the fallback is required for
-  // compatibility today. Once callbacks.js sets them per-round, the round
-  // value takes over automatically.
-  // MIGRATED field-name fix (not from old 2nd -- old 2nd read
-  // "taskDecisionOptions", which never matched Blair's actual field name
-  // "decisionOptions"). Also: decisionOptions is now an array of {id, label}
-  // objects (Blair's HPTConfig.json schema), not plain strings -- store
-  // option.id, display option.label (see below).
-  const decisionOptions = round?.get("decisionOptions") ?? game.get("decisionOptions");
-  const generalInfo = round?.get("generalInfo") ?? game.get("generalInfo");
-  // taskVersion is intentionally round-only, no game-level fallback (the old
-  // game.get("treatment")?.taskVersion read conflated the *treatment's*
-  // taskVersion with a per-round value, which breaks once a session can mix
-  // rounds). Resolves to null until the backend sets it per round -- see
-  // final report for this as a required backend field.
-  const taskVersion = round?.get("taskVersion") ?? null;
-  const roundName = round?.get("name");
-  const totalRounds = game.get("totalRounds") ?? 2;
-  // round.get("index") is the single source of truth for round ordering:
-  // proven framework-set (Empirica's own addRound(), see
-  // chunk-CA6WWEPS.js, sets an immutable 0-based "index" on every round it
-  // creates -- independent of callbacks.js), 0-based. roundNumber is the
-  // 1-based value derived from it for "Round X of N" display and for the
-  // decision record.
-  const roundIndex = round?.get("index") ?? null;
-  const roundNumber = typeof roundIndex === "number" ? roundIndex + 1 : null;
-  const [selectedOption, setSelectedOption] = useState("");
-  const [confidence, setConfidence] = useState(null);
+  const options = round?.get("decisionOptions") ?? [];
+  const [choice, setChoice] = useState(() => player.round.get("initialChoice") ?? "");
+  const [confidence, setConfidence] = useState(() => player.round.get("initialConfidence") ?? null);
+  const submitting = useRef(false);
 
-  // selectedOption holds option.id (a string), not the option object or
-  // its label -- matches how it's saved in the decision record below.
-  const buttonClassName = (option) =>
-    `px-4 py-2 border rounded-md mx-2 ${selectedOption === option.id
-      ? "bg-blue-500 text-white border-blue-500"
-      : "bg-gray-200 text-blue-500 border-gray-300"
-    }`;
+  const updateChoice = (value) => { setChoice(value); player.round.set("initialChoice", value); };
+  const updateConfidence = (value) => { setConfidence(value); player.round.set("initialConfidence", value); };
+  const canSubmit = Boolean(choice) && confidence !== null;
 
-  const handleOptionClick = (option) => {
-    setSelectedOption(option.id);
-  };
-
-  const handleSliderChange = (event, newValue) => {
-    setConfidence(newValue);
-  };
-
-  const canSubmit = Boolean(selectedOption) && confidence !== null;
-
-  const handleSubmit = (event) => {
+  const submit = (event) => {
     event.preventDefault();
-    if (!canSubmit) {
-      return;
-    }
-    // Stored on the *round* attribute scope (not the flat player scope) so
-    // Round 1 and Round 2 can never overwrite each other -- each round has
-    // its own independent playerRound attribute space in Empirica. See
-    // FinalDecision.jsx for the matching "final" record. roundIndex/
-    // roundNumber are the same values derived above from round.get("index").
-    player.round.set("initialDecision", {
-      roundId: round?.id ?? null,
-      roundIndex,
-      roundNumber,
-      taskVersion,
-      decision: selectedOption,
-      decisionStage: "initial",
-      confidence,
-      submittedAt: Date.now(),
-    });
-    player.set("empiricaPlayerID", player.id);
+    if (!canSubmit || submitting.current) return;
+    submitting.current = true;
+    player.round.set("initialChoice", choice);
+    player.round.set("initialConfidence", confidence);
     player.stage.set("submit", true);
   };
 
-  if (player.stage.get("submit")) {
-    if (players.length === 1) {
-      return <Loading />;
-    }
-
-    return (
-      <div className="h-full w-full flex items-center justify-center">
-        <div className="text-center text-gray-400 pointer-events-none">
-          Your initial decision has been submitted.
-          <br />
-          Please wait for other player(s).
-        </div>
-      </div>
-    );
-  }
-
-  if (!decisionOptions || decisionOptions.length === 0) {
-    return (
-      <div className="h-full w-full flex items-center justify-center">
-        <div className="text-center text-gray-500">
-          This session is not yet available. Please contact the research team.
-        </div>
-      </div>
-    );
-  }
+  if (player.stage.get("submit")) return players.length === 1 ? <Loading /> : <Waiting text="Your initial decision has been submitted." />;
+  if (!options.length) return <Waiting text="This session is not yet available. Please contact the research team." />;
 
   return (
-    <div className="h-full w-full flex overflow-y-auto">
-      <div className="flex flex-col mx-auto w-full max-w-4xl px-8 py-8">
-        {roundNumber ? (
-          <p className="text-xs uppercase tracking-wide text-gray-400 text-center mb-2">
-            Round {roundNumber} of {totalRounds}
-          </p>
-        ) : (
-          roundName && (
-            <p className="text-xs uppercase tracking-wide text-gray-400 text-center mb-2">
-              {roundName}
-            </p>
-          )
-        )}
-
-        {generalInfo && (
-          <div className="mb-6">
-            <RenderMarkdown markdownText={generalInfo} />
-          </div>
-        )}
-
-        <div className="mb-8">
-          <PlayerSpecificInfo />
-        </div>
-
-        <h1 className="text-2xl font-bold mb-4 text-center">
-          Review your personal report independently and make an initial decision before discussing the task with your group.
-        </h1>
-        <p className="text-sm text-gray-500 text-center mb-4">
-          Your initial response is private and cannot be changed after submission.
-        </p>
-        <div className="flex justify-center space-x-4 mb-4">
-          {decisionOptions.map((option) => (
-            <button
-              key={option.id}
-              className={buttonClassName(option)}
-              onClick={() => handleOptionClick(option)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="mb-4">
-          <h2 className="text-xl font-semibold mb-2 mt-8 text-center">
-            Use the slider below to rate how confident you are in this decision:
-          </h2>
-          <div className="flex items-center w-full mt-10">
-            <span className="text-sm font-bold">Not at all confident (0%)</span>
-            <div className="w-full">
-              <Slider
-                value={confidence !== null ? confidence : 50}
-                onChange={handleSliderChange}
-                aria-labelledby="confidence-slider"
-                min={0}
-                max={100}
-                step={1}
-                className="mx-4"
-                valueLabelDisplay={confidence === null ? "off" : "on"}
-              />
-            </div>
-            <span className="text-sm font-bold pl-12">Completely confident (100%)</span>
-          </div>
-        </div>
-
-        <div className="text-center mt-6">
-          <p className="text-sm text-gray-500 mb-2">
-            You will not be able to change your answer once you submit.
-          </p>
-          <Button
-            handleClick={handleSubmit}
-            disabled={!canSubmit}
-          >
-            <p>
-              {!canSubmit
-                ? "Please answer above to proceed"
-                : "Submit initial decision (cannot be changed after submitting)"}
-            </p>
-          </Button>
-        </div>
+    <div className="h-full w-full overflow-y-auto bg-gray-50 p-4 sm:p-6">
+      <div className="mx-auto grid min-h-full w-full max-w-7xl gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)]">
+        <PlayerSpecificInfo className="h-[55vh] lg:sticky lg:top-6 lg:h-[calc(100vh-3rem)]" />
+        <form onSubmit={submit} className="block min-w-0 w-full self-start rounded-lg border border-gray-200 bg-white p-5 shadow-sm sm:p-6">
+          <h1 className="text-2xl font-bold text-gray-900">Initial Decision</h1>
+          <p className="mt-2 text-sm text-gray-600">Review the Task Report independently. This answer is private.</p>
+          <div className="mt-6"><OptionChoice legend="Which option do you initially consider most suitable?" options={options} value={choice} onChange={updateChoice} name="initialChoice" /></div>
+          <ConfidenceSlider name="initialConfidence" label="How confident are you in your initial choice?" value={confidence} onChange={updateConfidence} />
+          <div className="mt-8 text-right"><Button className="ml-0" type="submit" disabled={!canSubmit || submitting.current}>Submit Initial Decision</Button></div>
+        </form>
       </div>
     </div>
   );
+}
+
+function Waiting({ text }) {
+  return <div className="flex h-full w-full items-center justify-center px-6 text-center text-gray-500">{text}<br />Please wait for the other participant(s).</div>;
 }

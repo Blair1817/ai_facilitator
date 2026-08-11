@@ -105,7 +105,13 @@ test("concurrent prompt loading for different roles does not contaminate either 
   assert.notEqual(challengerBundle.content, synthesiserBundle.content);
 });
 
-test("Static condition is unaffected by Adaptive mapping work (still gated by static.md's own completeness, per requirement #1)", () => {
+test("Static condition loads the fixed policy with the existing Base prompt and STATIC output role", () => {
   const bundle = getStaticPromptBundle();
-  assert.equal(typeof bundle.blocked, "boolean");
+  assert.equal(bundle.blocked, false, bundle.reason);
+  assert.equal(bundle.metadata.generationRole, "STATIC");
+  assert.equal(bundle.metadata.promptStatus, "draft");
+  assert.ok(bundle.content.includes(baseText));
+  assert.match(bundle.content, /\{\{sharedTaskOverview\}\}/);
+  assert.match(bundle.content, /making sure that everyone is heard from/);
+  assert.doesNotMatch(bundle.content, /\[\[\s*TODO|skeleton only|content pending/i);
 });

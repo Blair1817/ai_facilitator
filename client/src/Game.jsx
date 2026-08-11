@@ -1,10 +1,9 @@
 import { useGame, useStage, useRound } from "@empirica/core/player/classic/react";
 import { Chat } from "./components/CustomChat";
 import { PlayerList } from "./components/PlayerList.jsx";
-import React from "react";
+import React, { useLayoutEffect } from "react";
 import { Profile } from "./Profile";
-import { Stage } from "./Stage";
-import { StageTransition } from "./components/StageTransition.jsx";
+import { IceBreakerTransition, Stage } from "./Stage";
 import { InitialDecision } from "./stages/InitialDecision.jsx";
 import { FinalDecision } from "./stages/FinalDecision.jsx";
 import { Discussion } from "./stages/Discussion.jsx";
@@ -13,6 +12,8 @@ import { Introduction } from "./intro-exit/Introduction.jsx";
 import { UserInterface } from "./intro-exit/UserInterface.jsx";
 import { TLX } from "./intro-exit/TLX.jsx";
 import { SubjectiveSurvey } from "./intro-exit/SubjectiveSurvey.jsx";
+import { IndividualAssessment } from "./stages/IndividualAssessment.jsx";
+import { Break } from "./stages/Break.jsx";
 
 // Formal stage names used by the current design include round-level task
 // information, walkthrough, questionnaire, and decision/discussion screens.
@@ -36,6 +37,15 @@ export function Game() {
   // between Round 1 and Round 2.
   const roundStageKey = `${round?.id ?? "no-round"}-${stageName}`;
 
+  // Each Empirica stage is rendered inside the same outer scroll container.
+  // Reset that shared container whenever the stage changes so the next page
+  // cannot inherit the previous page's scroll position and hide its header
+  // (including the Discussion countdown/profile banner).
+  useLayoutEffect(() => {
+    document.getElementById("participant-scroll-root")?.scrollTo(0, 0);
+    window.scrollTo(0, 0);
+  }, [roundStageKey]);
+
   if (stageName == "TaskInformation") {
     return <Introduction key={roundStageKey} />
   }
@@ -52,21 +62,12 @@ export function Game() {
     return <ReviewQuiz key={roundStageKey} />
   }
 
-  if (stageName == "TransitionToIceBreaker") {
-    return (
-      <StageTransition
-        transitionText={(
-          <>
-            <span className="block">Discussion Preparation</span>
-            <span className="mt-2 block text-base font-normal text-gray-600">
-              You will begin a short discussion activity next.
-              <br />
-              Please wait for the next stage to begin.
-            </span>
-          </>
-        )}
-      />
-    )
+  if (stageName == "IceBreakerStartCountdown") {
+    return <IceBreakerTransition key={roundStageKey} position="before" />
+  }
+
+  if (stageName == "IceBreakerEndCountdown") {
+    return <IceBreakerTransition key={roundStageKey} position="after" />
   }
 
   if (DISCUSSION_STAGE_NAMES.includes(stageName)) {
@@ -75,6 +76,10 @@ export function Game() {
 
   if (stageName == "FinalDecision") {
     return <FinalDecision key={roundStageKey} />
+  }
+
+  if (stageName == "IndividualAssessment") {
+    return <IndividualAssessment key={roundStageKey} />
   }
 
   if (stageName == "TLX") {
@@ -86,9 +91,7 @@ export function Game() {
   }
 
   if (stageName == "Break") {
-    return (
-      <StageTransition transitionText="Break Time — You now have a 5-minute break. The next task will begin automatically when the timer reaches 00:00." />
-    )
+    return <Break key={roundStageKey} />
   }
 
   if (stageName == "Introduction") {
@@ -105,7 +108,11 @@ export function Game() {
             <PlayerList />
           </div>
           <div className="w-full flex-grow overflow-y-auto overflow-x-hidden">
-            <Chat scope={game} attribute="intro" />
+            <Chat
+              key={`intro-chat-${round?.id}`}
+              scope={game}
+              attribute={`intro_round_${round?.get("index")}`}
+            />
           </div>
         </div>
       </div>

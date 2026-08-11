@@ -20,7 +20,7 @@ pending freeze). Two separate axes are now tracked, matching
 `promptLoader.js`'s actual metadata fields:
 - **promptStatus** — research-approval/freeze state. Fixed per file, never
   derived from marker detection, never "final" or "complete": `draft` for
-  base/expander/challenger/synthesiser, `skeleton_pending` for static.
+  base/static/expander/challenger/synthesiser.
 - **sourceCompleteness** — mechanical fact: whether `[[ TODO ]]`/skeleton
   markers were found in the text (`no_markers_found` /
   `has_unresolved_markers`). This is what actually gates `blocked`.
@@ -28,7 +28,7 @@ pending freeze). Two separate axes are now tracked, matching
 | File | promptStatus | sourceCompleteness | Notes |
 |---|---|---|---|
 | `source/base.md` | `draft` | `no_markers_found` | Shared rules for every Generator call (role, goal, trust boundary, hard constraints, output contract, failure behaviour). Mechanically complete text, but not research-approved/frozen. |
-| `source/static.md` | `skeleton_pending` | `has_unresolved_markers` | Explicitly self-labeled "FRAMEWORK — content pending" / "Status: skeleton only." Contains 4 `[[ TODO ]]` blocks: ROLE FUNCTION, WHAT TO DO, ADDITIONAL HARD CONSTRAINTS, FEW-SHOT EXAMPLES. **`promptLoader.getStaticPromptBundle()` will always return `blocked: true` while this file is in this state.** |
+| `source/static.md` | `draft` | `no_markers_found` | Fixed Static Facilitator policy supplied by the PI. It is combined with `base.md`, uses the existing three-field generation schema, and is available at every Static checkpoint. |
 | `source/expander.md` | `draft` | `no_markers_found` | Mechanically complete text, not research-approved/frozen. |
 | `source/challenger.md` | `draft` | `no_markers_found` | Mechanically complete text, not research-approved/frozen. |
 | `source/synthesiser.md` | `draft` | `no_markers_found` | Mechanically complete text, not research-approved/frozen. |
@@ -46,7 +46,7 @@ pending freeze). Two separate axes are now tracked, matching
 
 ## GRAIL scope-reduction refactor: one shared runtime pipeline
 
-Static and Adaptive now share ONE post-prompt-selection pipeline: Generator call (GRAIL's existing `getLLMResponse`) → strict JSON parser → `generation.schema.json` (per-request `role` const) → deterministic validation (role/length/markdown/unexpected-field/grounding-ID checks) → publish once if valid, otherwise logged and treated as Silent. No semantic Validator LLM call, no regeneration/retry, no per-condition duplicate logic. See `prompts/GeneratorContract.mjs` (parser/schema/deterministic validation -- unchanged from the Prompt 3B revision, since this *is* "the one shared basic schema validator" the scope-reduction refactor asks for), `prompts/DynamicContext.mjs` (the one shared, id-annotated context builder for both conditions), and `callbacks.js`'s `buildGeneratorContext`/`runSharedGeneration`/`handleChat`. `selectedRole` for Adaptive still comes from the real, existing Controller (`utils.js`'s `selectRole()`, unmodified) -- the only condition-specific step is prompt/role selection, before this shared pipeline runs.
+Static and Adaptive share ONE post-prompt-selection pipeline: Generator call (GRAIL's existing `getLLMResponse`) → strict JSON parser → `generation.schema.json` (per-request `role` const) → deterministic validation (role/length/markdown/unexpected-field/grounding-ID checks) → publish once if valid, otherwise logged and treated as Silent. No semantic Validator LLM call, no regeneration/retry, no per-condition duplicate logic. `prompts/StaticContext.mjs` supplies Static's restricted shared-overview/public-transcript/time context; `prompts/DynamicContext.mjs` continues to supply Adaptive's existing context unchanged. Both then use `callbacks.js`'s `runSharedGeneration`. `selectedRole` for Adaptive still comes from the real, existing Controller and is not used by Static.
 
 ## 2026-08-07 addendum: Semantic Assessor layer reinstated (research-team decision)
 
@@ -92,6 +92,6 @@ research-approved -- see that file's own header), and
 
 ## What this means for the currently running system
 
-- **Static condition intervention is currently always blocked.** `static.md` is a skeleton; every Static-condition checkpoint will log a blocked reason and skip the LLM call. This is a correct, intended consequence of the real content's actual state, and now flows through the exact same `buildGeneratorContext`/`runSharedGeneration` path Adaptive uses (not a separate code path).
+- **Static condition intervention is enabled.** Every existing Static checkpoint uses the fixed Static policy with only the current round's shared task overview, complete public transcript, and discussion timing, then flows through the shared generation/validation/publication path.
 - **Adaptive condition intervention works for 3 of the 4 roles the Controller can select** (`expander`/`challenger`/`synthesiser`), through one Generator attempt + basic schema/deterministic validation; the 4th (`facilitator`) is always blocked for the reason above, logged as Silent, never silently mapped to another role or to Static.
 - Round/stage/questionnaire/task-order/facilitation-order workflow, counterbalancing (now via native Empirica `sequenceId` treatments -- see `Counterbalancing.mjs`), feature extraction, and role-selection thresholds are unaffected.

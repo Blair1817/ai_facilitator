@@ -1,3 +1,26 @@
+import test, { describe } from "node:test";
+import assert from "node:assert/strict";
+
+function expect(actual) {
+  const api = {
+    toBe: (expected) => assert.equal(actual, expected),
+    toBeCloseTo: (expected, digits = 2) => assert.ok(Math.abs(actual - expected) < (0.5 * (10 ** -digits))),
+    toBeGreaterThan: (expected) => assert.ok(actual > expected),
+    toBeGreaterThanOrEqual: (expected) => assert.ok(actual >= expected),
+    toBeUndefined: () => assert.equal(actual, undefined),
+    toContain: (expected) => assert.ok(actual.includes(expected)),
+    toEqual: (expected) => assert.deepEqual(actual, expected),
+    toHaveProperty: (expected) => assert.ok(Object.hasOwn(actual, expected)),
+    toMatch: (expected) => assert.match(actual, expected),
+    toThrow: () => assert.throws(actual),
+  };
+  api.not = {
+    toContain: (expected) => assert.ok(!actual.includes(expected)),
+    toHaveProperty: (expected) => assert.ok(!Object.hasOwn(actual, expected)),
+  };
+  return api;
+}
+
 /**
  * Unit tests for utils.js
  *
@@ -27,7 +50,7 @@ import {
   THRESHOLDS,
   ROLE_PRIORITY,
   ROLES,
-} from "../src/utils.js";
+} from "./utils.js";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 

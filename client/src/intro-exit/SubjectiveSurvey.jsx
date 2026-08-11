@@ -14,19 +14,22 @@ export function SubjectiveSurvey() {
     const playerName = player.get("name");
 
     // Define state variables for each question
-    const [question1, setQuestion1] = useState("");
-    const [question2, setQuestion2] = useState("");
-    const [question3, setQuestion3] = useState("");
-    const [question4, setQuestion4] = useState("");
-    const [question5, setQuestion5] = useState("");
-    const [question6, setQuestion6] = useState("");
-    const [question7, setQuestion7] = useState("");
-    const [question8, setQuestion8] = useState("");
-    const [question9, setQuestion9] = useState("");
-    const [question10, setQuestion10] = useState("");
-    const [question11, setQuestion11] = useState("");
-    const [question12, setQuestion12] = useState("");
-    const [question13, setQuestion13] = useState("");
+    const existing = player.round.get("subjectiveSurvey") ?? {};
+    const [question1, setQuestion1] = useState(() => existing.groupFreeText ?? "");
+    const [question2, setQuestion2] = useState(() => existing.groupContribution ?? "");
+    const [question3, setQuestion3] = useState(() => existing.groupInfluence ?? "");
+    const [question4, setQuestion4] = useState(() => existing.groupProductive ?? "");
+    const [question5, setQuestion5] = useState(() => existing.groupStructured ?? "");
+    const [question6, setQuestion6] = useState(() => existing.groupCohesion ?? "");
+    const [question7, setQuestion7] = useState(() => existing.facilitatorRoleFreetext ?? "");
+    const [question8, setQuestion8] = useState(() => existing.facilitatorGroupFreetext ?? "");
+    const [question9, setQuestion9] = useState(() => existing.facilitatorSharing ?? "");
+    const [question10, setQuestion10] = useState(() => existing.facilitatorDistracting ?? "");
+    const [question11, setQuestion11] = useState(() => existing.facilitatorSynthesis ?? "");
+    const [question12, setQuestion12] = useState(() => existing.facilitatorFocus ?? "");
+    const [question13, setQuestion13] = useState(() => existing.facilitatorNeedFit ?? "");
+    const [question14, setQuestion14] = useState(() => existing.facilitatorTimingAppropriateness ?? "");
+    const [question15, setQuestion15] = useState(() => existing.facilitatorOptionPush ?? "");
     const [submitting, setSubmitting] = useState(false);
 
     const alwaysVisibleComplete = [question1, question2, question3, question4, question5, question6]
@@ -35,16 +38,18 @@ export function SubjectiveSurvey() {
     const facilitatorQuestionsComplete =
         facilitation == "none" ||
         playerName == "Facilitator" ||
-        [question8, question9, question10, question11, question12]
+        [question8, question9, question10, question11, question12, question13, question14, question15]
             .every((answer) => String(answer).trim());
-    const facilitatorPreferenceComplete =
-        playerName == "Facilitator" || String(question13).trim();
     const isComplete = Boolean(
         alwaysVisibleComplete &&
         facilitatorRoleComplete &&
-        facilitatorQuestionsComplete &&
-        facilitatorPreferenceComplete
+        facilitatorQuestionsComplete
     );
+
+    const updateAnswer = (key, value, setter) => {
+        setter(value);
+        player.round.set("subjectiveSurvey", { ...(player.round.get("subjectiveSurvey") ?? {}), [key]: value });
+    };
 
     function handleSubmit(event) {
         event.preventDefault();
@@ -65,7 +70,9 @@ export function SubjectiveSurvey() {
             facilitatorDistracting: question10,
             facilitatorSynthesis: question11,
             facilitatorFocus: question12,
-            facilitatorPreference: question13,
+            facilitatorNeedFit: question13,
+            facilitatorTimingAppropriateness: question14,
+            facilitatorOptionPush: question15,
 
         });
         player.stage.set("submit", true);
@@ -99,6 +106,7 @@ export function SubjectiveSurvey() {
                                 <p className="mt-1 text-sm text-gray-500">
                                     Please answer every question shown below before continuing.
                                 </p>
+                                <p className="mt-3 text-sm font-bold text-gray-700">Scroll down to complete all questions.</p>
                             </div>
 
                             <div className="space-y-8 mt-9">
@@ -115,7 +123,7 @@ export function SubjectiveSurvey() {
                                             autoComplete="off"
                                             className={inputClassName}
                                             value={question1}
-                                            onChange={(e) => setQuestion1(e.target.value)}
+                                            onChange={(e) => updateAnswer("groupFreeText", e.target.value, setQuestion1)}
                                             required
                                         />
                                     </div>
@@ -130,7 +138,7 @@ export function SubjectiveSurvey() {
                                         <LikertScale
                                             selected={question2}
                                             name="question2"
-                                            onChange={(e) => setQuestion2(e.target.value)}
+                                            onChange={(e) => updateAnswer("groupContribution", e.target.value, setQuestion2)}
                                             showLabels={true}
                                         />
                                     </div>
@@ -144,7 +152,7 @@ export function SubjectiveSurvey() {
                                         <LikertScale
                                             selected={question3}
                                             name="question3"
-                                            onChange={(e) => setQuestion3(e.target.value)}
+                                            onChange={(e) => updateAnswer("groupInfluence", e.target.value, setQuestion3)}
                                             showLabels={false}
                                         />
                                     </div>
@@ -159,7 +167,7 @@ export function SubjectiveSurvey() {
                                         <LikertScale
                                             selected={question4}
                                             name="question4"
-                                            onChange={(e) => setQuestion4(e.target.value)}
+                                            onChange={(e) => updateAnswer("groupProductive", e.target.value, setQuestion4)}
                                             showLabels={false}
                                         />
                                     </div>
@@ -173,7 +181,7 @@ export function SubjectiveSurvey() {
                                         <LikertScale
                                             selected={question5}
                                             name="question5"
-                                            onChange={(e) => setQuestion5(e.target.value)}
+                                            onChange={(e) => updateAnswer("groupStructured", e.target.value, setQuestion5)}
                                             showLabels={false}
                                         />
                                     </div>
@@ -186,7 +194,7 @@ export function SubjectiveSurvey() {
                                         { value: "random", label: "A new group of random people" },
                                     ]}
                                     selectedOption={question6}
-                                    onChange={(e) => setQuestion6(e.target.value)}
+                                    onChange={(e) => updateAnswer("groupCohesion", e.target.value, setQuestion6)}
                                 />
 
 
@@ -209,7 +217,7 @@ export function SubjectiveSurvey() {
                                                 autoComplete="off"
                                                 className={inputClassName}
                                                 value={question7}
-                                                onChange={(e) => setQuestion7(e.target.value)}
+                                                onChange={(e) => updateAnswer("facilitatorRoleFreetext", e.target.value, setQuestion7)}
                                                 required
                                             />
                                         </div>
@@ -231,13 +239,15 @@ export function SubjectiveSurvey() {
                                             autoComplete="off"
                                             className={inputClassName}
                                             value={question8}
-                                            onChange={(e) => setQuestion8(e.target.value)}
+                                            onChange={(e) => updateAnswer("facilitatorGroupFreetext", e.target.value, setQuestion8)}
                                             required
                                         />
                                     </div>
                                 </div>
 
                                     <div className={labelClassName}>Please rate your agreement with the following statements:</div>
+                                    <div className="w-full overflow-x-auto pb-2">
+                                    <div className="min-w-[42rem] space-y-2">
                                     <div className="flex">
                                         <label htmlFor="question9" className={`${listClassName} pt-15 w-4/10`}>
                                             The facilitator encouraged the group to share information
@@ -246,7 +256,7 @@ export function SubjectiveSurvey() {
                                             <LikertScale
                                                 selected={question9}
                                                 name="question9"
-                                                onChange={(e) => setQuestion9(e.target.value)}
+                                                onChange={(e) => updateAnswer("facilitatorSharing", e.target.value, setQuestion9)}
                                                 showLabels={true}
                                             />
                                         </div>
@@ -260,7 +270,7 @@ export function SubjectiveSurvey() {
                                             <LikertScale
                                                 selected={question10}
                                                 name="question10"
-                                                onChange={(e) => setQuestion10(e.target.value)}
+                                                onChange={(e) => updateAnswer("facilitatorDistracting", e.target.value, setQuestion10)}
                                                 showLabels={false}
                                             />
                                         </div>
@@ -274,7 +284,7 @@ export function SubjectiveSurvey() {
                                             <LikertScale
                                                 selected={question11}
                                                 name="question11"
-                                                onChange={(e) => setQuestion11(e.target.value)}
+                                                onChange={(e) => updateAnswer("facilitatorSynthesis", e.target.value, setQuestion11)}
                                                 showLabels={false}
                                             />
                                         </div>
@@ -288,26 +298,34 @@ export function SubjectiveSurvey() {
                                             <LikertScale
                                                 selected={question12}
                                                 name="question12"
-                                                onChange={(e) => setQuestion12(e.target.value)}
+                                                onChange={(e) => updateAnswer("facilitatorFocus", e.target.value, setQuestion12)}
                                                 showLabels={false}
                                             />
                                         </div>
                                     </div>
 
-                                    
-                                </>}
+                                    <div className="flex">
+                                        <label htmlFor="question13" className={`${listClassName} w-4/10`}>
+                                            The facilitator’s messages addressed what the group needed at the time.
+                                        </label>
+                                        <div className="w-6/10"><LikertScale selected={question13} name="question13" onChange={(e) => updateAnswer("facilitatorNeedFit", e.target.value, setQuestion13)} showLabels={false} /></div>
+                                    </div>
+                                    <div className="flex">
+                                        <label htmlFor="question14" className={`${listClassName} w-4/10`}>
+                                            The facilitator’s messages appeared at appropriate moments.
+                                        </label>
+                                        <div className="w-6/10"><LikertScale selected={question14} name="question14" onChange={(e) => updateAnswer("facilitatorTimingAppropriateness", e.target.value, setQuestion14)} showLabels={false} /></div>
+                                    </div>
+                                    <div className="flex">
+                                        <label htmlFor="question15" className={`${listClassName} w-4/10`}>
+                                            The facilitator appeared to push the group towards a particular option.
+                                        </label>
+                                        <div className="w-6/10"><LikertScale selected={question15} name="question15" onChange={(e) => updateAnswer("facilitatorOptionPush", e.target.value, setQuestion15)} showLabels={false} /></div>
+                                    </div>
+                                    </div>
+                                    </div>
 
-                                {playerName != "Facilitator" && <>
-                                    <RadioGroup
-                                        question={`You completed this task ${facilitation == "none" ? "without a facilitator" : facilitation == "human" ? "with a human facilitator" : "with an AI facilitator"}. If you were to repeat this task, which would you prefer?`}
-                                        options={[
-                                            { value: "no", label: "No facilitator" },
-                                            { value: "human", label: "A human facilitator" },
-                                            { value: "ai", label: "An AI facilitator" },
-                                        ]}
-                                        selectedOption={question13}
-                                        onChange={(e) => setQuestion13(e.target.value)}
-                                    />
+
                                 </>}
 
                                 {!isComplete && (

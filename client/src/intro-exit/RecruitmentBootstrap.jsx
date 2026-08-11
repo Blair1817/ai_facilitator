@@ -2,12 +2,11 @@ import React, { useEffect, useRef } from "react";
 import { usePlayer } from "@empirica/core/player/classic/react";
 import { Loading } from "@empirica/core/player/react";
 import { getRecruitmentMode, getProlificParams } from "../prolific";
-import { CONSENT_METADATA_KEY } from "./Consent.jsx";
 
-// Runs immediately after the one-time OverallInstructions introStep (see
-// App.jsx). Consent and PlayerCreate both happen before any player exists;
-// this step copies consent and recruitment metadata onto the player before
-// the Lobby wait and experimental Rounds.
+// Runs immediately after the one-time OverallInstructions introStep and
+// records recruitment metadata before the Lobby and experimental Rounds.
+// Consent is completed outside Empirica and is intentionally not collected
+// or stored here.
 export function RecruitmentBootstrap({ next }) {
   const player = usePlayer();
   const ran = useRef(false);
@@ -18,25 +17,11 @@ export function RecruitmentBootstrap({ next }) {
     }
     ran.current = true;
 
-    if (!player.get("consentTimestamp")) {
-      let consentMeta = {};
-      try {
-        consentMeta = JSON.parse(window.localStorage.getItem(CONSENT_METADATA_KEY) || "{}");
-      } catch (e) {
-        consentMeta = {};
-      }
-
-      const recruitmentMode = getRecruitmentMode();
-      player.set("consentStatus", "consented");
-      player.set("consentTimestamp", consentMeta.consentedAt || Date.now());
-      player.set("consentVersion", consentMeta.consentVersion || null);
-
-      if (recruitmentMode === "prolific") {
-        const { prolificPID, studyID, sessionID } = getProlificParams();
-        player.set("prolificPID", prolificPID);
-        player.set("prolificStudyID", studyID);
-        player.set("prolificSessionID", sessionID);
-      }
+    if (getRecruitmentMode() === "prolific" && !player.get("prolificPID")) {
+      const { prolificPID, studyID, sessionID } = getProlificParams();
+      player.set("prolificPID", prolificPID);
+      player.set("prolificStudyID", studyID);
+      player.set("prolificSessionID", sessionID);
     }
 
     next();
