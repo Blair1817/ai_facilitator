@@ -256,8 +256,8 @@ test("integration: Adaptive (challenger role) and Static both go through the ide
   assert.equal(adaptiveResult.published, true);
   assert.equal(adaptiveGame.chat.length, 1, "exactly one message published for the Adaptive checkpoint");
 
-  // Static uses the same generalist prompt content as Adaptive-Generalist
-  // and the same build/generate/validate/post path.
+  // Static uses its own prompt content but the same
+  // build/generate/validate/post infrastructure as Adaptive-Generalist.
   const staticGame = new MockGame();
   const staticCandidate = { role: "STATIC", message: "Which option or criterion should the group compare next?", groundingMessageIds: [] };
   const staticResult = await runProductionCheckpoint({

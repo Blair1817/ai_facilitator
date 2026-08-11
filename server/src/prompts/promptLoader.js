@@ -1,10 +1,12 @@
 /**
  * promptLoader.js
  *
- * Matched-control design: Static and Adaptive-Generalist use the exact same
- * base.md + generalist.md bundle. Adaptive may instead select one of the
- * three Specialist bundles when the Controller has sufficient evidence.
- * Explicit @Facilitator requests use base.md + requested_generalist.md.
+ * Two-facilitator design: Static uses base.md + static.md (the adapted
+ * Alsobay D.2 prompt), while Adaptive-Generalist uses base.md +
+ * generalist.md (the process-only frequency-control prompt). Adaptive may
+ * instead select one of the three Specialist bundles when the Controller has
+ * sufficient evidence. Explicit @Facilitator requests use base.md +
+ * requested_generalist.md.
  *
  * This module is the single source of truth for the prompt bundle surface
  * and for fail-closed detection. It does NOT invent, complete, or rewrite
@@ -161,12 +163,11 @@ function checkAndCompose(filename, roleKey) {
 }
 
 /**
- * Static facilitator. Its instruction content is intentionally identical to
- * Adaptive-Generalist; condition metadata and the output role remain distinct
- * so logs can still identify the experimental condition.
+ * Static facilitator. Keep this prompt distinct from Adaptive-Generalist:
+ * matching concerns intervention opportunity/frequency, not prompt content.
  */
 export function getStaticPromptBundle() {
-  const result = checkAndCompose("generalist.md", "generalist");
+  const result = checkAndCompose("static.md", "static");
   if (result.blocked) return result;
   return {
     blocked: false,
@@ -267,8 +268,8 @@ export function getAdaptivePromptBundle(selectedRole) {
  * checkpoint).
  *
  * Required files (Phase 2 + Phase 5.3):
- *   - base.md, generalist.md, requested_generalist.md, expander.md, challenger.md,
- *     synthesiser.md, assessor.md, validator.md
+ *   - base.md, static.md, generalist.md, requested_generalist.md, expander.md,
+ *     challenger.md, synthesiser.md, assessor.md, validator.md
  *   - generation.schema.json, assessor.schema.json, validation.schema.json
  *
  * Note: validator.md is loaded by server/src/SemanticValidator.js's own
@@ -286,6 +287,7 @@ export function getAdaptivePromptBundle(selectedRole) {
 export function runStartupSelfCheck({ throwOnFailure = true } = {}) {
   const required = [
     "base.md",
+    "static.md",
     "generalist.md",
     "requested_generalist.md",
     "expander.md",

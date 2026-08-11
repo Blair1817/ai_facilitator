@@ -9,7 +9,7 @@ const callbacksSource = readFileSync(path.join(dirname, "callbacks.js"), "utf8")
 const promptLoaderSource = readFileSync(path.join(dirname, "prompts/promptLoader.js"), "utf8");
 const requestedPromptSource = readFileSync(path.join(dirname, "prompts/source/requested_generalist.md"), "utf8");
 
-test("Static and Adaptive-Generalist compose the same generalist.md prompt content", () => {
+test("Static and Adaptive-Generalist compose their distinct approved prompt sources", () => {
   const staticStart = promptLoaderSource.indexOf("export function getStaticPromptBundle");
   const generalistStart = promptLoaderSource.indexOf("export function getGeneralistPromptBundle");
   const staticBody = promptLoaderSource.slice(staticStart, generalistStart);
@@ -17,19 +17,19 @@ test("Static and Adaptive-Generalist compose the same generalist.md prompt conte
   const generalistBody = promptLoaderSource.slice(generalistStart, adaptiveStart);
 
   assert.ok(staticStart >= 0 && generalistStart > staticStart && adaptiveStart > generalistStart);
-  assert.match(staticBody, /checkAndCompose\("generalist\.md",\s*"generalist"\)/);
+  assert.match(staticBody, /checkAndCompose\("static\.md",\s*"static"\)/);
   assert.match(generalistBody, /checkAndCompose\("generalist\.md",\s*"generalist"\)/);
-  assert.doesNotMatch(staticBody, /checkAndCompose\("static\.md"/);
+  assert.doesNotMatch(staticBody, /checkAndCompose\("generalist\.md"/);
 });
 
-test("Static-only prompt file is no longer a startup dependency", () => {
+test("Static and Generalist prompt files are both startup dependencies", () => {
   const selfCheckStart = promptLoaderSource.indexOf("export function runStartupSelfCheck");
   const selfCheckBody = promptLoaderSource.slice(selfCheckStart);
   const requiredArray = selfCheckBody.slice(
     selfCheckBody.indexOf("const required = ["),
     selfCheckBody.indexOf("];", selfCheckBody.indexOf("const required = [")) + 2,
   );
-  assert.doesNotMatch(requiredArray, /"static\.md"/);
+  assert.match(requiredArray, /"static\.md"/);
   assert.match(requiredArray, /"generalist\.md"/);
 });
 

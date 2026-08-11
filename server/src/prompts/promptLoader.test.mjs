@@ -20,6 +20,8 @@ const { getAdaptivePromptBundle, getStaticPromptBundle, getGeneralistPromptBundl
 
 const SOURCE_DIR = path.join(__dirname, "source");
 const baseText = fs.readFileSync(path.join(SOURCE_DIR, "base.md"), "utf8");
+const staticText = fs.readFileSync(path.join(SOURCE_DIR, "static.md"), "utf8");
+const generalistText = fs.readFileSync(path.join(SOURCE_DIR, "generalist.md"), "utf8");
 const expanderText = fs.readFileSync(path.join(SOURCE_DIR, "expander.md"), "utf8");
 const challengerText = fs.readFileSync(path.join(SOURCE_DIR, "challenger.md"), "utf8");
 const synthesiserText = fs.readFileSync(path.join(SOURCE_DIR, "synthesiser.md"), "utf8");
@@ -105,11 +107,12 @@ test("concurrent prompt loading for different roles does not contaminate either 
   assert.notEqual(challengerBundle.content, synthesiserBundle.content);
 });
 
-test("Static and Adaptive-Generalist use the exact same frozen prompt content", () => {
+test("Static and Adaptive-Generalist use distinct approved prompt content", () => {
   const staticBundle = getStaticPromptBundle();
   const generalistBundle = getGeneralistPromptBundle();
-  assert.equal(staticBundle.blocked, generalistBundle.blocked);
-  if (!staticBundle.blocked) {
-    assert.equal(staticBundle.content, generalistBundle.content);
-  }
+  assert.equal(staticBundle.blocked, false, staticBundle.reason);
+  assert.equal(generalistBundle.blocked, false, generalistBundle.reason);
+  assert.equal(staticBundle.content, `${baseText}\n\n---\n\n${staticText}`);
+  assert.equal(generalistBundle.content, `${baseText}\n\n---\n\n${generalistText}`);
+  assert.notEqual(staticBundle.content, generalistBundle.content);
 });
