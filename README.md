@@ -119,11 +119,7 @@ The sequence of screens participants see before and after a game are defined in 
 - **Intro steps** are shown to each participant after they join a game lobby but before the task begins. By default these include an introduction screen, a UI walkthrough, and an attention check (`Introduction`, `UserInterface`, `AttentionCheck`).
 - **Exit steps** are shown after the game ends. By default these include a final answer submission, a NASA-TLX workload survey, a subjective survey, and a feedback form (`SubmitAnswer`, `TLX`, `SubjectiveSurvey`, `ExpFeedback`).
 
-Each step is a React component located in `client/src/intro-exit/`. To customize the flow, add or remove components from the arrays returned by `introSteps` and `exitSteps` in `App.jsx`. Additional screens like the consent form (`consent`), lobby (`lobby`), and post-experiment completion page (`finished`) can also be swapped by changing the corresponding props on `EmpiricaContext` in the same file.
-
-The default consent form (`client/src/intro-exit/Consent.jsx`) contains placeholder text and must be replaced with your own IRB-approved consent form before deploying a study.
-
-Several exit screens (`FinishedExitCode.jsx`, `GamesFull.jsx`, `NoGames.jsx`) display completion codes with a `[INSERT CODE HERE]` placeholder. Replace these with your own study-specific codes (e.g., Prolific or MTurk completion codes). The participant identifier prompt in `PlayerCreate.tsx` can also be customized to match your recruitment platform.
+Each step is a React component located in `client/src/intro-exit/`. To customize the flow, add or remove components from the arrays returned by `introSteps` and `exitSteps` in `App.jsx`. Consent for this study is completed outside Empirica, so the in-app consent gate is disabled. The experiment ends through Empirica's normal finished screen after Debriefing; it does not display a completion code or redirect to an external completion URL. The participant identifier prompt in `PlayerCreate.tsx` can be customized to match the recruitment platform.
 
 #### Exporting data
 

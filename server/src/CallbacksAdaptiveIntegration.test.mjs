@@ -34,10 +34,12 @@ const customChatSource = readFileSync(
 
 // ── structural assertions on callbacks.js ────────────────────────────────
 
-test("round chats are created by vector append without scalar initialization", () => {
+test("round chats are created only by the server canonical vector append boundary", () => {
   assert.doesNotMatch(callbacksSource, /game\.set\(\s*["']chat_round_0["']/);
   assert.doesNotMatch(callbacksSource, /game\.set\(\s*["']chat_round_1["']/);
-  assert.match(customChatSource, /scope\.append\(attribute,\s*\{/);
+  assert.doesNotMatch(customChatSource, /scope\.append\(/);
+  assert.match(customChatSource, /player\.set\("humanMessageRequest"/);
+  assert.match(callbacksSource, /function appendCanonicalMessage\([\s\S]*game\.append\(attribute, message\)/);
   assert.match(customChatSource, /scope\.getAttribute\(attribute\)\?\.items\s*\|\|\s*\[\]/);
 });
 
@@ -260,17 +262,16 @@ test("integration: Adaptive (challenger role) and Static both go through the ide
   assert.equal(adaptiveResult.published, true);
   assert.equal(adaptiveGame.chat.length, 1, "exactly one message published for the Adaptive checkpoint");
 
-  // Static: static.md is a frozen skeleton (per PROMPT_MODULE_STATUS.md),
-  // so it is expected to come back `blocked` -- proving it goes through the
-  // SAME buildGeneratorContext/llmSystemPrompts gate as Adaptive, not a
-  // separate code path, and that blocked never fabricates a publish.
+  // Static uses its fixed policy and the same parse/schema/validation/publish
+  // path, without requiring an Adaptive controller role.
   const staticGame = new MockGame();
+  const staticCandidate = { role: "STATIC", message: "What relevant information has not yet been shared?", groundingMessageIds: [] };
   const staticResult = await runProductionCheckpoint({
     game: staticGame, facilitation: "static", role: null, chat, generalInfo: "task",
-    generatorCall: async () => { throw new Error("must never be called while blocked"); },
+    generatorCall: async () => ({ success: true, rawText: JSON.stringify(staticCandidate) }),
   });
-  assert.equal(staticResult.blocked, true);
-  assert.equal(staticGame.chat.length, 0);
+  assert.equal(staticResult.published, true);
+  assert.equal(staticGame.chat.length, 1);
 });
 
 const READY_STATIC_PROMPT_FIXTURE = {

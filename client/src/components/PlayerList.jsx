@@ -1,12 +1,12 @@
 import React from "react";
-import { usePlayers, usePlayer, useGame } from "@empirica/core/player/classic/react";
+import { usePlayers, usePlayer, useRound } from "@empirica/core/player/classic/react";
 import { Avatar } from "../components/Avatar";
 
 export function PlayerList() {
     const players = usePlayers();
     const focalPlayer = usePlayer();
-    const game = useGame();
-    const { facilitation } = game.get("treatment");
+    const round = useRound();
+    const facilitation = round?.get("facilitation");
 
     return (
         <div style={styles.container}>
@@ -22,7 +22,7 @@ export function PlayerList() {
                         </div>
                     </div>
                 ))}
-                {facilitation != "none" && facilitation != "human" &&
+                {(facilitation === "static" || facilitation === "adaptive") &&
                     <div style={styles.playerCard}>
                         <div style={styles.avatar}><img
                             className="h-full w-full rounded-md shadow bg-white p-1"

@@ -92,6 +92,7 @@ export function ReviewQuiz() {
           <p className="text-sm text-gray-600 text-center mb-8">
             Please review the relevant experiment information before trying the unanswered questions again.
           </p>
+          <p className="mb-6 text-center text-sm font-bold text-gray-700">Scroll down to review all relevant information.</p>
           <div className="space-y-5">
             {remediationSections.map((section) => (
               <section key={section.key} className="bg-white border border-gray-200 rounded-lg p-5">
@@ -122,6 +123,7 @@ export function ReviewQuiz() {
         <h1 className="text-2xl font-bold text-center mb-3">Review Quiz</h1>
         <h2 className="text-lg font-semibold text-gray-800 mb-2">{quiz.title}</h2>
         <p className="text-sm text-gray-600 mb-8">{quiz.scenario}</p>
+        <p className="mb-6 text-center text-sm font-bold text-gray-700">Scroll down to answer all five questions.</p>
 
         <div className="space-y-8">
           {quiz.questions.map((question, questionIndex) => (

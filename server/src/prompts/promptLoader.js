@@ -49,9 +49,8 @@ export const PROMPT_PACKAGE_VERSION = "v0.1-draft";
 
 // Detects the exact unresolved-placeholder conventions actually used in the
 // source files (verified by reading them, not guessed):
-//   - "[[ TODO ... ]]"  (static.md, multiple)
-//   - "skeleton only"   (static.md header note)
-//   - "content pending" (static.md title: "FRAMEWORK — content pending")
+// These markers remain a fail-closed guard if an incomplete source prompt is
+// introduced again later.
 const INCOMPLETE_MARKERS = [
   /\[\[\s*TODO\b/i,
   /skeleton\s+only/i,
@@ -102,12 +101,12 @@ const ADAPTIVE_ROLE_FILES = {
 // "final" or "complete":
 //   - base / expander / challenger / synthesiser: "draft" (no [[ TODO ]]
 //     markers found, but not research-approved/frozen -- still draft).
-//   - static: "skeleton_pending" (both draft AND mechanically incomplete).
+//   - static: "draft" (the PI-provided fixed policy, not separately frozen).
 // Mechanical completeness (marker detection) is recorded separately in
 // `sourceCompleteness`, which is what actually gates `blocked`.
 const PROMPT_STATUS = {
   base: "draft",
-  static: "skeleton_pending",
+  static: "draft",
   expander: "draft",
   challenger: "draft",
   synthesiser: "draft",
@@ -118,11 +117,7 @@ function computeSourceCompleteness(incompleteMarkers) {
 }
 
 /**
- * Static condition: base.md + static.md.
- * static.md is a confirmed skeleton (multiple [[ TODO ]] markers) as of the
- * copy taken for this module -- this WILL currently always return
- * blocked:true. That is the correct, intended behavior per this task's
- * requirement #11, not a bug.
+ * Static condition: base.md + the PI-provided fixed static.md policy.
  */
 export function getStaticPromptBundle() {
   const base = readSourceFile("base.md");

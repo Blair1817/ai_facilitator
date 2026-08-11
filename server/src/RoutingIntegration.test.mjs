@@ -208,8 +208,8 @@ test("round creation stores exposure index directly and consumes taskVersion/fac
   assert.match(round2Block, /taskVersion:\s*sequence\.taskVersionOrder\[1\]/);
   assert.match(round2Block, /facilitation:\s*sequence\.facilitationOrder\[1\]/);
 
-  assert.match(callbacksSource, /const TASK_CONFIG_INDEX_BY_VERSION = Object\.freeze\(\{ A: 0, B: 1 \}\)/, "Task A/B must retain their existing HPTConfig.json material indexes");
-  assert.match(callbacksSource, /const taskConfigIndex = TASK_CONFIG_INDEX_BY_VERSION\[taskVersion\]/, "Task materials must be selected by canonical taskVersion");
+  assert.match(callbacksSource, /taskConfig\.tasks\.filter\(\(candidate\) => candidate\.taskVersion === taskVersion\)/, "Task materials must be selected only by canonical taskVersion");
+  assert.doesNotMatch(callbacksSource, /TASK_CONFIG_INDEX_BY_VERSION|taskConfigIndex/, "material identity must not fall back to an exposure index");
   assert.doesNotMatch(callbacksSource, /taskVersion:\s*sequence\.facilitationOrder/, "taskVersion must never be inferred from facilitation");
 });
 
