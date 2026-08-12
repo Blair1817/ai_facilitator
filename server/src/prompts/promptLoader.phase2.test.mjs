@@ -55,12 +55,13 @@ test("getStaticPromptBundle content = base.md + '\\n\\n---\\n\\n' + static.md", 
   assert.equal(bundle.content, `${baseText}\n\n---\n\n${staticText}`);
 });
 
-test("getStaticPromptBundle preserves the Static scoreboard policy without embedding task material", () => {
+test("getStaticPromptBundle preserves the Static scoreboard policy with public-only task grounding", () => {
   const bundle = getStaticPromptBundle();
   assert.match(bundle.content, /scoreboard/i);
   assert.match(bundle.content, /\{\{sharedTaskOverview\}\}/);
   assert.doesNotMatch(bundle.content, /Eldoron|Myloria|Cragnio|Rovenna|Talwick|Meridia/);
-  assert.match(bundle.content, /Task materials are\s+outside the LLM boundary/i);
+  assert.match(bundle.content, /shared task objective[\s\S]+requirements, and option labels/i);
+  assert.match(bundle.content, /never\s+contains private reports, hidden facts, answer keys, or participant-specific/i);
 });
 
 test("getStaticPromptBundle does NOT instruct the LLM to output a RATIONALE field", () => {

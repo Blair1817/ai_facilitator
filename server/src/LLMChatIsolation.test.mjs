@@ -13,13 +13,13 @@ const icebreakerHandle = callbacks.slice(
   callbacks.indexOf('// ── on("game", "chat_round_N")'),
 );
 
-test("formal LLM call sites with task-context parameters pass an empty value", () => {
-  assert.doesNotMatch(formalHandle, /get\("generalInfo"\)/);
-  assert.doesNotMatch(formalHandle, /get\("decisionOptions"\)/);
-  assert.match(formalHandle, /taskGeneralContext:\s*""/);
-  assert.match(callbacks, /generalInfo:\s*""/);
-  assert.match(callbacks, /taskGeneralContext:\s*""/);
-  assert.match(callbacks, /Task materials are not available to the facilitator/);
+test("formal LLM call sites receive only the sanitised shared task overview", () => {
+  assert.match(formalHandle, /buildStaticSharedTaskOverview\(\{/);
+  assert.match(formalHandle, /get\("generalInfo"\)/);
+  assert.match(formalHandle, /get\("decisionOptions"\)/);
+  assert.match(formalHandle, /taskGeneralContext:\s*(?:built\.taskGeneralContext|buildStaticSharedTaskOverview\(\{)/);
+  assert.match(callbacks, /generalInfo:\s*publicTaskOverview/);
+  assert.doesNotMatch(formalHandle, /get\("playerContent"\)|get\("private|privateProfile|hiddenFacts|answerKey/i);
 });
 
 test("icebreaker and formal handlers use different transcript keys and context builders", () => {

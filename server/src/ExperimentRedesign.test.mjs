@@ -210,12 +210,13 @@ test("R8: formal Discussion retains the original unanimous early-finish path", (
   assert.match(discussion, /player\.stage\.set\("submit", !isReady\)/);
 });
 
-test("Discussion has a server-validated recovery path for unanimous readiness and deadline expiry", () => {
+test("Discussion uses native unanimous readiness and an idempotent deadline-only recovery path", () => {
   assert.match(discussion, /discussionAdvanceRequest/);
-  assert.match(discussion, /requestAdvance\("all_ready"\)/);
+  assert.doesNotMatch(discussion, /requestAdvance\("all_ready"\)/);
   assert.match(discussion, /requestAdvance\("deadline_reached"\)/);
   assert.match(callbacks, /Empirica\.on\("player", "discussionAdvanceRequest"/);
-  assert.match(callbacks, /every\(\(participant\) => Boolean\(participant\.stage\?\.get\("submit"\)\)\)/);
+  assert.match(callbacks, /discussionAdvanceRequest\.reason !== "deadline_reached"/);
+  assert.match(callbacks, /discussionAdvanceCommittedStageId/);
   assert.match(callbacks, /Date\.now\(\) >= deadline/);
   assert.match(callbacks, /stage\.set\("ended", true\)/);
 });

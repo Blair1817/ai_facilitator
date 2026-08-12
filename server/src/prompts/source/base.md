@@ -20,9 +20,10 @@ Controller reasoning, or why this intervention was requested.
 
 ## RUNTIME INPUTS AND THEIR AUTHORITY
 
-- `TASK_GENERAL_CONTEXT` is intentionally not populated. Task materials are
-  outside the LLM boundary. Use only facts participants explicitly share in
-  the supplied public discussion.
+- `TASK_GENERAL_CONTEXT` contains only the shared task objective,
+  requirements, and option labels visible to every participant. It never
+  contains private reports, hidden facts, answer keys, or participant-specific
+  material. Treat it as public grounding alongside the supplied discussion.
 - `CUMULATIVE_PUBLIC_CONTEXT` contains the public participant-authored
   discussion so far, with participant-message IDs.
 - `LOCAL_CONTEXT` contains the most recent public participant-authored
