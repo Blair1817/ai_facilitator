@@ -164,7 +164,7 @@ test("both Rounds implement the approved task lifecycle in order", () => {
   assert.ok(callbacksSource.indexOf('round1.addStage({ name: "Break"') < callbacksSource.indexOf('round2.addStage({ name: "TaskInformation"'));
 });
 
-test("client routes ReviewQuiz, guards double-submit, preserves drafts locally, and persists scored attempts", () => {
+test("client routes ReviewQuiz, guards double-submit, preserves drafts locally, and stores only pass completion", () => {
   assert.match(gameSource, /stageName == "ReviewQuiz"/);
   assert.match(gameSource, /<ReviewQuiz key=\{roundStageKey\}/);
   assert.match(reviewQuizSource, /round\?\.get\("taskVersion"\)/);
@@ -174,8 +174,8 @@ test("client routes ReviewQuiz, guards double-submit, preserves drafts locally, 
   assert.match(reviewQuizSource, /clearIncorrectReviewQuizAnswers/);
   assert.match(reviewQuizSource, /Return to Review Quiz/);
   assert.match(reviewQuizSource, /usePersistentDraft/);
-  assert.match(reviewQuizSource, /player\.round\.set\("reviewQuizAttempts"/);
-  assert.match(reviewQuizSource, /submittedAt/);
+  assert.match(reviewQuizSource, /player\.round\.set\("reviewQuizPassed", true\)/);
+  assert.doesNotMatch(reviewQuizSource, /reviewQuizAttempts|reviewQuizResult|attemptNumber|submittedAt|questionCorrectness/);
   assert.doesNotMatch(reviewQuizSource, /retryCount|maxRetries|maxAttempts/);
   assert.doesNotMatch(readFileSync(path.join(dirname, "../../client/src/stages/reviewQuizConfig.js"), "utf8"), /addReviewQuizAttempt|attemptCount|submittedAt|passedAt/);
 });

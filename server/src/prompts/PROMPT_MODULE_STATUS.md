@@ -101,5 +101,5 @@ research-approved -- see that file's own header), and
 ## What this means for the currently running system
 
 - **Static condition intervention is enabled.** Every existing Static checkpoint uses the fixed Static policy with only the current round's shared task overview, complete public transcript, and discussion timing, then flows through the shared generation/validation/publication path.
-- **Adaptive condition intervention works for 3 of the 4 roles the Controller can select** (`expander`/`challenger`/`synthesiser`), through one Generator attempt + basic schema/deterministic validation; the 4th (`facilitator`) is always blocked for the reason above, logged as Silent, never silently mapped to another role or to Static.
-- Round/stage/questionnaire/task-order/facilitation-order workflow, counterbalancing (now via native Empirica `sequenceId` treatments -- see `Counterbalancing.mjs`), feature extraction, and role-selection thresholds are unaffected.
+- **Adaptive condition intervention uses three selectable roles** (`expander`/`challenger`/`synthesiser`). Its checkpoint pipeline is Semantic Assessor → Evidence Checker → Gate → role selection, followed by the shared generation and validation path when the Gate permits an intervention.
+- Round/stage/questionnaire/task-order/facilitation-order workflow and counterbalancing (now via native Empirica `sequenceId` treatments -- see `Counterbalancing.mjs`) are unaffected.

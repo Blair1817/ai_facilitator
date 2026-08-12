@@ -3,7 +3,7 @@ import Slider from "@mui/material/Slider";
 
 export const NO_GROUP_FINAL_DECISION_OPTION = Object.freeze({
   id: "NO_GROUP_FINAL_DECISION",
-  label: "The group did not reach a final decision",
+  label: "Fail to reach a final decision",
 });
 
 export function OptionChoice({ legend, options, value, onChange, name }) {

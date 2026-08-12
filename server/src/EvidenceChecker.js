@@ -106,15 +106,7 @@ function verifySpanAndParticipants(key, factor, messageById) {
 }
 
 /**
- * Rule 3: if the feature-only Candidate Gate never even flagged this
- * factor's role as a candidate (i.e. the raw feature scores gave no
- * support at all), an LLM claim of "present" is in real conflict with the
- * cheap, high-recall signal that is supposed to catch most true cases --
- * halve the strength rather than either ignoring the conflict or
- * discarding the LLM's judgement outright.
- */
-/**
- * Rule 4: self_correction present discounts the other (deficiency) factors
+ * Rule 3: self_correction present discounts the other (deficiency) factors
  * proportionally to its own strength. self_correction itself is never
  * discounted by this rule.
  */
