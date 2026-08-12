@@ -4,11 +4,16 @@ import _ from "lodash";
 import dotenv from "dotenv";
 import taskConfig from "./HPTConfig.json";
 import { llmSystemPrompts } from "./LLMConfig.js";
-import { evaluateGate, chooseRole, getRoleThreshold } from "./utils.js";
+import { evaluateGate, chooseRole, getRoleThreshold, THRESHOLDS } from "./utils.js";
 import { parseGeneratorOutputStrict, validateAgainstGenerationSchema, runDeterministicValidation } from "./prompts/GeneratorContract.mjs";
 import { buildDynamicUserContext, withMessageIds } from "./prompts/DynamicContext.mjs";
 import { getRequestedGeneralistPromptBundle } from "./prompts/promptLoader.js";
-import { buildStaticSharedTaskOverview, buildStaticUserContext } from "./prompts/StaticContext.mjs";
+import { buildStaticUserContext } from "./prompts/StaticContext.mjs";
+import {
+  buildIcebreakerLLMMessages,
+  buildIcebreakerOpening,
+  parseIcebreakerLLMResponse,
+} from "./IcebreakerFacilitator.mjs";
 import { assessSemanticFactors } from "./SemanticAssessor.js";
 import { checkEvidence } from "./EvidenceChecker.js";
 import { compilePlan } from "./PolicyCompiler.js";
@@ -69,10 +74,10 @@ const CALLBACKS_INSTANCE_ID = randomUUID();
 
 // ── LLM API call ──────────────────────────────────────────────────────────────
 
-async function getLLMResponse(messages) {
+async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens) {
   const data = {
     model: openaiModel,
-    max_tokens: llmMaxOutputTokens,
+    max_tokens: maxTokens,
     messages,
     // Note: `response_format: { type: "json_object" }` is intentionally
     // NOT sent. The live endpoint (api.minimax.chat, Phase 6 pilot) does
@@ -117,6 +122,17 @@ async function getLLMResponse(messages) {
     console.error("LLM endpoint error:", error);
     return { success: false, error: error.message };
   }
+}
+
+// Formal-task and icebreaker calls are separate, stateless completion paths.
+// The shared function above is transport only: it stores no conversation and
+// adds no context. Each wrapper receives messages from its own locked builder.
+async function getLLMResponse(messages) {
+  return requestChatCompletion(messages, llmMaxOutputTokens);
+}
+
+async function getIcebreakerLLMResponse(messages) {
+  return requestChatCompletion(messages, Math.min(llmMaxOutputTokens, 500));
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -184,12 +200,7 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
     return { blocked: true, reason: promptResult.reason, metadata: promptResult.metadata };
   }
 
-  const generalInfo = game.currentRound?.get("generalInfo") || "";
   if (facilitation === "static") {
-    const sharedTaskOverview = buildStaticSharedTaskOverview({
-      generalInfo,
-      decisionOptions: game.currentRound?.get("decisionOptions") || [],
-    });
     const staticContext = buildStaticUserContext({
       chat,
       remainingTimeMs: remainingTime,
@@ -198,7 +209,10 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
     return {
       blocked: false,
       metadata: promptResult.metadata,
-      systemPrompt: promptResult.content.replace("{{sharedTaskOverview}}", sharedTaskOverview),
+      systemPrompt: promptResult.content.replace(
+        "{{sharedTaskOverview}}",
+        "Task materials are not available to the facilitator. Use only facts participants explicitly share in the public transcript.",
+      ),
       ...staticContext,
     };
   }
@@ -209,7 +223,7 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
     chat: chat.filter(isFormalContextMessage),
     checkpointDescriptor,
     selectedRoleForDisplay: promptResult.metadata.generationRole,
-    generalInfo,
+    generalInfo: "",
     plan,
   });
 
@@ -350,12 +364,11 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   // the unavailable case, so no repair is triggered. The caller logs
   // this strongly and goes silent.
   async function runValidator(candidate, priorFailedCriteria = null, priorCandidate = null) {
-    const generalInfo = game.currentRound?.get("generalInfo") || "";
     const result = await validateCandidate({
       chat,
       candidate,
       selectedRole: built.metadata.generationRole,
-      taskGeneralContext: generalInfo,
+      taskGeneralContext: "",
       callLLM: getLLMResponse,
       priorFailedCriteria,
       priorCandidate,
@@ -752,6 +765,36 @@ function appendTimedMessage(stage, attribute, content, messageType = MESSAGE_TYP
   return true;
 }
 
+function icebreakerActivityPrompt(taskVersion) {
+  if (taskVersion === "A") {
+    return "For this activity, choose whether you would rather speak every language fluently or play every musical instrument expertly, share a short reason, and invite a teammate to answer.";
+  }
+  return "For this activity, build a word chain starting with Rocket: each new word begins with the last letter of the previous word, one word per turn, with no repeats.";
+}
+
+function appendIcebreakerOpening(stage, introChatKey) {
+  const game = stage.currentGame;
+  const existing = game.get(introChatKey) || [];
+  if (existing.some((message) => message?.messageType === MESSAGE_TYPES.ICE_BREAKING_FACILITATOR)) return false;
+  const timestamp = Date.now();
+  appendCanonicalMessage(game, introChatKey, {
+    messageId: `icebreaker-opening-${stage.id}`,
+    groupId: game.id,
+    speakerId: "icebreaker-ai",
+    roundIndex: stage.round.get("index"),
+    stage: "IceBreaker",
+    messageType: MESSAGE_TYPES.ICE_BREAKING_FACILITATOR,
+    speakerType: MESSAGE_TYPES.ICE_BREAKING_FACILITATOR,
+    timestamp,
+    content: buildIcebreakerOpening({
+      participantNames: game.players.map((participant) => participant.get("name")),
+      activityPrompt: icebreakerActivityPrompt(stage.round.get("taskVersion")),
+    }),
+    sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
+  });
+  return true;
+}
+
 Empirica.onStageStart(({ stage }) => {
   const game = stage.currentGame;
   stage.set("callbacksInitializedAt", Date.now());
@@ -779,7 +822,9 @@ Empirica.onStageStart(({ stage }) => {
   if (stageName === "Introduction") {
     const durationMs = stage.get("duration") * 1000;
     const introChatKey = `intro_round_${stage.round.get("index")}`;
+    appendIcebreakerOpening(stage, introChatKey);
     if (durationMs > 30_000) setTimeout(() => appendTimedMessage(stage, introChatKey, "Thirty seconds remain in the IceBreaker."), durationMs - 30_000);
+    Empirica.flush();
   }
   if (stageName === "Break") {
     const round = stage.round;
@@ -896,6 +941,83 @@ Empirica.on("player", "humanMessageRequest", (_ctx, { player, humanMessageReques
   game.set("processedHumanMessageRequests", processed);
   player.set("humanMessageRequestResult", result);
 });
+
+// ── Icebreaker-only @Facilitator path ───────────────────────────────────────
+// This listener cannot enter the formal detector/generator/validator pipeline.
+// Its context builder accepts only the isolated intro_round_N transcript.
+async function handleIcebreakerChat(_env, { game }) {
+  const round = game.currentRound;
+  const stage = game.currentStage;
+  if (!round || !stage || stage.get("name") !== "Introduction") return;
+
+  const roundIndex = round.get("index");
+  const introChatKey = `intro_round_${roundIndex}`;
+  const chat = game.get(introChatKey) || [];
+  const lastMessage = chat[chat.length - 1];
+  if (
+    !lastMessage
+    || lastMessage.stage !== "IceBreaker"
+    || lastMessage.speakerType !== MESSAGE_TYPES.HUMAN
+    || !containsFacilitatorMention(lastMessage.content ?? lastMessage.text ?? "")
+  ) return;
+
+  const messageId = lastMessage.messageId;
+  if (typeof messageId !== "string" || !messageId) return;
+  const handled = { ...(game.get("icebreakerFacilitatorHandledMessageIds") || {}) };
+  if (handled[messageId]) return;
+  handled[messageId] = { status: "pending", startedAt: Date.now() };
+  game.set("icebreakerFacilitatorHandledMessageIds", handled);
+  Empirica.flush();
+
+  const originatingRoundId = round.id;
+  const originatingStageId = stage.id;
+  const llmMessages = buildIcebreakerLLMMessages(chat);
+  const response = await getIcebreakerLLMResponse(llmMessages);
+  const parsed = response.success ? parseIcebreakerLLMResponse(response.rawText) : { ok: false, reason: response.error };
+
+  if (
+    game.currentRound?.id !== originatingRoundId
+    || game.currentStage?.id !== originatingStageId
+    || game.currentStage?.get("name") !== "Introduction"
+  ) return;
+
+  const content = parsed.ok
+    ? parsed.message
+    : "I can help using only what has been shared in this icebreaker chat. Please rephrase your question or ask about the icebreaker activity.";
+  const timestamp = Date.now();
+  appendCanonicalMessage(game, introChatKey, {
+    messageId: `icebreaker-facilitator-${originatingStageId}-${timestamp}`,
+    groupId: game.id,
+    speakerId: "icebreaker-ai",
+    roundIndex,
+    stage: "IceBreaker",
+    messageType: MESSAGE_TYPES.ICE_BREAKING_FACILITATOR,
+    speakerType: MESSAGE_TYPES.ICE_BREAKING_FACILITATOR,
+    timestamp,
+    content,
+    sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
+  });
+  game.set("icebreakerFacilitatorHandledMessageIds", {
+    ...(game.get("icebreakerFacilitatorHandledMessageIds") || {}),
+    [messageId]: { status: parsed.ok ? "published" : "safe_fallback", finishedAt: timestamp },
+  });
+  game.set("icebreakerLLMLog", [
+    ...(game.get("icebreakerLLMLog") || []),
+    {
+      timestamp,
+      roundIndex,
+      requestMessageId: messageId,
+      outcome: parsed.ok ? "PUBLISHED" : "SAFE_FALLBACK",
+      failureReason: parsed.ok ? null : parsed.reason,
+      contextBoundary: "PUBLIC_ICEBREAKER_CHAT_ONLY",
+      model: openaiModel,
+    },
+  ]);
+  Empirica.flush();
+}
+
+Empirica.on("game", "intro_round_0", handleIcebreakerChat);
+Empirica.on("game", "intro_round_1", handleIcebreakerChat);
 
 // ── on("game", "chat_round_N") ────────────────────────────────────────────────
 
@@ -1212,10 +1334,9 @@ async function handleChat(env, { game }) {
   // no feature extraction, feature pre-filter, or feature-weighted score.
   let checkedFactors = null;
   const assessorStart = Date.now();
-  const generalInfoForAssessor = game.currentRound?.get("generalInfo") || "";
   const assessorResult = await assessSemanticFactors({
     chat,
-    taskGeneralContext: generalInfoForAssessor,
+    taskGeneralContext: "",
     callLLM: getLLMResponse,
   });
   if (

@@ -73,7 +73,8 @@ test("@Facilitator routes to a participant-requested Generalist before automatic
 test("requested Generalist prompt preserves privacy, grounding, and neutrality boundaries", () => {
   assert.match(requestedPromptSource, /private participant profiles/i);
   assert.match(requestedPromptSource, /correct answers/i);
-  assert.match(requestedPromptSource, /only TASK_GENERAL_CONTEXT and the public discussion/i);
+  assert.match(requestedPromptSource, /only the public discussion/i);
+  assert.match(requestedPromptSource, /Task materials are not provided/i);
   assert.match(requestedPromptSource, /Never choose, recommend, rank, vote for/i);
   assert.match(requestedPromptSource, /Do not remain silent/i);
 });

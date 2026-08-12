@@ -15,7 +15,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "mkdir -p dist/prompts && cp src/HPTConfig.json dist/HPTConfig.json && cp -R src/prompts/. dist/prompts/ && esbuild src/index.js --color=true --log-level=warning --platform=node --packages=external --define:process.env.NODE_ENV='\"production\"' --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --bundle --minify --outfile=dist/index.js --sourcemap",
+    "build": "mkdir -p dist/prompts && cp src/HPTConfig.json dist/HPTConfig.json && cp -R src/prompts/. dist/prompts/ && esbuild src/index.js --color=true --log-level=warning --platform=node --define:process.env.NODE_ENV='\"production\"' --banner:js='import { createRequire } from \"module\"; const require = createRequire(import.meta.url);' --bundle --minify --outfile=dist/index.js --sourcemap",
     "test:real-adaptive": "node real-adaptive-evaluation.mjs",
     "dev": "npm run build && node --trace-warnings --enable-source-maps --unhandled-rejections=warn-with-error-code dist/index.js",
     "serve": "node --trace-warnings --enable-source-maps --unhandled-rejections=warn-with-error-code index.js"

@@ -55,10 +55,12 @@ test("getStaticPromptBundle content = base.md + '\\n\\n---\\n\\n' + static.md", 
   assert.equal(bundle.content, `${baseText}\n\n---\n\n${staticText}`);
 });
 
-test("getStaticPromptBundle includes the Alsobay task context (cities) verbatim", () => {
+test("getStaticPromptBundle preserves the Static scoreboard policy without embedding task material", () => {
   const bundle = getStaticPromptBundle();
-  assert.match(bundle.content, /Eldoron, Myloria, Cragnio/);
   assert.match(bundle.content, /scoreboard/i);
+  assert.match(bundle.content, /\{\{sharedTaskOverview\}\}/);
+  assert.doesNotMatch(bundle.content, /Eldoron|Myloria|Cragnio|Rovenna|Talwick|Meridia/);
+  assert.match(bundle.content, /Task materials are\s+outside the LLM boundary/i);
 });
 
 test("getStaticPromptBundle does NOT instruct the LLM to output a RATIONALE field", () => {
@@ -77,6 +79,20 @@ test("getStaticPromptBundle does NOT instruct the LLM to output a RATIONALE fiel
   const bodyOnly = bundle.content.split("\n").filter((l) => !l.startsWith(">")).join("\n");
   assert.equal(/RATIONALE\s*:/i.test(bodyOnly), false, "static.md's body must not contain a 'RATIONALE:' field instruction");
   assert.equal(/MESSAGE\s*:\s*Include/i.test(bodyOnly), false, "static.md must not carry the original Alsobay 'MESSAGE: Include...' instruction (base.md owns the output contract)");
+});
+
+test("getStaticPromptBundle forbids Markdown/list formatting consistently with the shared Generator contract", () => {
+  const bundle = getStaticPromptBundle();
+  assert.match(bundle.content, /Do not use Markdown, headings, lists, bullets, numbering, or newlines for formatting/);
+  assert.doesNotMatch(bundle.content, /you may use newlines for formatting/i);
+});
+
+test("all Generator bundles require grounding IDs to be quoted JSON strings", () => {
+  for (const bundle of [getStaticPromptBundle(), getGeneralistPromptBundle(), getAdaptivePromptBundle("expander")]) {
+    assert.match(bundle.content, /quoted JSON string/);
+    assert.match(bundle.content, /\["m2", "m3"\]/);
+    assert.match(bundle.content, /never output bare identifiers/i);
+  }
 });
 
 test("getStaticPromptBundle does NOT contain generalist.md content (Static AI != Generalist)", () => {

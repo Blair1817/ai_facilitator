@@ -7,6 +7,9 @@ import path from "node:path";
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientRoot = path.join(dirname, "../../client/src");
 const read = (relativePath) => readFileSync(path.join(clientRoot, relativePath), "utf8");
+const serverPackage = JSON.parse(readFileSync(path.join(dirname, "../package.json"), "utf8"));
+const callbacksSource = readFileSync(path.join(dirname, "callbacks.js"), "utf8");
+const viteConfigSource = readFileSync(path.join(clientRoot, "../vite.config.js"), "utf8");
 
 const roundForms = [
   ["stages/InitialDecision.jsx", "initialDecision"],
@@ -43,4 +46,19 @@ test("chat drafts survive reloads while sent messages use the reviewed server re
   assert.match(source, /form: "chat"/);
   assert.match(source, /usePersistentDraft/);
   assert.match(source, /player\.set\("humanMessageRequest"/);
+});
+
+test("server build bundles Empirica dependencies required by the callbacks runtime", () => {
+  assert.doesNotMatch(serverPackage.scripts.build, /--packages=external/);
+  assert.match(serverPackage.scripts.build, /--bundle/);
+  assert.match(serverPackage.scripts.build, /createRequire/);
+});
+
+test("onGameStart imports the THRESHOLDS value persisted in systemInfo", () => {
+  assert.match(callbacksSource, /import\s*\{[^}]*\bTHRESHOLDS\b[^}]*\}\s*from\s*["']\.\/utils\.js["']/s);
+  assert.match(callbacksSource, /thresholds:\s*THRESHOLDS/);
+});
+
+test("local player dev server accepts Empirica's IPv6 localhost proxy", () => {
+  assert.match(viteConfigSource, /host:\s*["']::["']/);
 });

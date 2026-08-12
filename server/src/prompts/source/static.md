@@ -18,7 +18,7 @@ You are given the time remaining for the group to make a decision, and each mess
 When given the transcript, respond with a JSON object using the project’s existing required schema. This project requires exactly these fields:
 
 - `role`: Use the exact string `STATIC`.
-- `message`: Include the text of your message here. Do not use Markdown, but you may use newlines for formatting.
+- `message`: Include one concise plain-text message here. Do not use Markdown, headings, lists, bullets, numbering, or newlines for formatting.
 - `groundingMessageIds`: Include the public participant-message IDs supporting transcript-specific claims. Use an empty array when the message makes no transcript-specific factual claim.
 
 Do not include a rationale or any additional field. The participant-facing chat displays only `message`.

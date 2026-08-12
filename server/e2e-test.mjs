@@ -73,7 +73,6 @@ function makeMockGame(opts = {}) {
         if (k === "index") return 0;
         if (k === "deadline") return Date.now() + 10 * 60 * 1000;
         if (k === "taskStartTime") return Date.now() - 60_000;
-        if (k === "generalInfo") return opts.generalInfo ?? "Three cities (Eldoron, Myloria, Cragnio) — pick the best for your group of 3.";
         return undefined;
       },
       currentGame: null,
@@ -91,11 +90,15 @@ function makeChat(messages) {
 }
 
 // Now drive the pipeline. We import the same modules callbacks.js uses.
-const KEY = fs.readFileSync(path.join(process.cwd(), ".env"), "utf8").match(/OPENAI_API_KEY="([^"]+)"/)?.[1];
+const envText = fs.readFileSync(path.join(process.cwd(), ".env"), "utf8");
+const KEY = envText.match(/OPENAI_API_KEY="([^"]+)"/)?.[1];
 if (!KEY) { console.error("No OPENAI_API_KEY in .env"); process.exit(1); }
 
-const llmAPIEndpoint = "https://api.minimax.chat/v1/chat/completions";
-const openaiModel = "MiniMax-Text-01";
+const configuredEndpoint = envText.match(/LLM_API_ENDPOINT="([^"]+)"/)?.[1] || "https://api.minimax.chat/v1";
+const llmAPIEndpoint = configuredEndpoint.endsWith("/chat/completions")
+  ? configuredEndpoint
+  : `${configuredEndpoint.replace(/\/$/, "")}/chat/completions`;
+const openaiModel = envText.match(/OPENAI_MODEL="([^"]+)"/)?.[1] || "MiniMax-Text-01";
 
 async function getLLMResponse(messages) {
   const res = await fetch(llmAPIEndpoint, {
@@ -117,6 +120,12 @@ async function getLLMResponse(messages) {
 const { getStaticPromptBundle, getAdaptivePromptBundle, getGeneralistPromptBundle } = await import("./src/prompts/promptLoader.js");
 const { parseGeneratorOutputStrict, validateAgainstGenerationSchema, runDeterministicValidation } = await import("./src/prompts/GeneratorContract.mjs");
 const { buildDynamicUserContext, withMessageIds } = await import("./src/prompts/DynamicContext.mjs");
+const { buildStaticUserContext } = await import("./src/prompts/StaticContext.mjs");
+const {
+  buildIcebreakerLLMMessages,
+  buildIcebreakerOpening,
+  parseIcebreakerLLMResponse,
+} = await import("./src/IcebreakerFacilitator.mjs");
 const { evaluateGate, chooseRole, getRoleThreshold } = await import("./src/utils.js");
 const { assessSemanticFactors } = await import("./src/SemanticAssessor.js");
 const { checkEvidence } = await import("./src/EvidenceChecker.js");
@@ -124,6 +133,55 @@ const { compilePlan } = await import("./src/PolicyCompiler.js");
 const { validateCandidate } = await import("./src/SemanticValidator.js");
 const { shouldEvaluateCheckpoint, recordAttempt, recordPublish, resetRoundState } = await import("./src/CheckpointManager.mjs");
 const { llmSystemPrompts } = await import("./src/LLMConfig.js");
+
+function buildStaticRequest(chat) {
+  const bundle = llmSystemPrompts("static", null);
+  if (bundle.blocked) throw new Error(`static prompt blocked: ${bundle.reason}`);
+  const context = buildStaticUserContext({ chat, remainingTimeMs: 600_000, elapsedTimeMs: 60_000 });
+  return {
+    ...context,
+    metadata: bundle.metadata,
+    systemPrompt: bundle.content.replace(
+      "{{sharedTaskOverview}}",
+      "Task materials are not available to the facilitator. Use only facts participants explicitly share in the public transcript.",
+    ),
+  };
+}
+
+function buildAdaptiveRequest(chat, role, plan = null) {
+  const bundle = llmSystemPrompts("adaptive", role);
+  if (bundle.blocked) throw new Error(`adaptive prompt blocked: ${bundle.reason}`);
+  const context = buildDynamicUserContext({
+    chat,
+    checkpointDescriptor: `Checkpoint after ${chat.length} public messages. Participants: Red, Pink, Blue.`,
+    selectedRoleForDisplay: bundle.metadata.generationRole,
+    generalInfo: "",
+    plan,
+  });
+  return { ...context, metadata: bundle.metadata, systemPrompt: bundle.content };
+}
+
+// =================== TEST 0: Icebreaker facilitator ===================
+console.log("\n=== TEST 0: Icebreaker facilitator (isolated chat-only LLM) ===");
+{
+  const opening = buildIcebreakerOpening({
+    participantNames: ["Red", "Pink", "Blue"],
+    activityPrompt: "Choose speaking every language or playing every instrument, then briefly explain why.",
+  });
+  assert.match(opening, /@\[Red\].*@\[Pink\].*@\[Blue\]/);
+  const icebreakerChat = [
+    { stage: "IceBreaker", messageType: "ice_breaking_facilitator", speakerType: "ice_breaking_facilitator", content: opening, sender: { id: "ai", name: "Facilitator" } },
+    { stage: "IceBreaker", messageType: "human", speakerType: "human", content: "@[Facilitator] How do I tag Blue and invite them to answer?", sender: { id: "p1", name: "Red" } },
+    { stage: "Discussion", messageType: "human", speakerType: "human", content: "FORBIDDEN FORMAL TASK CONTENT", sender: { id: "p2", name: "Pink" } },
+  ];
+  const messages = buildIcebreakerLLMMessages(icebreakerChat);
+  assert.doesNotMatch(JSON.stringify(messages), /FORBIDDEN FORMAL TASK CONTENT/);
+  const response = await getLLMResponse(messages);
+  if (!response.success) { console.log("  ✗ LLM FAIL:", response.error); process.exit(1); }
+  const parsed = parseIcebreakerLLMResponse(response.rawText);
+  if (!parsed.ok) { console.log("  ✗ ICEBREAKER RESPONSE FAIL:", parsed.reason); process.exit(1); }
+  console.log("  ✓ isolated icebreaker response passed strict validation");
+}
 
 // =================== TEST 1: Static path ===================
 console.log("\n=== TEST 1: Static AI path (full pipeline) ===");
@@ -144,15 +202,17 @@ console.log("\n=== TEST 1: Static AI path (full pipeline) ===");
 
   // Simulate handleChat for Static: it bypasses the gate entirely and
   // calls runSharedGeneration directly. We replicate that minimal slice.
-  const chat = game.currentRound.get ? null : null; // not used
-  const built = (() => {
-    const r = llmSystemPrompts("static", null);
-    if (r.blocked) throw new Error("static prompt blocked: " + r.reason);
-    return r;
-  })();
-  // llmSystemPrompts returns {systemPrompt, userContent, eligibleMessageIds, ...}
+  const chat = makeChat([
+    "Eldoron has good schools, my kids would benefit",
+    "I agree, my kids too",
+    "But Cragnio has lower taxes",
+    "What about jobs?",
+    "Myloria is small and quiet",
+    "Let's think about all three carefully",
+  ]);
+  const built = buildStaticRequest(chat);
   const messages = [
-    { role: "system", content: built.content },
+    { role: "system", content: built.systemPrompt },
     { role: "user", content: built.userContent },
   ];
   const t0 = Date.now();
@@ -191,7 +251,7 @@ console.log("\n=== TEST 2: Adaptive Specialist path (full pipeline incl. Control
   // LLM-only detector + deterministic evidence verification
   let checkedFactors = null;
   const t0 = Date.now();
-  const ar = await assessSemanticFactors({ chat, taskGeneralContext: game.currentRound.get("generalInfo"), callLLM: getLLMResponse });
+  const ar = await assessSemanticFactors({ chat, taskGeneralContext: "", callLLM: getLLMResponse });
   console.log(`  Detector: ${Date.now() - t0}ms, success=${ar.success}`);
   if (ar.success) {
     checkedFactors = checkEvidence(ar.factors, { chat });
@@ -214,10 +274,9 @@ console.log("\n=== TEST 2: Adaptive Specialist path (full pipeline incl. Control
     console.log("  plan.evidenceIds:", plan.evidenceIds?.length, "items");
 
     // Step 9: Generator
-    const built = llmSystemPrompts("adaptive", chosen.role);
-    if (built.blocked) { console.log("  ✗ adaptive prompt blocked:", built.reason); process.exit(1); }
+    const built = buildAdaptiveRequest(chat, chosen.role, plan);
     const messages = [
-      { role: "system", content: built.content },
+      { role: "system", content: built.systemPrompt },
       { role: "user", content: built.userContent },
     ];
     const t1 = Date.now();
@@ -240,7 +299,7 @@ console.log("\n=== TEST 2: Adaptive Specialist path (full pipeline incl. Control
 
     // Step 10: Validator
     const t2 = Date.now();
-    const vr = await validateCandidate({ chat, candidate: parsed.parsed, selectedRole: built.metadata.generationRole, taskGeneralContext: game.currentRound.get("generalInfo"), callLLM: getLLMResponse });
+    const vr = await validateCandidate({ chat, candidate: parsed.parsed, selectedRole: built.metadata.generationRole, taskGeneralContext: "", callLLM: getLLMResponse });
     console.log(`  Validator LLM: ${Date.now() - t2}ms`);
     if (vr.success) {
       console.log("  Validator verdict: " + (vr.verdict.passed ? "✓ PASS" : "✗ FAIL: " + vr.verdict.failedCriteria.join(",")));
@@ -332,9 +391,9 @@ console.log("\n=== TEST 5: Full end-to-end pipeline timing (Static, with Validat
   resetRoundState(game);
   game.set("humanMessageCount", 6);
 
-  const built = llmSystemPrompts("static", null);
+  const built = buildStaticRequest(chat);
   const messages = [
-    { role: "system", content: built.content },
+    { role: "system", content: built.systemPrompt },
     { role: "user", content: built.userContent },
   ];
   const t0 = Date.now();
@@ -346,7 +405,7 @@ console.log("\n=== TEST 5: Full end-to-end pipeline timing (Static, with Validat
   if (!schema1.ok || !det1.passed) { console.log("  ✗ first attempt deterministic fail"); process.exit(1); }
 
   // Validator
-  const v1 = await validateCandidate({ chat, candidate: parsed1.parsed, selectedRole: "STATIC", taskGeneralContext: game.currentRound.get("generalInfo"), callLLM: getLLMResponse });
+  const v1 = await validateCandidate({ chat, candidate: parsed1.parsed, selectedRole: "STATIC", taskGeneralContext: "", callLLM: getLLMResponse });
   if (v1.success) {
     console.log(`  attempt 1 (${Date.now() - t0}ms): verdict=${v1.verdict.passed ? "PASS" : "FAIL: " + v1.verdict.failedCriteria.join(",")}`);
     if (!v1.verdict.passed) {
@@ -354,13 +413,13 @@ console.log("\n=== TEST 5: Full end-to-end pipeline timing (Static, with Validat
       const repairHint = `${built.userContent}\n\n---\n\n[PRIOR_FAILED_CRITERIA]\nThe previous candidate was rejected for: ${v1.verdict.failedCriteria.join(", ")}.\nPrevious: ${JSON.stringify(parsed1.parsed)}\nRegenerate.`;
       const t1 = Date.now();
       const llmRes2 = await getLLMResponse([
-        { role: "system", content: built.content },
+        { role: "system", content: built.systemPrompt },
         { role: "user", content: repairHint },
       ]);
       const parsed2 = parseGeneratorOutputStrict(llmRes2.rawText);
       const schema2 = validateAgainstGenerationSchema(parsed2.parsed, "STATIC");
       const det2 = runDeterministicValidation(parsed2.parsed, { selectedRole: "STATIC", eligibleMessageIds: built.eligibleMessageIds, aiOrSystemMessageIds: built.aiOrSystemMessageIds, recentAiMessageTexts: built.recentAiMessageTexts });
-      const v2 = await validateCandidate({ chat, candidate: parsed2.parsed, selectedRole: "STATIC", taskGeneralContext: game.currentRound.get("generalInfo"), callLLM: getLLMResponse, priorFailedCriteria: v1.verdict.failedCriteria, priorCandidate: parsed1.parsed });
+      const v2 = await validateCandidate({ chat, candidate: parsed2.parsed, selectedRole: "STATIC", taskGeneralContext: "", callLLM: getLLMResponse, priorFailedCriteria: v1.verdict.failedCriteria, priorCandidate: parsed1.parsed });
       console.log(`  attempt 2 (${Date.now() - t1}ms): schema=${schema2.ok} det=${det2.passed} verdict=${v2.success ? (v2.verdict.passed ? "PASS" : "FAIL: " + v2.verdict.failedCriteria.join(",")) : "ERR"}`);
     }
   }

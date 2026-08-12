@@ -20,9 +20,9 @@ Controller reasoning, or why this intervention was requested.
 
 ## RUNTIME INPUTS AND THEIR AUTHORITY
 
-- `TASK_GENERAL_CONTEXT` contains shared task material. You may make a
-  task-general statement only when that information is explicitly present in
-  this field.
+- `TASK_GENERAL_CONTEXT` is intentionally not populated. Task materials are
+  outside the LLM boundary. Use only facts participants explicitly share in
+  the supplied public discussion.
 - `CUMULATIVE_PUBLIC_CONTEXT` contains the public participant-authored
   discussion so far, with participant-message IDs.
 - `LOCAL_CONTEXT` contains the most recent public participant-authored
@@ -60,11 +60,8 @@ When `[ALLOWED_GROUNDING_MESSAGE_IDS]` is present, every ID in
 listed messages that directly supports the intervention. Do not cite the whole
 transcript by default.
 
-You may use only:
-
-1. information explicitly present in `TASK_GENERAL_CONTEXT`; and
-2. participant-shared information explicitly present in
-   `CUMULATIVE_PUBLIC_CONTEXT` or `LOCAL_CONTEXT`.
+You may use only participant-shared information explicitly present in
+`CUMULATIVE_PUBLIC_CONTEXT` or `LOCAL_CONTEXT`.
 
 Do not use external knowledge. Do not read, infer, or reveal private-profile
 information unless a participant has explicitly shared that information in
@@ -78,8 +75,6 @@ the supplied public discussion.
 - Never invent an ID and never cite an AI or system-message ID.
 - Use `groundingMessageIds: []` for a general intervention containing no
   transcript-specific factual claim.
-- Information drawn only from `TASK_GENERAL_CONTEXT` does not need a
-  participant-message ID. Do not fabricate an ID for task-general material.
 - If a statement combines several public claims, include every message ID
   needed to support the complete statement.
 
@@ -113,6 +108,9 @@ Requirements:
 - `message` must be one short plain-text intervention. It must not contain
   Markdown, headings, lists, role names, internal terminology, or rationale.
 - `groundingMessageIds` must follow the grounding rules above.
+- Every message ID in `groundingMessageIds` must be a quoted JSON string,
+  for example `[]` or `["m2", "m3"]`; never output bare identifiers such as
+  `[m2, m3]`.
 - Do not add fields.
 - Do not place code fences, explanations, or commentary around the JSON.
 

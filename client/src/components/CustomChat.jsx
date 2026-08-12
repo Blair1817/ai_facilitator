@@ -180,6 +180,7 @@ function MessageComp({ attribute }) {
 function Input({ onNewMessage, requestResult }) {
     const player = usePlayer();
     const round = useRound();
+    const stage = useStage();
     const messageDraftKey = draftKey({ playerId: player.id, roundId: round?.id, form: "chat", field: "message" });
     const [text, setText] = usePersistentDraft(messageDraftKey, "");
     const [pendingRequestId, setPendingRequestId] = useState(null);
@@ -192,7 +193,7 @@ function Input({ onNewMessage, requestResult }) {
             setText("");
             setRequestError("");
         } else {
-            setRequestError("Your message was not sent because this discussion stage is no longer accepting messages.");
+            setRequestError("Your message was not sent because this chat stage is no longer accepting messages.");
         }
         setPendingRequestId(null);
     }, [pendingRequestId, requestResult]);
@@ -202,7 +203,7 @@ function Input({ onNewMessage, requestResult }) {
         display: player.get("name"),
     }));
 
-    if (facilitation != "none" && facilitation != "human") {
+    if (stage?.get("name") === "Introduction" || (facilitation != "none" && facilitation != "human")) {
         mentionUsers.push({
             id: "ai",
             display: "Facilitator",
