@@ -7,6 +7,7 @@ import { llmSystemPrompts } from "./LLMConfig.js";
 import { THRESHOLDS, getCandidateRoles, evaluateGate, chooseRole, getRoleThreshold } from "./utils.js";
 import { parseGeneratorOutputStrict, validateAgainstGenerationSchema, runDeterministicValidation } from "./prompts/GeneratorContract.mjs";
 import { buildDynamicUserContext, withMessageIds } from "./prompts/DynamicContext.mjs";
+import { getOpeningMessageBundle } from "./prompts/promptLoader.js";
 import { assessSemanticFactors } from "./SemanticAssessor.js";
 import { checkEvidence } from "./EvidenceChecker.js";
 import { compilePlan } from "./PolicyCompiler.js";
@@ -522,6 +523,41 @@ Empirica.onStageStart(({ stage }) => {
     const now = new Date().getTime();
     game.set("taskStartTime", now);
     game.set("deadline",      now + gameDuration * 60 * 1000);
+
+    // ── Facilitator opening message (2026-08-08 addition) ────────────────
+    // Fixed, identical text for Static and Adaptive, posted once at the
+    // very start of the discussion. Deliberately NOT part of the
+    // checkpoint/gate pipeline above: it is not an LLM call (no Generator,
+    // no Semantic Assessor), it does not go through runSharedGeneration or
+    // GeneratorContract.mjs's validator, it does not increment
+    // totalInterventions, and it does not touch any of the Adaptive
+    // Controller's cooldown state (messagesSinceLastIntervention, lastRole,
+    // synthesiserFired, lastHandledCheckpoint). It exists purely to give
+    // participants a consistent orientation message before the discussion
+    // clock starts, identically in both conditions -- see
+    // IMPLEMENTATION_LOGIC.md's "Opening message" section.
+    const roundIndex = game.currentRound?.get("index");
+    if (roundIndex === null || roundIndex === undefined) {
+      console.error(`[onStageStart] game ${game.id}: no current round index -- skipping Facilitator opening message`);
+    } else {
+      const openingChatKey = `chat_round_${roundIndex}`;
+      const openingResult = getOpeningMessageBundle();
+      const openingLogEntry = {
+        timestamp: now,
+        roundIndex,
+        facilitation: game.currentRound?.get("facilitation"),
+        outcome: openingResult.blocked ? "OPENING_MESSAGE_SKIPPED" : "OPENING_MESSAGE_PUBLISHED",
+        reason: openingResult.blocked ? openingResult.reason : "",
+      };
+      if (!openingResult.blocked) {
+        game.append(openingChatKey, {
+          text:   openingResult.content,
+          ts:     now,
+          sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
+        });
+      }
+      game.set("llmLog", [...(game.get("llmLog") || []), openingLogEntry]);
+    }
   }
 });
 

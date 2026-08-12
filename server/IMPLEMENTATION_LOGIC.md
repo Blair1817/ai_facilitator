@@ -313,7 +313,63 @@ round/stage/questionnaire flow, counterbalancing (S1-S4), `expander.md` /
 `challenger.md` / `synthesiser.md` / `static.md` / `base.md`,
 `validatorPlaceholder.js`, `regenerationPlaceholder.js`, `debug_ui.html`.
 
-## 8. Test coverage added
+**2026-08-08 addendum (opening message, section 8):** in the interim, a
+separate PR (`d753eb6`) restructured `callbacks.js`'s Static/Adaptive
+routing so Static no longer shares the Act/Abstain gate with Adaptive at
+all (Static now always attempts a message every checkpoint, bypassing
+feature extraction/Candidate Gate/Semantic Assessor/Evidence
+Checker/`evaluateGate()` entirely) and rewrote `base.md`/`expander.md`/
+`challenger.md`/`synthesiser.md`. None of sections 1-7 above describe that
+current state anymore for the Static/Adaptive routing question specifically
+-- they describe this document's original 2026-08-07 version. The Adaptive
+pipeline itself (Steps 4-8, `utils.js`/`SemanticAssessor.js`/
+`EvidenceChecker.js`/`PolicyCompiler.js`) was not touched by that PR and
+still matches sections 1-7 exactly. Additionally modified for the opening
+message: `server/src/callbacks.js` (`onStageStart`), `server/src/prompts/promptLoader.js`
+(new `getOpeningMessageBundle()`), `server/src/prompts/promptLoader.test.mjs`.
+Added: `server/src/prompts/source/opening_message.md`.
+
+## 8. Opening message (2026-08-08 addition)
+
+A separate, small feature, unrelated to the gate/semantic-layer work above:
+the Facilitator now posts one fixed message at the very start of every
+Task-stage discussion, before any human message exists, identical text in
+both Static and Adaptive. Requested by the user directly (not derived from
+Methods/architecture docs), with these choices confirmed at the time:
+applies to both conditions with the exact same wording; the text is a
+fixed template, not LLM-generated; and it is fully independent of the
+checkpoint gate -- it does not call the Generator or the Semantic Assessor,
+does not go through `GeneratorContract.mjs`'s validator, does not
+increment `totalInterventions`, and does not touch any Adaptive Controller
+cooldown state (`lastRole`, `synthesiserFired`, `messagesSinceLastIntervention`,
+`lastHandledCheckpoint`).
+
+Implementation: `server/src/prompts/source/opening_message.md` holds the
+literal text (draft, engineering-authored, same "needs research review"
+status as `assessor.md`). `promptLoader.js`'s new `getOpeningMessageBundle()`
+reads it, using the same missing-file/incomplete-marker-blocking contract as
+the other loaders in that file, and returns everything after the file's
+last `---` delimiter as the participant-facing text (a header above that
+delimiter carries the file's own status notes and is never sent to
+participants). `callbacks.js`'s `onStageStart` handler calls it once, when
+the stage transitioning to is named `"Task"`, and -- if not blocked --
+appends it directly to that round's chat via `game.append`, then writes a
+separate log entry (`outcome: "OPENING_MESSAGE_PUBLISHED"` or
+`"OPENING_MESSAGE_SKIPPED"`) distinct in shape from the per-checkpoint
+`logEntry` objects, specifically so downstream analysis scripts counting
+intervention frequency don't need to special-case filtering it out --
+it is already tagged with a different `outcome` value than any checkpoint
+outcome (`ACT`/`ABSTAIN`/`PUBLISHED`/`SILENT` families never produce
+`OPENING_MESSAGE_*`).
+
+This message is not analyzed for role fidelity, non-directiveness, etc. by
+anything currently in the pipeline (no Generator call means no
+`GeneratorContract.mjs` check ever runs against it) -- its safety rests
+entirely on the fixed wording being reviewed by a human before use, the
+same as `static.md`/`expander.md`/etc. Review the wording in
+`opening_message.md` before running any real session.
+
+## 9. Test coverage added
 
 `server/src/EvidenceChecker.test.mjs` (13 tests), `server/src/PolicyCompiler.test.mjs`
 (7 tests), `server/src/SemanticAssessor.test.mjs` (14 tests) -- all pure-function

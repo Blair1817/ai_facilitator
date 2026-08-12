@@ -215,6 +215,55 @@ export function getAdaptivePromptBundle(selectedRole) {
 }
 
 /**
+ * 2026-08-08 addition: the Facilitator's fixed opening message, posted once
+ * at the start of every Task-stage discussion (both conditions, identical
+ * text -- see server/src/callbacks.js's onStageStart handler). Unlike
+ * getStaticPromptBundle()/getAdaptivePromptBundle(), this is NOT an LLM
+ * prompt -- there is no model call anywhere in this path. `content` here is
+ * the literal participant-facing text, taken verbatim from everything after
+ * the LAST "---" delimiter in opening_message.md (the same delimiter
+ * convention base.md/role files use to separate a header from body, reused
+ * here to separate the file's own status header from the actual message).
+ * Same blocked/incomplete-marker contract as the other loaders in this file
+ * so callbacks.js can treat a missing/skeleton file as "skip, log, don't
+ * fabricate" rather than crashing or sending placeholder text to
+ * participants.
+ */
+export function getOpeningMessageBundle() {
+  const file = readSourceFile("opening_message.md");
+  const metadata = { promptName: "opening_message", promptStatus: "draft_unapproved", condition: "both" };
+
+  if (file.error) {
+    return { blocked: true, reason: file.error, metadata: { ...metadata, sourceCompleteness: "missing_file" } };
+  }
+
+  const incomplete = detectIncompleteMarkers(file.content);
+  if (incomplete.length > 0) {
+    return {
+      blocked: true,
+      reason: `opening_message.md contains unresolved placeholder marker(s): ${incomplete.join(", ")}.`,
+      metadata: { ...metadata, sourceCompleteness: "has_unresolved_markers" },
+    };
+  }
+
+  const lastDelimiterIndex = file.content.lastIndexOf("\n---\n");
+  if (lastDelimiterIndex === -1) {
+    return {
+      blocked: true,
+      reason: "opening_message.md is missing the '---' delimiter separating its status header from the actual message text.",
+      metadata: { ...metadata, sourceCompleteness: "missing_delimiter" },
+    };
+  }
+
+  const messageText = file.content.slice(lastDelimiterIndex + "\n---\n".length).trim();
+  if (!messageText) {
+    return { blocked: true, reason: "opening_message.md has no message text after its '---' delimiter.", metadata: { ...metadata, sourceCompleteness: "empty_message" } };
+  }
+
+  return { blocked: false, content: messageText, metadata: { ...metadata, sourceCompleteness: "no_markers_found" } };
+}
+
+/**
  * Assembles the "dynamic user" turn using exactly the field names listed in
  * prompt_design_specification.Rmd's "Context Fields" -> "Generator 需要"
  * section: CHECKPOINT, SELECTED_ROLE, TASK_GENERAL_CONTEXT,
