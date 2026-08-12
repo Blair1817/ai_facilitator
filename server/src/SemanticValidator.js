@@ -299,15 +299,15 @@ export async function validateCandidate({
 
   const parseResult = parseValidatorResponse(llmResponse.rawText);
   if (!parseResult.ok) {
-    return { success: false, code: "VALIDATOR_PARSE_FAILURE", error: parseResult.error };
+    return { success: false, code: "VALIDATOR_PARSE_FAILURE", error: parseResult.error, rawText: llmResponse.rawText };
   }
 
   const schemaResult = validateAgainstValidatorSchema(parseResult.parsed);
   if (!schemaResult.ok) {
-    return { success: false, code: "VALIDATOR_SCHEMA_FAILURE", error: JSON.stringify(schemaResult.errors) };
+    return { success: false, code: "VALIDATOR_SCHEMA_FAILURE", error: JSON.stringify(schemaResult.errors), rawText: llmResponse.rawText };
   }
 
   const booleans = parseResult.parsed;
   const verdict = computeValidatorVerdict(booleans);
-  return { success: true, verdict: { ...verdict, booleans } };
+  return { success: true, verdict: { ...verdict, booleans }, rawText: llmResponse.rawText };
 }

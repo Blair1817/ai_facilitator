@@ -26,6 +26,7 @@ const [
   { buildDynamicUserContext, withMessageIds },
   { parseGeneratorOutputStrict, validateAgainstGenerationSchema, runDeterministicValidation },
   { validateCandidate },
+  { buildChatCompletionPayload, buildSuccessfulLLMResult },
 ] = await Promise.all([
   import("./src/SemanticAssessor.js"),
   import("./src/EvidenceChecker.js"),
@@ -35,14 +36,19 @@ const [
   import("./src/prompts/DynamicContext.mjs"),
   import("./src/prompts/GeneratorContract.mjs"),
   import("./src/SemanticValidator.js"),
+  import("./src/LLMTransport.mjs"),
 ]);
 
-async function callLLM(messages) {
+async function callLLM(messages, { modelOverride = model } = {}) {
   try {
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model, messages, max_tokens: 1200 }),
+      body: JSON.stringify(buildChatCompletionPayload({
+        model: modelOverride,
+        messages,
+        maxTokens: process.env.LLM_MAX_OUTPUT_TOKENS || 4096,
+      })),
     });
     const payload = await response.json();
     if (!response.ok) {
@@ -52,7 +58,7 @@ async function callLLM(messages) {
     if (typeof rawText !== "string" || rawText.length === 0) {
       return { success: false, error: "LLM response contained no message text" };
     }
-    return { success: true, rawText };
+    return buildSuccessfulLLMResult(rawText);
   } catch (error) {
     return { success: false, error: error.message };
   }
@@ -129,13 +135,25 @@ const scenarios = [
 
 async function runScenario(scenario) {
   const started = Date.now();
+  const stageLatencyMs = {};
+  const responseChars = {};
+  const detectorStarted = Date.now();
+  const detectorCall = async (messages) => {
+    const detectorModel = process.env.DETECTOR_MODEL || model;
+    const response = await callLLM(messages, {
+      modelOverride: detectorModel,
+    });
+    responseChars.detector = response.rawText?.length || 0;
+    return response;
+  };
   const detector = await assessSemanticFactors({
     chat: scenario.chat,
     taskGeneralContext: generalInfo,
-    callLLM,
+    callLLM: detectorCall,
   });
+  stageLatencyMs.detector = Date.now() - detectorStarted;
   if (!detector.success) {
-    return { id: scenario.id, expectedRole: scenario.expectedRole, stage: "detector", passed: false, error: detector.error };
+    return { id: scenario.id, expectedRole: scenario.expectedRole, stage: "detector", passed: false, error: detector.error, stageLatencyMs, responseChars, elapsedMs: Date.now() - started };
   }
 
   const checked = checkEvidence(detector.factors, { chat: scenario.chat });
@@ -177,10 +195,15 @@ async function runScenario(scenario) {
     generalInfo,
     plan,
   });
+  const generatorStarted = Date.now();
   const generation = await callLLM([
     { role: "system", content: prompt.content },
     { role: "user", content: dynamic.userContent },
-  ]);
+  ], {
+    modelOverride: process.env.GENERATOR_MODEL || model,
+  });
+  stageLatencyMs.generator = Date.now() - generatorStarted;
+  responseChars.generator = generation.rawText?.length || 0;
   if (!generation.success) {
     return { ...base, stage: "generator", passed: false, error: generation.error, plan };
   }
@@ -198,10 +221,14 @@ async function runScenario(scenario) {
   });
   let validatorRawText = null;
   const validatorCall = async (messages) => {
-    const response = await callLLM(messages);
+    const response = await callLLM(messages, {
+      modelOverride: process.env.VALIDATOR_MODEL || model,
+    });
     validatorRawText = response.rawText || null;
+    responseChars.validator = response.rawText?.length || 0;
     return response;
   };
+  const validatorStarted = Date.now();
   const validator = schema.ok && deterministic.passed
     ? await validateCandidate({
         chat: scenario.chat,
@@ -211,6 +238,7 @@ async function runScenario(scenario) {
         callLLM: validatorCall,
       })
     : null;
+  stageLatencyMs.validator = schema.ok && deterministic.passed ? Date.now() - validatorStarted : 0;
 
   const roleMatched = chosen.role === scenario.expectedRole;
   const outputPassed = schema.ok && deterministic.passed && validator?.success && validator.verdict.passed;
@@ -220,7 +248,13 @@ async function runScenario(scenario) {
     chosenRole: chosen.role,
     roleMatched,
     plan,
-    candidate: parsed.parsed,
+    candidate: process.env.REDACT_CONTENT === "1"
+      ? {
+          role: parsed.parsed.role,
+          messageChars: parsed.parsed.message?.length || 0,
+          groundingCount: parsed.parsed.groundingMessageIds?.length || 0,
+        }
+      : parsed.parsed,
     checks: {
       schema: schema.ok,
       deterministic: deterministic.passed,
@@ -228,28 +262,79 @@ async function runScenario(scenario) {
       validatorAvailable: validator?.success || false,
       validatorPassed: validator?.success ? validator.verdict.passed : false,
       validatorFailures: validator?.success ? validator.verdict.failedCriteria : [validator?.error || "validator unavailable"],
-      validatorRawText: validator?.success ? undefined : validatorRawText,
+      validatorRawText: validator?.success || process.env.REDACT_CONTENT === "1" ? undefined : validatorRawText,
     },
     passed: roleMatched && outputPassed,
+    stageLatencyMs,
+    responseChars,
     elapsedMs: Date.now() - started,
   };
 }
 
-const selectedScenarios = process.env.SCENARIO_ID
-  ? scenarios.filter((scenario) => scenario.id === process.env.SCENARIO_ID)
+const selectedIds = (process.env.SCENARIO_IDS || process.env.SCENARIO_ID || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const selectedScenarios = selectedIds.length
+  ? scenarios.filter((scenario) => selectedIds.includes(scenario.id))
   : scenarios;
+const repeatCount = Math.max(1, Number.parseInt(process.env.REPEAT_COUNT || "1", 10));
 const results = [];
-for (const scenario of selectedScenarios) {
-  console.error(`Running ${scenario.id}...`);
-  results.push(await runScenario(scenario));
+for (let repetition = 1; repetition <= repeatCount; repetition += 1) {
+  for (const scenario of selectedScenarios) {
+    console.error(`Running ${scenario.id} (${repetition}/${repeatCount})...`);
+    results.push({ repetition, ...(await runScenario(scenario)) });
+  }
 }
+
+function percentile(values, proportion) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * proportion) - 1)];
+}
+
+const completedLatencies = results.filter((result) => Number.isFinite(result.elapsedMs));
+const latencySummaryMs = Object.fromEntries(
+  ["detector", "generator", "validator", "total"].map((stage) => {
+    const values = completedLatencies
+      .map((result) => stage === "total" ? result.elapsedMs : result.stageLatencyMs?.[stage])
+      .filter(Number.isFinite);
+    return [stage, {
+      min: values.length ? Math.min(...values) : null,
+      median: percentile(values, 0.5),
+      p90: percentile(values, 0.9),
+      max: values.length ? Math.max(...values) : null,
+    }];
+  }),
+);
 
 const summary = {
   model,
-  scenarioCount: selectedScenarios.length,
+  stageModels: {
+    detector: process.env.DETECTOR_MODEL || model,
+    generator: process.env.GENERATOR_MODEL || model,
+    validator: process.env.VALIDATOR_MODEL || model,
+  },
+  scenarioCount: results.length,
+  uniqueScenarioCount: selectedScenarios.length,
+  repeatCount,
   passed: results.filter((result) => result.passed).length,
   roleMatches: results.filter((result) => result.roleMatched).length,
-  results,
+  latencySummaryMs,
+  failureStages: results.filter((result) => !result.passed).map((result) => ({
+    id: result.id,
+    repetition: result.repetition,
+    stage: result.stage,
+    error: result.error || null,
+    chosenRole: result.chosenRole || null,
+    roleMatched: result.roleMatched ?? null,
+    schemaPassed: result.checks?.schema ?? null,
+    deterministicPassed: result.checks?.deterministic ?? null,
+    validatorAvailable: result.checks?.validatorAvailable ?? null,
+    validatorPassed: result.checks?.validatorPassed ?? null,
+    validatorFailures: result.checks?.validatorFailures || [],
+  })),
+  results: process.env.SUMMARY_ONLY === "1" ? undefined : results,
 };
 process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
 process.exitCode = summary.passed === summary.scenarioCount ? 0 : 1;

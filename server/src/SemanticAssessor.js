@@ -175,13 +175,13 @@ export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM 
 
   const parseResult = strictParseJsonObject(llmResponse.rawText);
   if (!parseResult.ok) {
-    return { success: false, code: "ASSESSOR_PARSE_FAILURE", error: parseResult.error };
+    return { success: false, code: "ASSESSOR_PARSE_FAILURE", error: parseResult.error, rawText: llmResponse.rawText };
   }
 
   const schemaResult = validateAgainstAssessorSchema(parseResult.parsed);
   if (!schemaResult.ok) {
-    return { success: false, code: "ASSESSOR_SCHEMA_FAILURE", error: JSON.stringify(schemaResult.errors) };
+    return { success: false, code: "ASSESSOR_SCHEMA_FAILURE", error: JSON.stringify(schemaResult.errors), rawText: llmResponse.rawText };
   }
 
-  return { success: true, factors: parseResult.parsed };
+  return { success: true, factors: parseResult.parsed, rawText: llmResponse.rawText };
 }

@@ -16,6 +16,21 @@ test("begin and finalize leave one terminal log and no pending marker", () => {
   assert.deepEqual(s.get("llmInFlight"), {});
   assert.equal(s.get("llmLog").length, 1);
   assert.equal(s.get("llmLog")[0].outcome, "PUBLISHED");
+  assert.equal(s.get("llmLog")[0].responseContextDriftMessages, null);
+  assert.equal(s.get("llmLog")[0].humanMessageCountAtCompletion, null);
+  assert.ok(s.get("llmLog")[0].totalLatencyMs >= 0);
+});
+
+test("finalize records total latency and human-message context drift", () => {
+  const s = store();
+  s.set("humanMessageCount", 9);
+  const entry = { auditRequestId: "latency", serverInstanceId: "a", outcome: "PUBLISHED", timestamp: 1_000, humanMessageCount: 6 };
+  beginInFlight(s, entry);
+  finalizeAuditLog(s, entry);
+  const logged = s.get("llmLog")[0];
+  assert.ok(logged.totalLatencyMs >= 0);
+  assert.equal(logged.humanMessageCountAtCompletion, 9);
+  assert.equal(logged.responseContextDriftMessages, 3);
 });
 
 test("a new callbacks instance converts stale pending requests into explicit interrupted logs", () => {

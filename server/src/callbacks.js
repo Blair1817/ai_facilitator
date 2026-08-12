@@ -8,7 +8,8 @@ import { evaluateGate, chooseRole, getRoleThreshold, THRESHOLDS } from "./utils.
 import { parseGeneratorOutputStrict, validateAgainstGenerationSchema, runDeterministicValidation } from "./prompts/GeneratorContract.mjs";
 import { buildDynamicUserContext, withMessageIds } from "./prompts/DynamicContext.mjs";
 import { getRequestedGeneralistPromptBundle } from "./prompts/promptLoader.js";
-import { buildStaticUserContext } from "./prompts/StaticContext.mjs";
+import { buildStaticSharedTaskOverview, buildStaticUserContext } from "./prompts/StaticContext.mjs";
+import { buildChatCompletionPayload, buildSuccessfulLLMResult } from "./LLMTransport.mjs";
 import {
   buildIcebreakerLLMMessages,
   buildIcebreakerOpening,
@@ -118,9 +119,9 @@ const CALLBACKS_INSTANCE_ID = randomUUID();
 // ── LLM API call ──────────────────────────────────────────────────────────────
 
 async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens) {
-  const data = {
+  const data = buildChatCompletionPayload({
     model: openaiModel,
-    max_tokens: maxTokens,
+    maxTokens,
     messages,
     // Note: `response_format: { type: "json_object" }` is intentionally
     // NOT sent. The live endpoint (api.minimax.chat, Phase 6 pilot) does
@@ -133,7 +134,7 @@ async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens) {
     // `parseGeneratorOutputStrict` and SemanticValidator's
     // `strictParseJsonObject`) tolerates nothing else. If a future
     // platform supports json_object output, re-enable here.
-  };
+  });
   try {
     const completion = await fetch(llmAPIEndpoint, {
       method: "POST",
@@ -152,15 +153,19 @@ async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens) {
     }
     const text = responseBody?.choices?.[0]?.message?.content;
     if (typeof text !== "string" || text.length === 0) {
-      console.error("LLM response missing message content:", responseBody);
-      return { success: false, error: "LLM response missing message content" };
+      const finishReason = responseBody?.choices?.[0]?.finish_reason || "unknown";
+      console.error("LLM response missing message content", {
+        model: openaiModel,
+        finishReason,
+        reasoningDetailsPresent: Array.isArray(responseBody?.choices?.[0]?.message?.reasoning_details),
+      });
+      return { success: false, error: `LLM response missing message content (finish_reason=${finishReason})` };
     }
-    // rawText is additive (existing "data" field/behavior for callers is
-    // unchanged) -- it exists so the shared Generator path's strict parser
-    // (server/src/prompts/GeneratorContract.mjs) can parse the untouched
-    // response text itself, rather than trust this function's own
-    // best-effort JSON.parse below.
-    return { success: true, data: JSON.parse(text), rawText: text };
+    // Provider envelopes are parsed by the schema-owning downstream stage.
+    // In particular, MiniMax may wrap valid JSON in one Markdown code fence;
+    // rejecting that here would bypass the Generator/Assessor/Validator
+    // parsers that explicitly and safely support the envelope.
+    return buildSuccessfulLLMResult(text);
   } catch (error) {
     console.error("LLM endpoint error:", error);
     return { success: false, error: error.message };
@@ -243,6 +248,11 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
     return { blocked: true, reason: promptResult.reason, metadata: promptResult.metadata };
   }
 
+  const publicTaskOverview = buildStaticSharedTaskOverview({
+    generalInfo: game.currentRound?.get("generalInfo"),
+    decisionOptions: game.currentRound?.get("decisionOptions"),
+  });
+
   if (facilitation === "static") {
     const staticContext = buildStaticUserContext({
       chat,
@@ -254,8 +264,9 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
       metadata: promptResult.metadata,
       systemPrompt: promptResult.content.replace(
         "{{sharedTaskOverview}}",
-        "Task materials are not available to the facilitator. Use only facts participants explicitly share in the public transcript.",
+        publicTaskOverview,
       ),
+      taskGeneralContext: publicTaskOverview,
       ...staticContext,
     };
   }
@@ -266,7 +277,7 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
     chat: chat.filter(isFormalContextMessage),
     checkpointDescriptor,
     selectedRoleForDisplay: promptResult.metadata.generationRole,
-    generalInfo: "",
+    generalInfo: publicTaskOverview,
     plan,
   });
 
@@ -274,6 +285,7 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
     blocked: false,
     metadata: promptResult.metadata,
     systemPrompt: promptResult.content,
+    taskGeneralContext: publicTaskOverview,
     userContent: dynamicContext.userContent,
     eligibleMessageIds: dynamicContext.eligibleMessageIds,
     aiOrSystemMessageIds: dynamicContext.aiOrSystemMessageIds,
@@ -347,11 +359,20 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     logEntry.requestMade = true;
     logEntry.messagesOAIFormat = messages;
 
+    const generatorStartedAt = Date.now();
     const llmResponse = await getLLMResponse(messages);
+    logEntry.generatorLatenciesMs = [
+      ...(logEntry.generatorLatenciesMs || []),
+      Date.now() - generatorStartedAt,
+    ];
     if (!isOriginatingStageActive()) return { discarded: true };
     if (!llmResponse.success) {
       return { silent: true, reason: `API Error: ${llmResponse.error}` };
     }
+    logEntry.generatorRawResponses = [
+      ...(logEntry.generatorRawResponses || []),
+      { attempt: (logEntry.generatorRawResponses?.length || 0) + 1, rawText: llmResponse.rawText },
+    ];
     logEntry.requestSuccess = true;
 
     const parseResult = parseGeneratorOutputStrict(llmResponse.rawText);
@@ -407,15 +428,26 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   // the unavailable case, so no repair is triggered. The caller logs
   // this strongly and goes silent.
   async function runValidator(candidate, priorFailedCriteria = null, priorCandidate = null) {
+    const validatorStartedAt = Date.now();
     const result = await validateCandidate({
       chat,
       candidate,
       selectedRole: built.metadata.generationRole,
-      taskGeneralContext: "",
+      taskGeneralContext: built.taskGeneralContext,
       callLLM: getLLMResponse,
       priorFailedCriteria,
       priorCandidate,
     });
+    logEntry.validatorLatenciesMs = [
+      ...(logEntry.validatorLatenciesMs || []),
+      Date.now() - validatorStartedAt,
+    ];
+    if (typeof result.rawText === "string") {
+      logEntry.validatorRawResponses = [
+        ...(logEntry.validatorRawResponses || []),
+        { attempt: (logEntry.validatorRawResponses?.length || 0) + 1, rawText: result.rawText },
+      ];
+    }
     if (!result.success) {
       return { validatorFailed: true, code: result.code, error: result.error };
     }
@@ -616,6 +648,7 @@ Empirica.onGameStart(({ game }) => {
   // Initialize game-level state
   if (!Array.isArray(game.get("llmLog"))) game.set("llmLog", []);
   if (!Number.isFinite(game.get("totalInterventions"))) game.set("totalInterventions", 0);
+  if (!Number.isFinite(game.get("totalFallbackMessages"))) game.set("totalFallbackMessages", 0);
   if (!game.get("llmInFlight")) game.set("llmInFlight", {});
   if (!Array.isArray(game.get("operationalEvents"))) game.set("operationalEvents", []);
   game.set("activeCallbacksInstanceId", CALLBACKS_INSTANCE_ID);
@@ -1057,15 +1090,19 @@ Empirica.on("player", "discussionAdvanceRequest", (_ctx, { player, discussionAdv
   if (!game || !round || !stage || stage.get("name") !== "Task" || stage.get("ended")) return;
   if (!discussionAdvanceRequest || discussionAdvanceRequest.stageId !== stage.id || discussionAdvanceRequest.roundId !== round.id) return;
 
-  const allReady = assignedHumanPlayers(game).length > 0
-    && assignedHumanPlayers(game).every((participant) => Boolean(participant.stage?.get("submit")));
+  // Unanimous readiness is already the native Empirica Step transition. A
+  // second server-side `stage.ended=true` for the same event races that
+  // transition and can produce "from state mismatch" warnings. This recovery
+  // listener is therefore reserved for a missed deadline transition only.
+  if (discussionAdvanceRequest.reason !== "deadline_reached") return;
+  if (game.get("discussionAdvanceCommittedStageId") === stage.id) return;
   const deadline = game.get("deadline");
   const deadlineReached = Number.isFinite(deadline) && Date.now() >= deadline;
-  if (!allReady && !deadlineReached) return;
+  if (!deadlineReached) return;
 
-  // Server-authoritative recovery path for the same two conditions that end
-  // the native Step. Setting Stage.ended also lets Classic advance correctly
-  // if its in-memory Step-to-Stage map was lost during a development reload.
+  // Claim the recovery before writing `ended`, making repeated client timer
+  // requests idempotent within the single callbacks process.
+  game.set("discussionAdvanceCommittedStageId", stage.id);
   stage.set("ended", true);
   Empirica.flush();
 });
@@ -1292,6 +1329,7 @@ function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole, logE
     sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
   });
   logEntry.messageAdded = true;
+  logEntry.countsAsIntervention = true;
   logEntry.publishedMessageId = publishedMessage.messageId;
   game.set("totalInterventions", (game.get("totalInterventions") || 0) + 1);
   return true;
@@ -1311,14 +1349,15 @@ function postParticipantRequestFallback(game, chatKey, logEntry) {
     messageType: MESSAGE_TYPES.FACILITATOR,
     speakerType: MESSAGE_TYPES.FACILITATOR,
     timestamp: publishedAt,
-    content: "I couldn’t produce a verified answer using only the public discussion. Please rephrase your question or point to the public option, criterion, claim, or message you want me to address.",
+    content: "I couldn’t produce a verified answer using the shared task information and public discussion. Please rephrase your question or point to the public option, criterion, claim, or message you want me to address.",
     sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
   });
   logEntry.messageAdded = true;
+  logEntry.countsAsIntervention = false;
   logEntry.publishedMessageId = publishedMessage.messageId;
   logEntry.fallbackUsed = "PARTICIPANT_REQUEST_SAFE_CLARIFICATION";
   logEntry.outcome = "PUBLISHED_REQUEST_FALLBACK";
-  game.set("totalInterventions", (game.get("totalInterventions") || 0) + 1);
+  game.set("totalFallbackMessages", (game.get("totalFallbackMessages") || 0) + 1);
   return true;
 }
 
@@ -1447,6 +1486,9 @@ async function handleChat(env, { game }) {
     // mention-trigger rate even on messages that didn't trigger
     // (e.g. a mention outside the Task stage).
     mentionDetected: isMentionCheckpoint,
+    participantRequested: isMentionCheckpoint,
+    originatingRoundId,
+    originatingStageId,
   };
 
   // Phase 3: capture the full AgentState snapshot for the audit log
@@ -1481,7 +1523,6 @@ async function handleChat(env, { game }) {
   if (isMentionCheckpoint) {
     recordParticipantRequest(game, humanMessageCount);
     logEntry.triggerType = "PARTICIPANT_REQUEST";
-    logEntry.participantRequested = true;
     logEntry.routingDecision = "REQUESTED_GENERALIST";
     logEntry.selectedRole = "REQUESTED_GENERALIST";
 
@@ -1507,16 +1548,15 @@ async function handleChat(env, { game }) {
       chat,
     );
 
-    let published = requestedResult.published;
     if (
-      !published &&
+      !requestedResult.published &&
       game.currentRound?.id === originatingRoundId &&
       game.currentStage?.id === originatingStageId &&
       game.currentStage?.get("name") === "Task"
     ) {
-      published = postParticipantRequestFallback(game, chatKey, logEntry);
+      postParticipantRequestFallback(game, chatKey, logEntry);
     }
-    if (published) {
+    if (requestedResult.published) {
       recordParticipantRequestedPublish(game, {
         role: "REQUESTED_GENERALIST",
         messageId: requestedResult.candidate?.messageId ?? null,
@@ -1589,7 +1629,10 @@ async function handleChat(env, { game }) {
   const assessorStart = Date.now();
   const assessorResult = await assessSemanticFactors({
     chat,
-    taskGeneralContext: "",
+    taskGeneralContext: buildStaticSharedTaskOverview({
+      generalInfo: currentRound?.get("generalInfo"),
+      decisionOptions: currentRound?.get("decisionOptions"),
+    }),
     callLLM: getLLMResponse,
   });
   if (
@@ -1603,6 +1646,7 @@ async function handleChat(env, { game }) {
     return;
   }
   logEntry.detectorLatency = Date.now() - assessorStart;
+  if (typeof assessorResult.rawText === "string") logEntry.detectorRawResponse = assessorResult.rawText;
 
   if (assessorResult.success) {
     logEntry.rawDetectorFactors = assessorResult.factors;

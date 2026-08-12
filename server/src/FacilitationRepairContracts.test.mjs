@@ -73,8 +73,8 @@ test("@Facilitator routes to a participant-requested Generalist before automatic
 test("requested Generalist prompt preserves privacy, grounding, and neutrality boundaries", () => {
   assert.match(requestedPromptSource, /private participant profiles/i);
   assert.match(requestedPromptSource, /correct answers/i);
-  assert.match(requestedPromptSource, /only the public discussion/i);
-  assert.match(requestedPromptSource, /Task materials are not provided/i);
+  assert.match(requestedPromptSource, /shared public task overview and public discussion/i);
+  assert.match(requestedPromptSource, /Private reports, hidden facts, and answer keys are not provided/i);
   assert.match(requestedPromptSource, /Never choose, recommend, rank, vote for/i);
   assert.match(requestedPromptSource, /Do not remain silent/i);
 });
@@ -83,5 +83,26 @@ test("requested replies are logged separately from automatic intervention budget
   assert.match(callbacksSource, /recordParticipantRequest\(game,\s*humanMessageCount\)/);
   assert.match(callbacksSource, /recordParticipantRequestedPublish\(game,/);
   assert.match(callbacksSource, /triggerType\s*=\s*"PARTICIPANT_REQUEST"/);
-  assert.match(callbacksSource, /participantRequested\s*=\s*true/);
+  assert.match(callbacksSource, /participantRequested:\s*isMentionCheckpoint/);
+  assert.match(callbacksSource, /if \(requestedResult\.published\)/);
+  assert.match(callbacksSource, /totalFallbackMessages/);
+  assert.doesNotMatch(
+    callbacksSource.slice(
+      callbacksSource.indexOf("function postParticipantRequestFallback"),
+      callbacksSource.indexOf("async function handleChat"),
+    ),
+    /totalInterventions/,
+  );
+});
+
+test("shared public task overview reaches formal generators without private profiles", () => {
+  assert.match(callbacksSource, /buildStaticSharedTaskOverview\(\{/);
+  assert.match(callbacksSource, /generalInfo:\s*game\.currentRound\?\.get\("generalInfo"\)/);
+  assert.match(callbacksSource, /decisionOptions:\s*game\.currentRound\?\.get\("decisionOptions"\)/);
+  const generatorBody = callbacksSource.slice(
+    callbacksSource.indexOf("function buildGeneratorContext"),
+    callbacksSource.indexOf("// ── Shared generation/validation/publication path"),
+  );
+  assert.doesNotMatch(generatorBody, /playerContent|profileSlot|HPTConfig/);
+  assert.match(generatorBody, /generalInfo:\s*publicTaskOverview/);
 });
