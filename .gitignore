@@ -1,5 +1,8 @@
 *.tar.zst
 *.env
+.env
+.env.*
+!**/.env.example
 *.zip
 *.csv
 **/.DS_Store

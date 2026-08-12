@@ -71,20 +71,8 @@ export function ReviewQuiz() {
     processingRef.current = true;
     setIsProcessing(true);
     const evaluation = evaluateReviewQuiz(taskVersion, answers);
-    const previousAttempts = player.round.get("reviewQuizAttempts") || [];
-    const attempt = {
-      attemptNumber: previousAttempts.length + 1,
-      taskVersion,
-      answers: { ...answers },
-      questionCorrectness: evaluation.questionCorrectness,
-      incorrectQuestionIds: evaluation.incorrectQuestionIds,
-      allCorrect: evaluation.allCorrect,
-      submittedAt: Date.now(),
-    };
-    player.round.set("reviewQuizAttempts", [...previousAttempts, attempt]);
-
     if (evaluation.allCorrect) {
-      player.round.set("reviewQuizResult", attempt);
+      player.round.set("reviewQuizPassed", true);
       clearDraftKeys([answersDraftKey]);
       player.stage.set("submit", true);
       return;

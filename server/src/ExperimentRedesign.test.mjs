@@ -162,23 +162,35 @@ test("T13-T14/T48: three stages reuse the original report component with compact
   assert.doesNotMatch(playerSpecificInfo, /Shared|Unshared|Unique|private information/);
 });
 
-test("T16-T26/T46: stable round fields are separate and obsolete fields are absent", () => {
+test("T16-T26/T46: stable participant and official group-decision fields are separate", () => {
   for (const key of ["initialChoice","initialConfidence"]) assert.match(initial, new RegExp(key));
   for (const key of ["groupFinalChoice","groupChoiceConfidence"]) assert.match(finalDecision, new RegExp(key));
+  for (const key of ["officialGroupFinalChoice","finalDecisionOutcome","finalDecisionTimedOut","finalDecisionFinalizedAt","finalDecisionDraftChoices","finalDecisionConfirmed"]) assert.match(callbacks, new RegExp(key));
   for (const key of ["agreesWithGroupChoice","finalPersonalChoice","finalPersonalChoiceConfidence","finalPersonalChoiceRationale","individualAssessmentTimeoutReason"]) assert.match(individual + callbacks, new RegExp(key));
   assert.match(initial + finalDecision + individual, /!== null/);
   assert.doesNotMatch(initial + finalDecision + individual, /perceivedGroupRationale/);
   assert.doesNotMatch(callbacks + policies, /groupChoiceMismatch(Status)?/);
 });
 
-test("Group Final Decision offers a no-decision route and only that route requires Individual Assessment", () => {
+test("Group Final Decision is a 90-second server-authoritative unanimous confirmation stage", () => {
+  assert.equal((callbacks.match(/name: "FinalDecision",\s+duration: 90/g) ?? []).length, 2);
   assert.match(decisionControls, /id: "NO_GROUP_FINAL_DECISION"/);
-  assert.match(decisionControls, /label: "The group did not reach a final decision"/);
+  assert.match(decisionControls, /label: "Fail to reach a final decision"/);
   assert.match(decisionControls, /options\.length === 4 \? "sm:grid-cols-2"/);
   assert.match(finalDecision, /groupDecisionOptions = \[\.\.\.options, NO_GROUP_FINAL_DECISION_OPTION\]/);
-  assert.match(finalDecision, /noGroupDecision \|\| confidence !== null/);
-  assert.match(finalDecision, /!noGroupDecision && <ConfidenceSlider/);
-  assert.match(individual, /groupReachedDecision = options\.some/);
+  assert.match(finalDecision, /finalDecisionDraftRequest/);
+  assert.match(finalDecision, /finalDecisionConfirmRequest/);
+  assert.match(finalDecision, /Your group has not yet selected the same outcome\./);
+  assert.match(finalDecision, /If your group cannot agree on one option/);
+  assert.match(finalDecision, /Confirm group decision/);
+  assert.match(finalDecision, /<ConfidenceSlider/);
+  assert.match(callbacks, /summarizeFinalDecisionDrafts/);
+  assert.match(callbacks, /allFinalDecisionConfirmationsMatch/);
+  assert.match(callbacks, /clearFinalDecisionConfirmations/);
+  assert.match(callbacks, /setTimeout\(\(\) => \{[\s\S]*finalizeGroupDecision\(stage, \{ timedOut: true \}\);[\s\S]*90_000/);
+  assert.match(individual, /finalDecisionOutcome === "consensus_choice"/);
+  assert.match(individual, /finalDecisionOutcome === "declared_fail" \|\| finalDecisionOutcome === "timeout_fail"/);
+  assert.match(callbacks, /stageName === "IndividualAssessment" && stage\.round\.get\("finalDecisionOutcome"\) === "consensus_choice"/);
   assert.match(individual, /if \(groupReachedDecision && !player\.stage\.get\("submit"\)\)/);
   assert.match(individual, /player\.stage\.set\("submit", true\)/);
   assert.doesNotMatch(individual, /Do you agree with your group’s final choice\?/);

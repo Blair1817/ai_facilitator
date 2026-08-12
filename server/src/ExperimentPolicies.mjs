@@ -7,9 +7,38 @@ export const MESSAGE_TYPES = Object.freeze({
 });
 
 export const BREAK_READY_WINDOW_MS = 45_000;
+export const NO_GROUP_FINAL_DECISION = "NO_GROUP_FINAL_DECISION";
 
 export function canConfirmBreak(scheduledEndAt, now) {
   return Number.isFinite(scheduledEndAt) && now >= scheduledEndAt - BREAK_READY_WINDOW_MS;
+}
+
+export function summarizeFinalDecisionDrafts(drafts, requiredParticipants = 3) {
+  const choices = Array.isArray(drafts) ? drafts.map((draft) => draft?.choice || "") : [];
+  if (choices.length !== requiredParticipants || choices.some((choice) => !choice)) {
+    return { status: "not_agreed", matchedChoice: null };
+  }
+  const matchedChoice = choices[0];
+  return choices.every((choice) => choice === matchedChoice)
+    ? { status: "agreed", matchedChoice }
+    : { status: "not_agreed", matchedChoice: null };
+}
+
+export function allFinalDecisionConfirmationsMatch(drafts, matchedChoice, requiredParticipants = 3) {
+  return Boolean(matchedChoice)
+    && Array.isArray(drafts)
+    && drafts.length === requiredParticipants
+    && drafts.every((draft) => draft?.confirmedChoice === matchedChoice);
+}
+
+export function classifyFinalDecision(matchedChoice, { timedOut = false } = {}) {
+  if (timedOut) {
+    return { officialChoice: "FAIL", outcome: "timeout_fail", timedOut: true };
+  }
+  if (matchedChoice === NO_GROUP_FINAL_DECISION) {
+    return { officialChoice: "FAIL", outcome: "declared_fail", timedOut: false };
+  }
+  return { officialChoice: matchedChoice, outcome: "consensus_choice", timedOut: false };
 }
 
 export function normalizeMessageContent(message) {
@@ -110,21 +139,4 @@ export function reviewHumanMessageRequest({
     stage: isDiscussion ? "Discussion" : "IceBreaker",
     content: request.content.trim(),
   };
-}
-
-export async function requestFeatureScores({ fetchImpl, url, messages, redundancyThreshold }) {
-  const response = await fetchImpl(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messages: messages.map((message) => ({
-        sender: message.sender.name,
-        text: normalizeMessageContent(message),
-      })),
-      redundancy_threshold: redundancyThreshold,
-    }),
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data?.error || "Feature server returned error");
-  return data;
 }
