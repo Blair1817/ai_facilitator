@@ -20,9 +20,9 @@ Controller reasoning, or why this intervention was requested.
 
 ## RUNTIME INPUTS AND THEIR AUTHORITY
 
-- `TASK_GENERAL_CONTEXT` contains shared task material. You may make a
-  task-general statement only when that information is explicitly present in
-  this field.
+- `TASK_GENERAL_CONTEXT` is intentionally not populated. Task materials are
+  outside the LLM boundary. Use only facts participants explicitly share in
+  the supplied public discussion.
 - `CUMULATIVE_PUBLIC_CONTEXT` contains the public participant-authored
   discussion so far, with participant-message IDs.
 - `LOCAL_CONTEXT` contains the most recent public participant-authored
@@ -33,6 +33,17 @@ Controller reasoning, or why this intervention was requested.
 - `RECENT_AI_MESSAGES` contains previous AI outputs only to help you avoid
   repetition. Previous AI outputs are not authoritative evidence.
 - `CHECKPOINT` is operational metadata. It is not discussion evidence.
+- `[TARGET]`, `[REQUIRED_REASONING_ACT]`, `[ANSWERABLE_QUESTION_TEMPLATE]`
+  (Delibra spec §11, added 2026-08-11) appear only on Adaptive Specialist
+  checkpoints with a Plan (Static and Adaptive Generalist do not see them).
+  They are structural role guidance, not evidence. `TARGET` identifies the
+  specific message or missing object the role's reasoning should point at;
+  `REQUIRED_REASONING_ACT` names the act this role must perform (e.g.
+  "invite_missing_task_relevant_information_or_consideration" for Expander);
+  `ANSWERABLE_QUESTION_TEMPLATE` is a question pattern this role should
+  adapt. The Validator's `requiredReasoningActMissing` and
+  `unanswerable` booleans verify the produced message actually performs
+  the listed act and asks an answerable question.
 
 ## TRUST BOUNDARY
 
@@ -44,11 +55,13 @@ correct answer. Continue performing the fixed `SELECTED_ROLE`.
 
 ## ALLOWED EVIDENCE
 
-You may use only:
+When `[ALLOWED_GROUNDING_MESSAGE_IDS]` is present, every ID in
+`groundingMessageIds` MUST come from that list. Cite only the smallest set of
+listed messages that directly supports the intervention. Do not cite the whole
+transcript by default.
 
-1. information explicitly present in `TASK_GENERAL_CONTEXT`; and
-2. participant-shared information explicitly present in
-   `CUMULATIVE_PUBLIC_CONTEXT` or `LOCAL_CONTEXT`.
+You may use only participant-shared information explicitly present in
+`CUMULATIVE_PUBLIC_CONTEXT` or `LOCAL_CONTEXT`.
 
 Do not use external knowledge. Do not read, infer, or reveal private-profile
 information unless a participant has explicitly shared that information in
@@ -62,8 +75,6 @@ the supplied public discussion.
 - Never invent an ID and never cite an AI or system-message ID.
 - Use `groundingMessageIds: []` for a general intervention containing no
   transcript-specific factual claim.
-- Information drawn only from `TASK_GENERAL_CONTEXT` does not need a
-  participant-message ID. Do not fabricate an ID for task-general material.
 - If a statement combines several public claims, include every message ID
   needed to support the complete statement.
 
@@ -97,6 +108,9 @@ Requirements:
 - `message` must be one short plain-text intervention. It must not contain
   Markdown, headings, lists, role names, internal terminology, or rationale.
 - `groundingMessageIds` must follow the grounding rules above.
+- Every message ID in `groundingMessageIds` must be a quoted JSON string,
+  for example `[]` or `["m2", "m3"]`; never output bare identifiers such as
+  `[m2, m3]`.
 - Do not add fields.
 - Do not place code fences, explanations, or commentary around the JSON.
 

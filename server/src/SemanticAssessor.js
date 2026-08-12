@@ -6,12 +6,11 @@
  * exists despite prompt_design_specification.Rmd's older "no independent
  * LLM judgment component" note.
  *
- * Single LLM call: given the roles the feature-only Candidate Gate flagged
- * (server/src/utils.js's getCandidateRoles()) and the discussion context,
- * ask the model to judge whether each of the 5 semantic factors
- * (breadth_deficiency, group_preference, justification_deficiency,
- * integration_deficiency, self_correction) is present, with a
- * verbatim-quote span as evidence. This module ONLY builds the request and
+ * Single LLM call: given the public discussion context, ask the model to
+ * score all eight semantic factors, with a verbatim-quote span as evidence.
+ * These checked 0-1 strengths are the only detector scores used for role
+ * classification; no hand-engineered feature pre-filter runs before it.
+ * This module ONLY builds the request and
  * validates the shape of the response -- it does NOT verify that spans
  * actually occur in the transcript, does NOT decide roles, and does NOT
  * generate a facilitation message. Span verification and any other
@@ -118,7 +117,7 @@ export function validateAgainstAssessorSchema(parsed) {
  * EvidenceChecker.js's later span/message_id checks are validated against
  * IDs that mean the same thing on both sides of the pipeline.
  */
-export function buildAssessorUserContext({ chat, candidateRoles, taskGeneralContext }) {
+export function buildAssessorUserContext({ chat, taskGeneralContext }) {
   const chatWithIds = withMessageIds(chat);
   const humanWithIds = chatWithIds.filter((m) => m.sender.id !== "ai");
   const localWithIds = humanWithIds.slice(-6);
@@ -127,7 +126,6 @@ export function buildAssessorUserContext({ chat, candidateRoles, taskGeneralCont
   const localContext = formatMessagesWithIds(localWithIds);
 
   const sections = [
-    ["[CANDIDATE_ROLES]", candidateRoles.length ? candidateRoles.join(", ") : "(none)"],
     ["[TASK_GENERAL_CONTEXT]", taskGeneralContext || "(not provided)"],
     ["[CUMULATIVE_PUBLIC_CONTEXT]", cumulativePublicContext || "(no messages yet)"],
     ["[LOCAL_CONTEXT]", localContext || "(no messages yet)"],
@@ -155,7 +153,7 @@ export function buildAssessorUserContext({ chat, candidateRoles, taskGeneralCont
  *     signal still applies, but no role can pass its hard gate without
  *     checked semantic factors -- see utils.js's requiredSemanticFactorsPresent).
  */
-export async function assessSemanticFactors({ chat, candidateRoles, taskGeneralContext, callLLM }) {
+export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM }) {
   if (typeof callLLM !== "function") {
     throw new Error("assessSemanticFactors() requires a callLLM(messages) function to be injected -- it does not perform network calls itself.");
   }
@@ -165,7 +163,7 @@ export async function assessSemanticFactors({ chat, candidateRoles, taskGeneralC
     return { success: false, code: "ASSESSOR_PROMPT_BLOCKED", error: promptResult.reason };
   }
 
-  const { userContent } = buildAssessorUserContext({ chat, candidateRoles, taskGeneralContext });
+  const { userContent } = buildAssessorUserContext({ chat, taskGeneralContext });
   const messages = [
     { role: "system", content: promptResult.content },
     { role: "user", content: userContent },

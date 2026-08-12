@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Semantic Validator Output Schema",
-  "description": "Validator 只审核候选干预，不重新生成、不改写、不选角色、不评价参与者决策。设计说明：（1）所有布尔字段统一为'检测到问题=true'的方向，避免正负极性混用导致的实现错误；（2）本 Schema 只包含 LLM 需要做出的语义判断，'passed' 与 'failedCriteria' 不由 LLM 输出，而是由下游确定性代码根据这些布尔字段计算得出，避免 LLM 自我汇总时出现逻辑矛盾（例如某项检测为异常但仍声称整体通过）；（3）JSON 合法性、字段完整性、role 是否等于 selectedRole、字数、grounding ID 是否存在、是否与前一条 AI 消息重复、是否含 Markdown 等，均由 deterministic validator（代码）负责，不属于本 Schema 范围。",
+  "description": "Validator 只审核候选干预，不重新生成、不改写、不选角色、不评价参与者决策。所有布尔字段统一为'检测到问题=true'：optionSteering、requiredReasoningActMissing、unanswerable、hiddenInformationInference、repetition、length 等名称均表示违规。passed 与 failedCriteria 由下游确定性代码计算。",
   "type": "object",
   "properties": {
     "notGrounded": {
@@ -10,11 +10,11 @@
     },
     "nonNeutral": {
       "type": "boolean",
-      "description": "true 表示候选干预未能保持中立，表达了对某个选项/立场的倾向。"
+      "description": "true 表示候选干预未能保持中立，表达了对某个选项/立场的倾向；同时覆盖 Delibra spec §11 提到的 tone 准则（口吻/立场表达）。"
     },
     "roleMisaligned": {
       "type": "boolean",
-      "description": "true 表示候选干预的内容不符合 SELECTED_ROLE 对应角色的允许行为（见 Spec 三个角色定义）。"
+      "description": "true 表示候选干预的内容不符合 SELECTED_ROLE 对应角色的允许行为（见 Spec 三个角色定义）。对应 Delibra spec §11 的 role fidelity。"
     },
     "inventedInformation": {
       "type": "boolean",
@@ -22,15 +22,39 @@
     },
     "recommendationDetected": {
       "type": "boolean",
-      "description": "true 表示包含对某个选项的推荐、排名、投票或最终结论。"
+      "description": "true 表示包含对某个选项的推荐、排名、投票或最终结论。optionSteering 单独覆盖更广义的'轻微倾向压力'，二者并存。"
     },
     "unsupportedInformationDetected": {
       "type": "boolean",
-      "description": "true 表示干预中引用的信息，无法在 participant-shared context 中找到依据。注意：Validator 只能看到公开讨论内容，无法访问完整 private profiles，因此无法确认这类信息究竟是模型编造，还是真实存在但尚未公开分享的 private evidence——两种情况都应判定为 true，因为无论哪种，都不应出现在干预中。Private-information 泄露风险的主要防线是数据访问边界（Validator 本身不接收 private-profile database）和离线测试，而非依赖这一字段单独判断。"
+      "description": "true 表示干预中引用的信息，无法在 participant-shared context 中找到依据。注意：Validator 只能看到公开讨论内容，无法访问完整 private profiles，因此无法确认这类信息究竟是模型编造，还是真实存在但尚未公开分享的 private evidence——两种情况都应判定为 true，因为无论哪种，都不应出现在干预中。Private-information 泄露风险的主要防线是数据访问边界（Validator 本身不接收 private-profile database）和离线测试，而非依赖这一字段单独判断。hiddenInformationInference 单独覆盖主动推断 hidden private profile 的情况。"
     },
     "unsupportedConsensusClaim": {
       "type": "boolean",
-      "description": "true 表示在没有实际出现共识的情况下，声称小组已经达成一致。"
+      "description": "true 表示在没有实际出现共识的情况下，声称小组已经达成一致。对应 Delibra spec §11 的 false consensus。"
+    },
+    "optionSteering": {
+      "type": "boolean",
+      "description": "true 表示候选干预对某个选项施加了隐性引导压力（更倾向、隐性偏向、缩小讨论范围、暗示某个选项更可行等），即便没有显式推荐/排名。Delibra spec §11 的 option steering，比 recommendationDetected 更广义（后者只看显式推荐/排名/投票/最终结论）。"
+    },
+    "requiredReasoningActMissing": {
+      "type": "boolean",
+      "description": "true 表示候选干预没有按 SELECTED_ROLE 对应的 required reasoning act 执行（如 Expander 必须 raise missing option/criterion、Challenger 必须 ask for justification、Synthesiser 必须 request specific comparison/trade-off）。Delibra spec §11 的 required reasoning act fidelity。"
+    },
+    "unanswerable": {
+      "type": "boolean",
+      "description": "true 表示候选干预向参与者提出的问题无法被回答（如问题模糊、要求的信息不在公开范围、问题假设了不存在的选项）。Delibra spec §11 的 问题是否可回答。"
+    },
+    "hiddenInformationInference": {
+      "type": "boolean",
+      "description": "true 表示候选干预主动推断/泄露了 participant private profile 里的信息（如 'Based on your background, you'd prefer X'、'You mentioned in your survey that Y'）。即便该信息真实存在也不应被提及。对应 Delibra spec §11 的 hidden-information inference。unsupportedInformationDetected 覆盖引用信息无据，hiddenInformationInference 单独覆盖主动推断 hidden private profile。"
+    },
+    "repetition": {
+      "type": "boolean",
+      "description": "true 表示候选干预在内容/措辞上与 recentAiMessages（最近 N 条 AI 历史）显著重复（同义改写、复用相同 reasoning operation、要求相同信息）。注意：deterministic validator 已经在 runDeterministicValidation 里做了硬性的 'text 重复' 检查（属于机械层），本条属于 LLM 的语义判断层，用于捕捉'同样的 reasoning act 反复出现'这种情况。Delibra spec §11 的 repetition。"
+    },
+    "length": {
+      "type": "boolean",
+      "description": "true 表示候选干预的长度违反 maxSentences 约束（默认 2 句，对应 base.md 的 HARD CONSTRAINT 'MUST_NOT_EXCEED_TWO_SENTENCES'）。注意：deterministic validator 已经做了句子计数硬检查，本条由 LLM 给出更宽松的语义判断，用于捕捉'虽然没超 2 句但单句过长/过载'这种情况。Delibra spec §11 的 length。"
     }
   },
   "required": [
@@ -40,7 +64,13 @@
     "inventedInformation",
     "recommendationDetected",
     "unsupportedInformationDetected",
-    "unsupportedConsensusClaim"
+    "unsupportedConsensusClaim",
+    "optionSteering",
+    "requiredReasoningActMissing",
+    "unanswerable",
+    "hiddenInformationInference",
+    "repetition",
+    "length"
   ],
   "additionalProperties": false
 }

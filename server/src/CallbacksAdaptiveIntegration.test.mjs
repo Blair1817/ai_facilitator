@@ -34,20 +34,18 @@ const customChatSource = readFileSync(
 
 // ── structural assertions on callbacks.js ────────────────────────────────
 
-test("round chats are created by vector append without scalar initialization", () => {
+test("round chats are read as vectors and human sends use the reviewed server request boundary", () => {
   assert.doesNotMatch(callbacksSource, /game\.set\(\s*["']chat_round_0["']/);
   assert.doesNotMatch(callbacksSource, /game\.set\(\s*["']chat_round_1["']/);
-  assert.match(customChatSource, /scope\.append\(attribute,\s*\{/);
+  assert.match(customChatSource, /player\.set\("humanMessageRequest",\s*\{/);
   assert.match(customChatSource, /scope\.getAttribute\(attribute\)\?\.items\s*\|\|\s*\[\]/);
 });
 
-test("callbacks.js imports the shared, basic validator (GeneratorContract.mjs) -- not the removed semantic-validator/regeneration/AdaptivePipeline infrastructure", () => {
+test("callbacks.js imports the shared Generator contract and live Semantic Validator, not removed placeholder pipelines", () => {
   assert.match(callbacksSource, /import\s*\{[^}]*parseGeneratorOutputStrict[^}]*\}\s*from\s*"\.\/prompts\/GeneratorContract\.mjs"/s);
   assert.match(callbacksSource, /import\s*\{[^}]*validateAgainstGenerationSchema[^}]*\}\s*from\s*"\.\/prompts\/GeneratorContract\.mjs"/s);
   assert.match(callbacksSource, /import\s*\{[^}]*runDeterministicValidation[^}]*\}\s*from\s*"\.\/prompts\/GeneratorContract\.mjs"/s);
-  // Doc comments may still reference validatorPlaceholder.js by name to
-  // explain why no semantic Validator runs live (see that module's own
-  // header) -- what must be absent is an actual `import ... from` of it.
+  assert.match(callbacksSource, /import\s*\{[^}]*validateCandidate[^}]*\}\s*from\s*"\.\/SemanticValidator\.js"/s);
   assert.doesNotMatch(callbacksSource, /import[^;]*from\s*"\.\/prompts\/AdaptivePipeline\.mjs"/, "AdaptivePipeline.mjs must not be imported -- it no longer exists");
   assert.doesNotMatch(callbacksSource, /import[^;]*from\s*"\.\/prompts\/validatorPlaceholder\.js"/, "validatorPlaceholder.js must not be imported in production");
   assert.doesNotMatch(callbacksSource, /import[^;]*from\s*"\.\/prompts\/regenerationPlaceholder\.js"/, "regenerationPlaceholder.js must not be imported in production");
@@ -72,7 +70,7 @@ test("callbacks.js: no candidate is published before runSharedGeneration's full 
   assert.ok(parseIndex < schemaIndex && schemaIndex < deterministicIndex && deterministicIndex < publishIndex, "parse -> schema -> deterministic validation -> publish must be textually in this order, with publish last");
 });
 
-test("callbacks.js: invalid output at any stage sets outcome SILENT and returns without publishing (never a fallback/repaired message)", () => {
+test("callbacks.js: pre-semantic invalid output stays SILENT and is never published", () => {
   const sharedFnStart = callbacksSource.indexOf("async function runSharedGeneration");
   const sharedFnBody = callbacksSource.slice(sharedFnStart);
   const silentAssignments = [...sharedFnBody.matchAll(/logEntry\.outcome = "SILENT";/g)];
@@ -90,8 +88,8 @@ test("callbacks.js: an unsupported/unknown Adaptive role never reaches the share
 });
 
 test("callbacks.js: a per-Round checkpoint marker (lastHandledCheckpoint) guards against handling the same checkpoint twice", () => {
-  assert.match(callbacksSource, /currentRound\.get\("lastHandledCheckpoint"\)\s*===\s*humanMessageCount/);
-  assert.match(callbacksSource, /currentRound\.set\("lastHandledCheckpoint",\s*humanMessageCount\)/);
+  assert.match(callbacksSource, /shouldEvaluateCheckpoint\(\{[\s\S]*?humanMessageCount/);
+  assert.match(callbacksSource, /recordAttempt\(game,\s*humanMessageCount,\s*now\)/);
 });
 
 test("routing: Static reaches generation before and without every Adaptive assessment/selection function", () => {
@@ -99,17 +97,15 @@ test("routing: Static reaches generation before and without every Adaptive asses
   const staticStart = handleChatBody.indexOf('if (facilitation === "static")');
   const staticEnd = handleChatBody.indexOf('if (facilitation !== "adaptive")', staticStart);
   const staticBlock = handleChatBody.slice(staticStart, staticEnd);
-  const featureIndex = handleChatBody.indexOf("extractFeatures(", staticEnd);
+  const detectorIndex = handleChatBody.indexOf("assessSemanticFactors(", staticEnd);
 
-  assert.ok(staticStart !== -1 && staticEnd !== -1 && featureIndex !== -1);
-  assert.ok(staticStart < featureIndex, "Static branch must be entered before feature extraction");
+  assert.ok(staticStart !== -1 && staticEnd !== -1 && detectorIndex !== -1);
+  assert.ok(staticStart < detectorIndex, "Static branch must be entered before the Adaptive LLM detector");
   assert.match(staticBlock, /routingDecision\s*=\s*"STATIC_REQUIRED_MESSAGE"/);
   assert.match(staticBlock, /buildGeneratorContext\([\s\S]*?"static"[\s\S]*?null[\s\S]*?null/);
   assert.match(staticBlock, /runSharedGeneration\(/);
   assert.match(staticBlock, /return;/, "Static must terminate before Adaptive assessment begins");
   for (const forbiddenCall of [
-    "extractFeatures(",
-    "getCandidateRoles(",
     "assessSemanticFactors(",
     "checkEvidence(",
     "evaluateGate(",
@@ -124,26 +120,26 @@ test("routing: Static reaches generation before and without every Adaptive asses
 test("routing: Adaptive ABSTAIN returns before prompt construction and Generator invocation", () => {
   const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
   const gateIndex = handleChatBody.indexOf("const gateResult = evaluateGate(");
-  const abstainStart = handleChatBody.indexOf("if (!gateResult.act)", gateIndex);
+  const abstainStart = handleChatBody.indexOf('if (gateResult.decision === "abstain")', gateIndex);
+  const generalistStart = handleChatBody.indexOf('if (gateResult.decision === "generalist")', abstainStart);
   const roleSelectionIndex = handleChatBody.indexOf("const chosenRole = chooseRole(", abstainStart);
-  const adaptiveBuildIndex = handleChatBody.indexOf("buildGeneratorContext(", roleSelectionIndex);
-  const abstainBlock = handleChatBody.slice(abstainStart, roleSelectionIndex);
+  const abstainBlock = handleChatBody.slice(abstainStart, generalistStart);
 
-  assert.ok(gateIndex !== -1 && abstainStart !== -1 && roleSelectionIndex !== -1 && adaptiveBuildIndex !== -1);
+  assert.ok(gateIndex !== -1 && abstainStart !== -1 && generalistStart !== -1 && roleSelectionIndex !== -1);
   assert.match(abstainBlock, /gateResult\.reason/);
-  assert.match(abstainBlock, /game\.set\("llmLog"/);
+  assert.match(abstainBlock, /finalizeAuditLog\(game, logEntry\)/);
   assert.match(abstainBlock, /return;/);
   assert.doesNotMatch(abstainBlock, /buildGeneratorContext|runSharedGeneration|chooseRole|compilePlan/);
-  assert.ok(abstainStart < roleSelectionIndex && roleSelectionIndex < adaptiveBuildIndex);
+  assert.ok(abstainStart < generalistStart && generalistStart < roleSelectionIndex);
 });
 
 test("routing: Static and Adaptive retain the same existing six-human-message checkpoint opportunity", () => {
   const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
-  const checkpointIndex = handleChatBody.indexOf("if (messagesSince < 6) return;");
+  const checkpointIndex = handleChatBody.indexOf("shouldEvaluateCheckpoint({");
   const staticIndex = handleChatBody.indexOf('if (facilitation === "static")');
-  const adaptiveFeatureIndex = handleChatBody.indexOf("extractFeatures(");
-  assert.ok(checkpointIndex !== -1 && checkpointIndex < staticIndex && staticIndex < adaptiveFeatureIndex);
-  assert.equal([...handleChatBody.matchAll(/messagesSince\s*<\s*6/g)].length, 1, "there must be one shared checkpoint threshold, not one per condition");
+  const adaptiveDetectorIndex = handleChatBody.indexOf("assessSemanticFactors(");
+  assert.ok(checkpointIndex !== -1 && checkpointIndex < staticIndex && staticIndex < adaptiveDetectorIndex);
+  assert.equal([...handleChatBody.matchAll(/shouldEvaluateCheckpoint\(\{/g)].length, 1, "there must be one shared checkpoint manager call, not one per condition");
 });
 
 test("routing: no requireLLMMessage switch or Generator-level WAIT/INTERVENE/ABSTAIN contract was introduced", () => {
@@ -260,17 +256,16 @@ test("integration: Adaptive (challenger role) and Static both go through the ide
   assert.equal(adaptiveResult.published, true);
   assert.equal(adaptiveGame.chat.length, 1, "exactly one message published for the Adaptive checkpoint");
 
-  // Static: static.md is a frozen skeleton (per PROMPT_MODULE_STATUS.md),
-  // so it is expected to come back `blocked` -- proving it goes through the
-  // SAME buildGeneratorContext/llmSystemPrompts gate as Adaptive, not a
-  // separate code path, and that blocked never fabricates a publish.
+  // Static uses its own prompt content but the same
+  // build/generate/validate/post infrastructure as Adaptive-Generalist.
   const staticGame = new MockGame();
+  const staticCandidate = { role: "STATIC", message: "Which option or criterion should the group compare next?", groundingMessageIds: [] };
   const staticResult = await runProductionCheckpoint({
     game: staticGame, facilitation: "static", role: null, chat, generalInfo: "task",
-    generatorCall: async () => { throw new Error("must never be called while blocked"); },
+    generatorCall: async () => ({ success: true, rawText: JSON.stringify(staticCandidate) }),
   });
-  assert.equal(staticResult.blocked, true);
-  assert.equal(staticGame.chat.length, 0);
+  assert.equal(staticResult.published, true);
+  assert.equal(staticGame.chat.length, 1, "exactly one message published for the Static checkpoint");
 });
 
 const READY_STATIC_PROMPT_FIXTURE = {
@@ -404,13 +399,7 @@ test("integration: Adaptive E/C/S selections each call exactly one matching Gene
   }
 });
 
-test("integration: uncertain semantic evidence leaves Adaptive at ABSTAIN before any Generator call", () => {
-  const features = {
-    novelty_score: 0.1,
-    redundancy_score: 0.9,
-    agreement_score: 0.9,
-    justification_score: 0.9,
-  };
+test("integration: uncertain detector evidence leaves Adaptive at ABSTAIN before any Generator call", () => {
   const uncertain = { status: "uncertain", strength: 0, message_ids: [], span: "" };
   const checkedFactors = {
     breadth_deficiency: uncertain,
@@ -419,32 +408,19 @@ test("integration: uncertain semantic evidence leaves Adaptive at ABSTAIN before
     integration_deficiency: uncertain,
     self_correction: uncertain,
   };
-  const gateResult = evaluateGate(
-    features,
-    checkedFactors,
-    ["expander", "challenger", "synthesiser"],
-    { remainingTime: 300000, previousCheckedFactors: null, lastRole: null },
-  );
+  const gateResult = evaluateGate(checkedFactors, { remainingTime: 300000, lastRole: null });
   let generatorCallCount = 0;
-  if (gateResult.act) generatorCallCount += 1;
-  assert.equal(gateResult.act, false);
-  assert.match(gateResult.reason, /semantic factors|Evidence Checker/);
+  if (gateResult.decision !== "abstain") generatorCallCount += 1;
+  assert.equal(gateResult.decision, "abstain");
+  assert.match(gateResult.reason, /required semantic factors/);
   assert.equal(generatorCallCount, 0);
 });
 
-test("routing regression: feature, candidate, score, margin, and time thresholds are unchanged", () => {
+test("routing regression: LLM detector classification thresholds are explicit", () => {
   assert.deepEqual(THRESHOLDS, {
-    expander: { novelty_weight: 0.6, redundancy_weight: 0.4, expander_threshold: 0.35, redundancy_threshold: 0.85 },
-    challenger: { agreement_weight: 0.5, justification_weight: 0.5, threshold: 0.6 },
-    synthesiser: { agreement_weight: 0.5, justification_weight: 0.5, threshold: 0.6, forced_trigger_seconds: 20 },
-    candidate: {
-      expander_novelty_max: 0.5,
-      expander_redundancy_min: 0.5,
-      challenger_agreement_min: 0.4,
-      synthesiser_agreement_min: 0.4,
-      synthesiser_justification_min: 0.4,
-    },
-    weights: { feature: 0.6, semantic: 0.4, persistence: 0, stage_fit: 0, penalty: 0 },
+    expander: { threshold: 0.35 },
+    challenger: { threshold: 0.6 },
+    synthesiser: { threshold: 0.6, forced_trigger_seconds: 20 },
     gate: { min_time_for_intervention_seconds: 10, margin: 0.05 },
   });
 });
@@ -572,14 +548,14 @@ test("checkpoint marker: a failed generation attempt still consumes the checkpoi
   assert.equal(third.proceeds, true, "a genuinely new checkpoint (different humanMessageCount) proceeds normally");
 });
 
-test("callbacks.js: the checkpoint marker is set before any outcome-determining work (Adaptive feature extraction or the shared LLM call), so failures consume it too", () => {
+test("callbacks.js: the checkpoint marker is set before the Adaptive detector or shared Generator call, so failures consume it too", () => {
   const handleChatStart = callbacksSource.indexOf("async function handleChat");
   const handleChatBody = callbacksSource.slice(handleChatStart);
-  const markerSetIndex = handleChatBody.indexOf('currentRound.set("lastHandledCheckpoint"');
-  const featureExtractIndex = handleChatBody.indexOf("extractFeatures(");
-  const sharedCallIndex = handleChatBody.indexOf("runSharedGeneration(");
-  assert.ok(markerSetIndex !== -1 && featureExtractIndex !== -1 && sharedCallIndex !== -1);
-  assert.ok(markerSetIndex < featureExtractIndex, "checkpoint marker must be set before Adaptive's feature extraction");
+  const markerSetIndex = handleChatBody.indexOf("recordAttempt(game, humanMessageCount, now)");
+  const detectorIndex = handleChatBody.indexOf("assessSemanticFactors(");
+  const sharedCallIndex = handleChatBody.indexOf("runSharedGeneration(", detectorIndex);
+  assert.ok(markerSetIndex !== -1 && detectorIndex !== -1 && sharedCallIndex !== -1);
+  assert.ok(markerSetIndex < detectorIndex, "checkpoint marker must be set before the Adaptive LLM detector");
   assert.ok(markerSetIndex < sharedCallIndex, "checkpoint marker must be set before the shared generation/LLM call");
 });
 

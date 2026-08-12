@@ -4,28 +4,92 @@ import _ from "lodash";
 import dotenv from "dotenv";
 import taskConfig from "./HPTConfig.json";
 import { llmSystemPrompts } from "./LLMConfig.js";
-import { THRESHOLDS, getCandidateRoles, evaluateGate, chooseRole, getRoleThreshold } from "./utils.js";
+import { evaluateGate, chooseRole, getRoleThreshold, THRESHOLDS } from "./utils.js";
 import { parseGeneratorOutputStrict, validateAgainstGenerationSchema, runDeterministicValidation } from "./prompts/GeneratorContract.mjs";
 import { buildDynamicUserContext, withMessageIds } from "./prompts/DynamicContext.mjs";
-import { getOpeningMessageBundle } from "./prompts/promptLoader.js";
+import { getRequestedGeneralistPromptBundle } from "./prompts/promptLoader.js";
+import { buildStaticUserContext } from "./prompts/StaticContext.mjs";
+import {
+  buildIcebreakerLLMMessages,
+  buildIcebreakerOpening,
+  parseIcebreakerLLMResponse,
+} from "./IcebreakerFacilitator.mjs";
 import { assessSemanticFactors } from "./SemanticAssessor.js";
 import { checkEvidence } from "./EvidenceChecker.js";
 import { compilePlan } from "./PolicyCompiler.js";
+import {
+  shouldEvaluateCheckpoint,
+  recordAttempt,
+  recordPublish,
+  recordParticipantRequest,
+  recordParticipantRequestedPublish,
+  resetRoundState,
+  CHECKPOINT_DEFAULTS,
+  containsFacilitatorMention,
+} from "./CheckpointManager.mjs";
+import { buildAgentState } from "./AgentState.mjs";
+import { validateCandidate } from "./SemanticValidator.js";
+import { claimSequenceForStudy, RANDOMIZATION_LEDGER_KEY } from "./RandomizationLedger.mjs";
+import { randomUUID } from "node:crypto";
+import { beginInFlight, finalizeAuditLog, recoverInterruptedInFlight } from "./InFlightAudit.mjs";
+import {
+  canConfirmBreak,
+  MESSAGE_TYPES,
+  allocateSequencePosition,
+  buildCanonicalMessage,
+  reviewHumanMessageRequest,
+} from "./ExperimentPolicies.mjs";
 
 dotenv.config();
 
-const openaiModel = process.env.OPENAI_MODEL || "gpt-4o";
-const llmAPIEndpoint = process.env.LLM_API_ENDPOINT || "https://api.openai.com/v1/responses";
+// Phase 6.3 (model-version freeze): the default was previously the
+// "gpt-4o" alias, which silently picks the latest snapshot on every
+// call -- a reproducibility hazard for any research that wants to
+// attribute participant behaviour to a specific model version. Pinned
+// to the platform-confirmed model id ("MiniMax-Text-01") as the
+// default; override per-deployment via OPENAI_MODEL in server/.env
+// if the live LLM platform exposes a different model identifier. The
+// string the process actually uses is recorded in game-level
+// systemInfo.model (see onGameStart below) and in every llmLog
+// entry, so the post-hoc analysis can recover exactly which snapshot
+// produced each intervention. Pilot-prep probe (2026-08-11) showed
+// "gpt-4o"/"gpt-4o-2024-08-06"/"abab-6.5s" all return 400 from
+// api.minimax.chat; "MiniMax-Text-01" works and returns clean JSON.
+const openaiModel = process.env.OPENAI_MODEL || "MiniMax-Text-01";
+// Phase 5.5: switched from OpenAI Responses API (`/v1/responses`,
+// `input`/`output[]` shape) to OpenAI Chat Completions API
+// (`/v1/chat/completions`, `messages`/`choices[0].message.content` shape).
+// Reason: the live LLM endpoint is the platform's `api.minimax.chat/v1`
+// gateway, and Chat Completions is the universally supported OpenAI-
+// compatible surface across providers (Responses API adoption is still
+// limited). Phase 6.3: the .env value is kept free of the API-style
+// suffix (just `https://api.minimax.chat/v1`), and this code appends
+// `/chat/completions` if the caller didn't already -- so changing the
+// platform to a non-OpenAI-compatible surface in the future only
+// requires changing this single concatenation, not the env var.
+const _llmBase = process.env.LLM_API_ENDPOINT || "https://api.minimax.chat/v1";
+const llmAPIEndpoint = _llmBase.endsWith("/chat/completions") ? _llmBase : `${_llmBase.replace(/\/$/, "")}/chat/completions`;
 const llmMaxOutputTokens = Number.parseInt(process.env.LLM_MAX_OUTPUT_TOKENS ?? "1000", 10);
+const CALLBACKS_INSTANCE_ID = randomUUID();
 
 // ── LLM API call ──────────────────────────────────────────────────────────────
 
-async function getLLMResponse(messages) {
+async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens) {
   const data = {
     model: openaiModel,
-    max_output_tokens: llmMaxOutputTokens,
-    input: messages,
-    text: { format: { type: "json_object" } },
+    max_tokens: maxTokens,
+    messages,
+    // Note: `response_format: { type: "json_object" }` is intentionally
+    // NOT sent. The live endpoint (api.minimax.chat, Phase 6 pilot) does
+    // not support it -- it returns 400 "unknown response_format type
+    // 'json_object'". The platform's `MiniMax-Text-01` model produces
+    // well-formed JSON on its own when the prompt explicitly asks for
+    // it (every base.md / validator.md / assessor.md in this repo
+    // includes an OUTPUT CONTRACT section that does so), and the
+    // strict JSON parser (`server/src/prompts/GeneratorContract.mjs`'s
+    // `parseGeneratorOutputStrict` and SemanticValidator's
+    // `strictParseJsonObject`) tolerates nothing else. If a future
+    // platform supports json_object output, re-enable here.
   };
   try {
     const completion = await fetch(llmAPIEndpoint, {
@@ -43,11 +107,10 @@ async function getLLMResponse(messages) {
       console.error("LLM endpoint HTTP error:", { status: completion.status, error: errorPayload?.error || errorPayload });
       return { success: false, error: errorPayload?.error?.message || completion.statusText };
     }
-    const message = responseBody?.output?.find((item) => item.type === "message");
-    const text = message?.content?.find((c) => c.type === "output_text")?.text;
-    if (!text) {
-      console.error("LLM response missing output text:", responseBody);
-      return { success: false, error: "LLM response missing output text" };
+    const text = responseBody?.choices?.[0]?.message?.content;
+    if (typeof text !== "string" || text.length === 0) {
+      console.error("LLM response missing message content:", responseBody);
+      return { success: false, error: "LLM response missing message content" };
     }
     // rawText is additive (existing "data" field/behavior for callers is
     // unchanged) -- it exists so the shared Generator path's strict parser
@@ -61,6 +124,17 @@ async function getLLMResponse(messages) {
   }
 }
 
+// Formal-task and icebreaker calls are separate, stateless completion paths.
+// The shared function above is transport only: it stores no conversation and
+// adds no context. Each wrapper receives messages from its own locked builder.
+async function getLLMResponse(messages) {
+  return requestChatCompletion(messages, llmMaxOutputTokens);
+}
+
+async function getIcebreakerLLMResponse(messages) {
+  return requestChatCompletion(messages, Math.min(llmMaxOutputTokens, 500));
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function formatDuration(duration) {
@@ -72,52 +146,42 @@ function formatDuration(duration) {
   return `${formattedMinutes}${formattedMinutes && formattedSeconds ? ", " : ""}${formattedSeconds}`;
 }
 
+function isFormalHumanMessage(message) {
+  if (!message || message.sender?.id === "ai") return false;
+  const messageType = message.messageType ?? "human";
+  const speakerType = message.speakerType ?? "human";
+  const messageStage = message.stage ?? "Discussion";
+  return messageType === "human" && speakerType === "human" && messageStage === "Discussion";
+}
+
 function getHumanMessages(chat) {
   if (!chat) return [];
-  return chat.filter((m) => m.sender.id !== "ai");
+  return chat.filter(isFormalHumanMessage);
+}
+
+function isFormalContextMessage(message) {
+  const stage = message?.stage ?? "Discussion";
+  const type = message?.messageType ?? (message?.sender?.id === "ai" ? "facilitator" : "human");
+  return stage === "Discussion" && (type === "human" || type === "facilitator");
 }
 
 function buildLocalContext(humanMessages, n = 6) {
   return humanMessages.slice(-n);
 }
 
+function recordOperationalEvent(game, event) {
+  const entry = { timestamp: Date.now(), serverInstanceId: CALLBACKS_INSTANCE_ID, ...event };
+  game.set("operationalEvents", [...(game.get("operationalEvents") || []), entry]);
+  return entry;
 // ── Feature extraction (calls Python sidecar) ─────────────────────────────────
-// Feature server failure → skip intervention, log error.
-// Returning default values would silently change the detector behavior.
-// Adaptive-only (the Controller boundary) -- unmodified by the scope-reduction
-// refactor; feature extraction/thresholds/role-selection logic is out of scope.
-
-async function extractFeatures(messages) {
-  const payload = {
-    messages: messages.map((m) => ({ sender: m.sender.name, text: m.text })),
-    redundancy_threshold: THRESHOLDS.expander.redundancy_threshold
-  };
-  try {
-    const featureResponse = await fetch("http://localhost:5001/features", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    const data = await featureResponse.json();
-    if (!featureResponse.ok) {
-      console.error("[callbacks] Feature server error:", data);
-      return { success: false, error: data.error || "Feature server returned error" };
-    }
-    return { success: true, data };
-  } catch (error) {
-    console.error("[callbacks] Feature server unreachable:", error.message);
-    return { success: false, error: error.message };
-  }
 }
 
-// ── Shared Generator context builder (Static AND Adaptive) ─────────────────────
+// ── Generator context boundary (Static AND Adaptive) ──────────────────────────
 //
-// GRAIL scope-reduction refactor: this is now the ONE context builder both
-// facilitation conditions use. The only condition-specific step happens
-// BEFORE this function is called (selecting "static"+null vs
-// "adaptive"+<controller role> below in handleChat) -- everything after
-// prompt selection (context assembly, LLM call, parsing, validation,
-// publication, logging) is identical for both conditions.
+// Static uses a deliberately narrower context assembler; Adaptive retains its
+// existing dynamic context unchanged. Both conditions converge immediately
+// afterward on the same LLM call, parsing, validation, publication, and log
+// path in runSharedGeneration.
 //
 // `role` is the Controller-selected Adaptive role (utils.js's chooseRole(),
 // only called once the shared gate -- utils.js's evaluateGate() -- has
@@ -130,20 +194,36 @@ async function extractFeatures(messages) {
 // the LLM at all. An unknown/unsupported role comes back blocked here --
 // never silently falls back to Static or another role
 // (llmSystemPrompts/promptLoader, unmodified).
-function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, facilitation, role, plan = null) {
-  const promptResult = llmSystemPrompts(facilitation, role);
+function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, facilitation, role, plan = null, promptResultOverride = null) {
+  const promptResult = promptResultOverride ?? llmSystemPrompts(facilitation, role);
   if (promptResult.blocked) {
     return { blocked: true, reason: promptResult.reason, metadata: promptResult.metadata };
   }
 
-  const generalInfo = game.currentRound?.get("generalInfo") || "";
+  if (facilitation === "static") {
+    const staticContext = buildStaticUserContext({
+      chat,
+      remainingTimeMs: remainingTime,
+      elapsedTimeMs: timeElapsed,
+    });
+    return {
+      blocked: false,
+      metadata: promptResult.metadata,
+      systemPrompt: promptResult.content.replace(
+        "{{sharedTaskOverview}}",
+        "Task materials are not available to the facilitator. Use only facts participants explicitly share in the public transcript.",
+      ),
+      ...staticContext,
+    };
+  }
+
   const checkpointDescriptor = `Checkpoint after ${getHumanMessages(chat).length} human message(s) so far this round. Participants: ${players.map((p) => p.get("name")).join(", ")}. Time remaining: ${formatDuration(remainingTime)}, elapsed: ${formatDuration(timeElapsed)}.`;
 
   const dynamicContext = buildDynamicUserContext({
-    chat,
+    chat: chat.filter(isFormalContextMessage),
     checkpointDescriptor,
     selectedRoleForDisplay: promptResult.metadata.generationRole,
-    generalInfo,
+    generalInfo: "",
     plan,
   });
 
@@ -161,16 +241,35 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
 
 // ── Shared generation/validation/publication path (Static AND Adaptive) ────────
 //
-// The single post-selection path required by the scope-reduction refactor:
-// one LLM call (getLLMResponse, GRAIL's existing client), one strict parse,
-// one basic schema/role/length/grounding validator
-// (server/src/prompts/GeneratorContract.mjs -- generation.schema.json +
-// deterministic checks; no semantic Validator LLM, no regeneration/attempt
-// loop), one publication call (postGeneratorResultIfValid, GRAIL's existing
-// game.append/llmLog path). Invalid output at any stage is logged and
-// treated as Silent -- nothing is ever published before every check passes,
-// and there is no second attempt.
-async function runSharedGeneration(game, chatKey, built, logEntry, originatingRoundId, originatingStageId) {
+// Phase 5 update (Q6 = "完整实现", audit-phase1.md §6): the post-selection
+// path now has a repair loop. Per checkpoint, the Generator may be called
+// up to 2 times (1 original + 1 repair), and the Validator LLM runs after
+// each successful Generator attempt. The total is bounded:
+//   - 1 Generator + 1 Validator on the first attempt
+//   - 1 Generator + 1 Validator on the repair attempt (only if the first
+//     Validator returned passed:false with at least one failedCriteria)
+//   - persistent Specialist failure: caller may route once through the
+//     shared Generalist bundle; rejected text is never shown to participants
+//
+// The Generator itself remains one LLM call per attempt (no internal
+// regeneration). The repair's only effect on the Generator is a user-turn
+// append ([PRIOR_FAILED_CRITERIA] section) that tells the LLM what to fix
+// this time. The Validator is a separate LLM (validator.md) that audits
+// the candidate against 7 boolean criteria (notGrounded / nonNeutral /
+// roleMisaligned / inventedInformation / recommendationDetected /
+// unsupportedInformationDetected / unsupportedConsensusClaim). On a
+// failed first Validator audit, the repair attempt's Validator gets the
+// same failedCriteria list as a hint (it is a re-audit, not a fresh
+// review of the world).
+//
+// Returns:
+//   {published: true, candidate, attempts, validator}    any published path
+//   {published: false, reason?}                          silent path
+// where `attempts` is 1 or 2 and `validator` is the FINAL Validator
+// verdict (i.e. the one that authorised publication, or the last failed
+// one for the silent path). Callers (Static / Generalist / Specialist)
+// only read `published`; the rest is for llmLog / post-hoc audit.
+async function runSharedGeneration(game, chatKey, built, logEntry, originatingRoundId, originatingStageId, chat) {
   logEntry.promptMetadata = built.metadata;
 
   if (built.blocked) {
@@ -179,63 +278,173 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     return { published: false };
   }
 
-  const messages = [
-    { role: "system", content: built.systemPrompt },
-    { role: "user",   content: built.userContent  },
-  ];
-  logEntry.requestMade = true;
-  logEntry.messagesOAIFormat = messages;
+  // Returns false if the originating round/stage has changed (a later
+  // attempt would be responding to a stale world). True if the same
+  // stage is still active.
+  function isOriginatingStageActive() {
+    return (
+      game.currentRound?.id === originatingRoundId &&
+      game.currentStage?.id === originatingStageId &&
+      game.currentStage?.get("name") === "Task"
+    );
+  }
 
-  const llmResponse = await getLLMResponse(messages);
-  if (
-    game.currentRound?.id !== originatingRoundId ||
-    game.currentStage?.id !== originatingStageId ||
-    game.currentStage?.get("name") !== "Task"
-  ) {
+  // One Generator attempt: LLM call + strict parse + schema + deterministic.
+  // The user content defaults to the original `built.userContent`; the
+  // repair attempt passes a modified version (with [PRIOR_FAILED_CRITERIA]
+  // appended) via `userContentOverride`. Returns:
+  //   {ok: true, candidate}
+  //   {discarded: true}                       round/stage changed
+  //   {silent: true, reason, logField?}       any failure
+  async function attemptGeneration(userContentOverride = null) {
+    const messages = [
+      { role: "system", content: built.systemPrompt },
+      { role: "user",   content: userContentOverride ?? built.userContent },
+    ];
+    logEntry.requestMade = true;
+    logEntry.messagesOAIFormat = messages;
+
+    const llmResponse = await getLLMResponse(messages);
+    if (!isOriginatingStageActive()) return { discarded: true };
+    if (!llmResponse.success) {
+      return { silent: true, reason: `API Error: ${llmResponse.error}` };
+    }
+    logEntry.requestSuccess = true;
+
+    const parseResult = parseGeneratorOutputStrict(llmResponse.rawText);
+    if (!parseResult.ok) {
+      return { silent: true, reason: `Invalid Generator output: ${parseResult.error}` };
+    }
+
+    const schemaResult = validateAgainstGenerationSchema(parseResult.parsed, built.metadata.generationRole);
+    if (!schemaResult.ok) {
+      return {
+        silent: true,
+        reason: "Generator output failed generation.schema.json",
+        logField: { schemaErrors: schemaResult.errors },
+      };
+    }
+
+    const deterministicResult = runDeterministicValidation(parseResult.parsed, {
+      selectedRole: built.metadata.generationRole,
+      eligibleMessageIds: built.eligibleMessageIds,
+      aiOrSystemMessageIds: built.aiOrSystemMessageIds,
+      recentAiMessageTexts: built.recentAiMessageTexts,
+      allowedGroundingIds: built.allowedGroundingIds,
+    });
+    logEntry.deterministic = deterministicResult;
+    if (!deterministicResult.passed) {
+      return {
+        silent: true,
+        reason: `Generator output failed validation: ${deterministicResult.failedCriteria.join(", ")}`,
+      };
+    }
+
+    return { ok: true, candidate: parseResult.parsed };
+  }
+
+  // Build the user-content append for the repair attempt. The
+  // [PRIOR_FAILED_CRITERIA] section is the LLM-visible feedback that
+  // differentiates a repair attempt from a fresh attempt; the Validator
+  // prompt documents this section's exact shape (validator.md) so the
+  // Generator prompt does not need to.
+  function buildRepairUserContent(failedCriteria, priorCandidate) {
+    const failedList = failedCriteria.join(", ");
+    const priorJson = JSON.stringify(
+      { role: priorCandidate.role, message: priorCandidate.message, groundingMessageIds: priorCandidate.groundingMessageIds },
+      null,
+      2
+    );
+    return `${built.userContent}\n\n---\n\n[PRIOR_FAILED_CRITERIA]\nThe previous candidate at this checkpoint was rejected by the semantic Validator for: ${failedList}.\nPrevious candidate (do NOT repeat it -- generate a NEW message):\n${priorJson}\nRegenerate a candidate that does NOT violate the listed criteria.`;
+  }
+
+  // One Validator LLM call. Treats the LLM-side failure (API / parse /
+  // schema) as a Validator-unavailable signal distinct from a
+  // passed:false verdict -- we have no failedCriteria to feed back in
+  // the unavailable case, so no repair is triggered. The caller logs
+  // this strongly and goes silent.
+  async function runValidator(candidate, priorFailedCriteria = null, priorCandidate = null) {
+    const result = await validateCandidate({
+      chat,
+      candidate,
+      selectedRole: built.metadata.generationRole,
+      taskGeneralContext: "",
+      callLLM: getLLMResponse,
+      priorFailedCriteria,
+      priorCandidate,
+    });
+    if (!result.success) {
+      return { validatorFailed: true, code: result.code, error: result.error };
+    }
+    return { verdict: result.verdict };
+  }
+
+  // ── Attempt 1: Generator + Validator ──────────────────────────────────
+  const a1 = await attemptGeneration();
+  if (a1.discarded) {
     logEntry.reason = "Discarded stale AI result after the originating Discussion stage ended";
     logEntry.outcome = "SILENT";
     return { published: false };
   }
-  if (!llmResponse.success) {
-    logEntry.reason = `API Error: ${llmResponse.error}`;
-    logEntry.outcome = "SILENT";
-    return { published: false };
-  }
-  logEntry.requestSuccess = true;
-
-  const parseResult = parseGeneratorOutputStrict(llmResponse.rawText);
-  if (!parseResult.ok) {
-    logEntry.reason = `Invalid Generator output: ${parseResult.error}`;
+  if (a1.silent) {
+    logEntry.reason = a1.reason;
+    if (a1.logField) Object.assign(logEntry, a1.logField);
     logEntry.outcome = "SILENT";
     return { published: false };
   }
 
-  const schemaResult = validateAgainstGenerationSchema(parseResult.parsed, built.metadata.generationRole);
-  if (!schemaResult.ok) {
-    logEntry.reason = "Generator output failed generation.schema.json";
-    logEntry.schemaErrors = schemaResult.errors;
+  const v1 = await runValidator(a1.candidate);
+  if (v1.validatorFailed) {
+    logEntry.reason = `Validator LLM unavailable on attempt 1 (${v1.code}): ${v1.error}`;
+    logEntry.outcome = "SILENT_VALIDATOR_UNAVAILABLE";
+    return { published: false };
+  }
+  logEntry.validator = v1.verdict;
+  if (v1.verdict.passed) {
+    logEntry.llmAction = a1.candidate;
+    const posted = postGeneratorResultIfValid(game, chatKey, a1.candidate, built.metadata.generationRole, logEntry);
+    logEntry.attempts = 1;
+    logEntry.outcome = posted ? "PUBLISHED" : "SILENT";
+    return { published: posted, candidate: a1.candidate, attempts: 1, validator: v1.verdict };
+  }
+
+  // ── Attempt 2: repair Generator (with Validator feedback) + re-audit ─
+  const a2 = await attemptGeneration(buildRepairUserContent(v1.verdict.failedCriteria, a1.candidate));
+  if (a2.discarded) {
+    logEntry.reason = "Discarded stale AI result during repair (originating Discussion stage ended)";
     logEntry.outcome = "SILENT";
     return { published: false };
   }
-
-  const deterministicResult = runDeterministicValidation(parseResult.parsed, {
-    selectedRole: built.metadata.generationRole,
-    eligibleMessageIds: built.eligibleMessageIds,
-    aiOrSystemMessageIds: built.aiOrSystemMessageIds,
-    recentAiMessageTexts: built.recentAiMessageTexts,
-    allowedGroundingIds: built.allowedGroundingIds,
-  });
-  logEntry.deterministic = deterministicResult;
-  if (!deterministicResult.passed) {
-    logEntry.reason = `Generator output failed validation: ${deterministicResult.failedCriteria.join(", ")}`;
-    logEntry.outcome = "SILENT";
+  if (a2.silent) {
+    logEntry.reason = `Repair Generator attempt failed: ${a2.reason}`;
+    if (a2.logField) Object.assign(logEntry, a2.logField);
+    logEntry.outcome = "SILENT_GENERATOR_FAILED_AFTER_VALIDATOR_REJECT";
     return { published: false };
   }
 
-  logEntry.llmAction = parseResult.parsed;
-  const posted = postGeneratorResultIfValid(game, chatKey, parseResult.parsed, built.metadata.generationRole, logEntry);
-  logEntry.outcome = posted ? "PUBLISHED" : "SILENT";
-  return { published: posted, candidate: parseResult.parsed };
+  const v2 = await runValidator(a2.candidate, v1.verdict.failedCriteria, a1.candidate);
+  if (v2.validatorFailed) {
+    logEntry.reason = `Validator LLM unavailable on repair (${v2.code}): ${v2.error}`;
+    logEntry.outcome = "SILENT_VALIDATOR_UNAVAILABLE";
+    return { published: false };
+  }
+  logEntry.validatorRepair = v2.verdict;
+  logEntry.attempts = 2;
+  if (v2.verdict.passed) {
+    logEntry.llmAction = a2.candidate;
+    const posted = postGeneratorResultIfValid(game, chatKey, a2.candidate, built.metadata.generationRole, logEntry);
+    logEntry.outcome = posted ? "PUBLISHED" : "SILENT";
+    return { published: posted, candidate: a2.candidate, attempts: 2, validator: v2.verdict };
+  }
+
+  // Persistent failure: both attempts failed the Validator. Silent +
+  // strong log marker. Never a fallback stub message -- participants
+  // never see a Validator-rejected attempt. The full failedCriteria
+  // (both attempts) are logged so the researcher can audit post-hoc
+  // which criteria the model couldn't satisfy.
+  logEntry.reason = `Validator rejected both attempts. attempt1: [${v1.verdict.failedCriteria.join(", ")}]; attempt2: [${v2.verdict.failedCriteria.join(", ")}]`;
+  logEntry.outcome = "SILENT_VALIDATOR_REJECTED";
+  return { published: false, attempts: 2, validator: v2.verdict };
 }
 
 // ── S1-S4 sequence definitions ──────────────────────────────────────────────
@@ -267,25 +476,25 @@ const SEQUENCES = {
   },
 };
 const SEQUENCE_IDS = Object.keys(SEQUENCES);
-const TASK_CONFIG_INDEX_BY_VERSION = Object.freeze({ A: 0, B: 1 });
-
-// Empirica requires every Stage to have a positive duration. ReviewQuiz has
-// no research-defined timeout and normally ends only when every participant
-// submits a fully correct attempt; this is an operational safety ceiling, not
-// a participant-facing experimental duration.
 const REVIEW_QUIZ_SAFETY_DURATION_SECONDS = 24 * 60 * 60;
-const TRANSITION_TO_ICEBREAKER_DURATION_SECONDS = 10;
 const TASK_INFORMATION_DURATION_SECONDS = 10 * 60;
 const WALKTHROUGH_DURATION_SECONDS = 10 * 60;
+const ICEBREAKER_TRANSITION_DURATION_SECONDS = 10;
+// The visible Break countdown is controlled by breakScheduledEndAt. This long
+// safety duration prevents Empirica's timer from ending the stage before the
+// server-validated readiness gate is satisfied; clients submit synchronously
+// only after both the five-minute minimum and full-group readiness are true.
+const BREAK_STAGE_SAFETY_DURATION_SECONDS = 24 * 60 * 60;
 const TLX_DURATION_SECONDS = 10 * 60;
 const SUBJECTIVE_SURVEY_DURATION_SECONDS = 10 * 60;
 const BREAK_DURATION_SECONDS = 300;
+const INDIVIDUAL_ASSESSMENT_DURATION_SECONDS = 10 * 60;
 
 function addReviewQuizStage(round) {
   round.addStage({ name: "ReviewQuiz", duration: REVIEW_QUIZ_SAFETY_DURATION_SECONDS });
 }
 
-// ── Randomized-block S1-S4 allocation (one claim per Game) ─────────────────
+// ── Restart-safe randomized-block S1-S4 allocation (one claim per Game) ─────
 //
 // Every 4 Games get a shuffled permutation of {S1,S2,S3,S4} (a permuted
 // block), guaranteeing each sequence appears exactly once per 4 Games,
@@ -293,36 +502,29 @@ function addReviewQuizStage(round) {
 // guarantee balance). A new block is generated only once the current one is
 // fully claimed.
 //
-// STATE LIMIT (explicit, not glossed over): this is plain server-process
-// module state, held only in memory. It is NOT persisted to Tajriba, a
-// database, or disk. If the Empirica server process restarts while a block
-// is partially claimed, that block's remaining positions are lost -- the
-// next claim after restart starts a brand-new block from position 1. This
-// does not survive a server restart, and must not be described as if it
-// did.
-let currentSequenceBlock = [];
-let allocationBlockId = 0;
-let nextAllocationPosition = 0; // number of items already claimed from currentSequenceBlock (0-4)
+// The JSON ledger lives on Empirica's persistent Global scope. It contains
+// every Game's durable claim plus counts and block history, shared across all
+// Batches in this Tajriba database. The before-listener runs ahead of
+// onGameStart so Round creation can fail closed unless a durable claim exists.
+Empirica.before("game", "start", (ctx, { game, start }) => {
+  if (!start) return;
+  const games = [...ctx.scopesByKind("game").values()];
+  const { ledger, claim } = claimSequenceForStudy(ctx.globals, games, game, SEQUENCE_IDS);
 
-// Synchronous, no `await` anywhere in this function. Node.js's single-
-// threaded event loop already runs this function to completion before any
-// other code (including another call to this same function) can run, so
-// two Games' onGameStart callbacks can never interleave mid-claim within
-// one process. No additional lock is added for this reason.
-function claimNextSequence() {
-  if (nextAllocationPosition >= currentSequenceBlock.length) {
-    currentSequenceBlock = _.shuffle(SEQUENCE_IDS);
-    allocationBlockId += 1;
-    nextAllocationPosition = 0;
-  }
-  const sequenceId = currentSequenceBlock[nextAllocationPosition];
-  nextAllocationPosition += 1;
-  return {
-    sequenceId,
-    allocationBlockId,
-    allocationPosition: nextAllocationPosition, // 1-4
-  };
-}
+  game.set("sequenceId",           claim.sequenceId);
+  game.set("allocationNumber",     claim.allocationNumber);
+  game.set("allocationBlockId",    claim.allocationBlockId);
+  game.set("allocationPosition",   claim.allocationPosition);
+  game.set("allocationClaimedAt",  claim.claimedAt);
+  game.set("allocationMethod",     "global_persisted_least-count-permuted-block-v1");
+  game.set("allocationLedgerKey",  RANDOMIZATION_LEDGER_KEY);
+  game.batch?.set("sequenceAllocationSummaryV1", {
+    ledgerKey: RANDOMIZATION_LEDGER_KEY,
+    allocationNumber: ledger.allocationNumber,
+    counts: ledger.counts,
+    updatedAt: Date.now(),
+  });
+});
 
 // ── onGameStart ───────────────────────────────────────────────────────────────
 
@@ -344,27 +546,27 @@ Empirica.onGameStart(({ game }) => {
   }
 
   // Initialize game-level state
-  game.set("llmLog",              []);
-  game.set("totalInterventions",  0);
-  game.set("systemInfo", {
-    model:           openaiModel,
-    featureServer:   "http://localhost:5001",
-    thresholdSource: "hardcoded_placeholder",
-    thresholds:      THRESHOLDS,
-  });
+  if (!Array.isArray(game.get("llmLog"))) game.set("llmLog", []);
+  if (!Number.isFinite(game.get("totalInterventions"))) game.set("totalInterventions", 0);
+  if (!game.get("llmInFlight")) game.set("llmInFlight", {});
+  if (!Array.isArray(game.get("operationalEvents"))) game.set("operationalEvents", []);
+  game.set("activeCallbacksInstanceId", CALLBACKS_INSTANCE_ID);
+  if (!game.get("systemInfo")) {
+    game.set("systemInfo", {
+      model:           openaiModel,
+      featureServer:   "http://localhost:5001",
+      thresholdSource: "hardcoded_placeholder",
+      thresholds:      THRESHOLDS,
+    });
+  }
 
   // ── Randomized-block S1-S4 allocation ──────────────────────────────────────
-  // Idempotency: reuse an already-claimed sequence verbatim (never claim a
-  // second slot from the block for the same Game -- e.g. if onGameStart were
-  // ever re-invoked for this Game).
-  let sequenceId = game.get("sequenceId");
-  if (!sequenceId) {
-    const claim = claimNextSequence();
-    sequenceId = claim.sequenceId;
-    game.set("sequenceId",           claim.sequenceId);
-    game.set("allocationBlockId",    claim.allocationBlockId);
-    game.set("allocationPosition",   claim.allocationPosition);
-    game.set("allocationBlockOrder", [...currentSequenceBlock]); // audit trail: the full permutation this Game's slot came from
+  // The preceding `before("game", "start")` listener has already persisted
+  // this claim globally and on the Game. Never silently fall back to an
+  // in-memory draw if that durable allocation step failed.
+  const sequenceId = game.get("sequenceId");
+  if (!SEQUENCE_IDS.includes(sequenceId)) {
+    throw new Error(`[onGameStart] game ${game.id} has no valid durable sequence allocation (${JSON.stringify(sequenceId)})`);
   }
 
   const sequence = SEQUENCES[sequenceId];
@@ -394,14 +596,16 @@ Empirica.onGameStart(({ game }) => {
   round1.addStage({ name: "TaskInformation",          duration: TASK_INFORMATION_DURATION_SECONDS });
   round1.addStage({ name: "Walkthrough",              duration: WALKTHROUGH_DURATION_SECONDS });
   addReviewQuizStage(round1);
-  round1.addStage({ name: "TransitionToIceBreaker",   duration: TRANSITION_TO_ICEBREAKER_DURATION_SECONDS });
+  round1.addStage({ name: "IceBreakerStartCountdown", duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
   round1.addStage({ name: "Introduction",             duration: introDuration * 60 });
+  round1.addStage({ name: "IceBreakerEndCountdown",   duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
   round1.addStage({ name: "InitialDecision",          duration: phase1Duration * 60 });
   round1.addStage({ name: "Task",                     duration: gameDuration * 60 });
   round1.addStage({ name: "FinalDecision",            duration: 120 });
+  round1.addStage({ name: "IndividualAssessment",     duration: INDIVIDUAL_ASSESSMENT_DURATION_SECONDS });
   round1.addStage({ name: "TLX",                      duration: TLX_DURATION_SECONDS });
   round1.addStage({ name: "SubjectiveSurvey",         duration: SUBJECTIVE_SURVEY_DURATION_SECONDS });
-  round1.addStage({ name: "Break",                    duration: BREAK_DURATION_SECONDS });
+  round1.addStage({ name: "Break",                    duration: BREAK_STAGE_SAFETY_DURATION_SECONDS });
 
   const round2 = game.addRound({
     name: "Round 2",
@@ -412,31 +616,19 @@ Empirica.onGameStart(({ game }) => {
   round2.addStage({ name: "TaskInformation",          duration: TASK_INFORMATION_DURATION_SECONDS });
   round2.addStage({ name: "Walkthrough",              duration: WALKTHROUGH_DURATION_SECONDS });
   addReviewQuizStage(round2);
-  round2.addStage({ name: "TransitionToIceBreaker",   duration: TRANSITION_TO_ICEBREAKER_DURATION_SECONDS });
+  round2.addStage({ name: "IceBreakerStartCountdown", duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
   round2.addStage({ name: "Introduction",             duration: introDuration * 60 });
+  round2.addStage({ name: "IceBreakerEndCountdown",   duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
   round2.addStage({ name: "InitialDecision",          duration: phase1Duration * 60 });
   round2.addStage({ name: "Task",                     duration: gameDuration * 60 });
   round2.addStage({ name: "FinalDecision",            duration: 120 });
+  round2.addStage({ name: "IndividualAssessment",     duration: INDIVIDUAL_ASSESSMENT_DURATION_SECONDS });
   round2.addStage({ name: "TLX",                      duration: TLX_DURATION_SECONDS });
   round2.addStage({ name: "SubjectiveSurvey",         duration: SUBJECTIVE_SURVEY_DURATION_SECONDS });
 
-  // MIGRATED from old 2nd (TEMP-BE-007 there): stable, game-level color-
-  // alias assignment. Without this, name/hexCode get reshuffled every round
-  // (see onRoundStart below, which used to do this itself) -- a participant's
-  // Red/Pink/Green alias was not guaranteed to stay the same across Round 1
-  // and Round 2. Alias (name) and hexCode are identical across Task A and
-  // Task B at the same playerConfig index (verified against the real
-  // HPTConfig.json: Red/FF0000, Pink/F90494, Green/39BC21 in both tasks), so
-  // Task A's playerConfig is used purely as the source of alias/hexCode
-  // ordering, not as a content preference. profileSlot is the durable
-  // player.id -> slot mapping; onRoundStart uses it to fetch each round's
-  // task-specific private content only, without ever touching name/hexCode
-  // again. profileSlot intentionally doubles as both the "alias slot" and
-  // the "information role slot" -- HPTConfig.json has no separate concept of
-  // an information role that could diverge from playerConfig array position,
-  // so there is nothing to decouple today. If a future task design needs a
-  // participant's information role to change independently of their visible
-  // color across rounds, this would need to become two separate fields.
+  // Restore the original stable colour aliases. The shuffled slot controls the
+  // participant's visible Green/Blue/Pink name, matching colour, and report
+  // profile, and stays fixed across both rounds.
   const aliasSource = taskConfig["tasks"][0]["playerConfig"];
   if (game.players.length > aliasSource.length) {
     console.error(`[onGameStart] Not enough alias slots: need ${game.players.length}, have ${aliasSource.length}`);
@@ -445,6 +637,8 @@ Empirica.onGameStart(({ game }) => {
     game.players.forEach((player, i) => {
       const slot = shuffledSlots[i];
       player.set("name",        aliasSource[slot].playerName);
+      player.set("participantNumber", i + 1);
+      player.set("participantColorIndex", slot);
       player.set("hexCode",     aliasSource[slot].hexCode);
       player.set("profileSlot", slot);
     });
@@ -455,21 +649,25 @@ Empirica.onGameStart(({ game }) => {
 
 Empirica.onRoundStart(({ round }) => {
   const game = round.currentGame;
+  round.set("callbacksInitializedAt", Date.now());
+  round.set("callbacksInstanceId", CALLBACKS_INSTANCE_ID);
   const taskIndex = round.get("taskIndex");
   const taskVersion = round.get("taskVersion");
-  const taskConfigIndex = TASK_CONFIG_INDEX_BY_VERSION[taskVersion];
-  const task = taskConfig["tasks"][taskConfigIndex];
+  const matchingTasks = taskConfig.tasks.filter((candidate) => candidate.taskVersion === taskVersion);
+  const task = matchingTasks.length === 1 ? matchingTasks[0] : null;
 
-  if (taskConfigIndex === undefined || !task) {
+  if (!task) {
     console.error(`[onRoundStart] No task found for taskVersion ${JSON.stringify(taskVersion)} (exposure taskIndex ${taskIndex})`);
     return;
   }
 
-  // Reset per-round counters
-  game.set("messagesSinceLastIntervention", 0);
-  game.set("lastRole",                      null);
-  game.set("synthesiserFired",              false);
-  game.set("humanMessageCount",             0);
+  // Phase 3: reset the per-round checkpoint state via the manager. This
+  // includes the legacy fields below (humanMessageCount, lastRole,
+  // synthesiserFired) plus the new ones (messagesSinceLastPublish,
+  // attemptedThisRound, publishedThisRound, lastAttemptTimestamp,
+  // lastHandledCheckpoint, interventionHistory, postInterventionUptake,
+  // unresolvedNeed, lastCheckedFactors). See CheckpointManager.emptyCheckpointState.
+  resetRoundState(game);
 
   // Set task content for this round
   // MIGRATED from old 2nd (TEMP-BE-006 there): round-scoped, not game-level.
@@ -478,13 +676,14 @@ Empirica.onRoundStart(({ round }) => {
   // could race against a Round 1 client still rendering FinalDecision.
   round.set("generalInfo", task["generalInfo"]);
   round.set("decisionOptions", task["decisionOptions"]); // Blair's own line, unchanged -- already round-scoped and correct
+  round.set("sequenceId", game.get("sequenceId"));
 
   // MIGRATED from old 2nd (TEMP-BE-007 there): use the stable profileSlot
   // assigned once in onGameStart -- do NOT reshuffle or reassign name/hexCode
   // here (that was the regression this migration removes). Only this round's
-  // task-specific private content is looked up here, keyed by the player's
-  // fixed slot, and saved round-scoped (player.round.set, not flat
-  // player.set) so Round 1 and Round 2 content can never overwrite each
+  // task-specific report is selected here, keyed by the player's fixed slot,
+  // and saved round-scoped (player.round.set, not flat player.set) so Round 1
+  // and Round 2 content can never overwrite each
   // other. player.round is safe to use here: traced the Empirica admin SDK
   // source (chunk-CA6WWEPS.js) and confirmed game.set("stageID",
   // nextStage.id) always runs before nextRound.set("start", true) on every
@@ -505,73 +704,328 @@ Empirica.onRoundStart(({ round }) => {
       return;
     }
     player.round.set("playerContent", playerConfig[slot].playerContent);
+    player.round.set("participantId", player.id);
+    player.round.set("roundIndex", taskIndex);
+    player.round.set("taskVersion", taskVersion);
+    player.round.set("facilitation", round.get("facilitation"));
+    player.round.set("profileSlot", slot);
   });
 });
 
 // ── onStageStart ──────────────────────────────────────────────────────────────
 
+function assignedHumanPlayers(game) {
+  // This repository has no explicit withdrawal/admin-removal state. Keep all
+  // assigned players required; socket presence and generic `ended` are not
+  // treated as proof of withdrawal.
+  return game.players;
+}
+
+function updateBreakReadySummary(stage) {
+  if (!stage || stage.get("name") !== "Break") return { readyCount: 0, totalCount: 0, allReady: false };
+  const requiredPlayers = assignedHumanPlayers(stage.currentGame);
+  const readyCount = requiredPlayers.filter((participant) => participant.round?.get("breakReadyStatus") === "ready").length;
+  const totalCount = requiredPlayers.length;
+  const allReady = totalCount > 0 && readyCount === totalCount;
+  stage.round.set("breakReadyCount", readyCount);
+  stage.round.set("breakRequiredCount", totalCount);
+  stage.round.set("breakAllReady", allReady);
+  return { readyCount, totalCount, allReady };
+}
+
+function appendCanonicalMessage(game, attribute, fields) {
+  const counters = { ...(game.get("messageSequenceCounters") || {}) };
+  const sequencePosition = allocateSequencePosition(counters, attribute);
+  game.set("messageSequenceCounters", counters);
+  const message = buildCanonicalMessage({ ...fields, sequencePosition });
+  game.append(attribute, message);
+  return message;
+}
+
+function appendTimedMessage(stage, attribute, content, messageType = MESSAGE_TYPES.TIMER_REMINDER) {
+  if (!stage?.isCurrent?.()) return false;
+  const game = stage.currentGame;
+  const timestamp = Date.now();
+  appendCanonicalMessage(game, attribute, {
+    messageId: `${messageType}-${stage.id}-${timestamp}`,
+    groupId: game.id,
+    speakerId: `system-${messageType}`,
+    roundIndex: stage.round.get("index"),
+    stage: stage.get("name") === "Task" ? "Discussion" : "IceBreaker",
+    messageType,
+    speakerType: messageType,
+    timestamp,
+    content,
+    sender: { id: `system-${messageType}`, name: "Timer", hexCode: "4B5563", avatar: "⏱️" },
+  });
+  // Timer callbacks run outside a player mutation. Flush immediately so the
+  // reminder is delivered at its scheduled time instead of waiting for the
+  // next chat message or another state change to flush the collector.
+  Empirica.flush();
+  return true;
+}
+
+function icebreakerActivityPrompt(taskVersion) {
+  if (taskVersion === "A") {
+    return "For this activity, choose whether you would rather speak every language fluently or play every musical instrument expertly, share a short reason, and invite a teammate to answer.";
+  }
+  return "For this activity, build a word chain starting with Rocket: each new word begins with the last letter of the previous word, one word per turn, with no repeats.";
+}
+
+function appendIcebreakerOpening(stage, introChatKey) {
+  const game = stage.currentGame;
+  const existing = game.get(introChatKey) || [];
+  if (existing.some((message) => message?.messageType === MESSAGE_TYPES.ICE_BREAKING_FACILITATOR)) return false;
+  const timestamp = Date.now();
+  appendCanonicalMessage(game, introChatKey, {
+    messageId: `icebreaker-opening-${stage.id}`,
+    groupId: game.id,
+    speakerId: "icebreaker-ai",
+    roundIndex: stage.round.get("index"),
+    stage: "IceBreaker",
+    messageType: MESSAGE_TYPES.ICE_BREAKING_FACILITATOR,
+    speakerType: MESSAGE_TYPES.ICE_BREAKING_FACILITATOR,
+    timestamp,
+    content: buildIcebreakerOpening({
+      participantNames: game.players.map((participant) => participant.get("name")),
+      activityPrompt: icebreakerActivityPrompt(stage.round.get("taskVersion")),
+    }),
+    sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
+  });
+  return true;
+}
+
 Empirica.onStageStart(({ stage }) => {
   const game = stage.currentGame;
+  stage.set("callbacksInitializedAt", Date.now());
+  stage.set("callbacksInstanceId", CALLBACKS_INSTANCE_ID);
   const { gameDuration } = game.get("treatment");
-  if (stage.get("name") === "Task") {
+  const now = Date.now();
+  const stageName = stage.get("name");
+  if (["Task", "InitialDecision", "FinalDecision", "IndividualAssessment"].includes(stageName)) {
+    stage.round.set(`${stageName}StartedAt`, now);
+  }
+  if (stageName === "Task") {
     // gameDuration is a required treatment factor (.empirica/treatments.yaml)
     // -- fail clearly rather than silently substituting a default if it is
     // ever missing/invalid.
     if (!Number.isFinite(gameDuration) || gameDuration <= 0) {
       throw new Error(`[onStageStart] game ${game.id}'s treatment has an invalid/missing gameDuration (${JSON.stringify(gameDuration)}). Check .empirica/treatments.yaml.`);
     }
-    const now = new Date().getTime();
     game.set("taskStartTime", now);
     game.set("deadline",      now + gameDuration * 60 * 1000);
-
-    // ── Facilitator opening message (2026-08-08 addition) ────────────────
-    // Fixed, identical text for Static and Adaptive, posted once at the
-    // very start of the discussion. Deliberately NOT part of the
-    // checkpoint/gate pipeline above: it is not an LLM call (no Generator,
-    // no Semantic Assessor), it does not go through runSharedGeneration or
-    // GeneratorContract.mjs's validator, it does not increment
-    // totalInterventions, and it does not touch any of the Adaptive
-    // Controller's cooldown state (messagesSinceLastIntervention, lastRole,
-    // synthesiserFired, lastHandledCheckpoint). It exists purely to give
-    // participants a consistent orientation message before the discussion
-    // clock starts, identically in both conditions -- see
-    // IMPLEMENTATION_LOGIC.md's "Opening message" section.
-    const roundIndex = game.currentRound?.get("index");
-    if (roundIndex === null || roundIndex === undefined) {
-      console.error(`[onStageStart] game ${game.id}: no current round index -- skipping Facilitator opening message`);
-    } else {
-      const openingChatKey = `chat_round_${roundIndex}`;
-      const openingResult = getOpeningMessageBundle();
-      const openingLogEntry = {
-        timestamp: now,
-        roundIndex,
-        facilitation: game.currentRound?.get("facilitation"),
-        outcome: openingResult.blocked ? "OPENING_MESSAGE_SKIPPED" : "OPENING_MESSAGE_PUBLISHED",
-        reason: openingResult.blocked ? openingResult.reason : "",
-      };
-      if (!openingResult.blocked) {
-        game.append(openingChatKey, {
-          text:   openingResult.content,
-          ts:     now,
-          sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
-        });
+    const chatKey = `chat_round_${stage.round.get("index")}`;
+    const durationMs = gameDuration * 60 * 1000;
+    setTimeout(() => appendTimedMessage(stage, chatKey, `${Math.ceil(gameDuration / 2)} minutes remain in the discussion.`), durationMs / 2);
+    if (durationMs > 60_000) setTimeout(() => appendTimedMessage(stage, chatKey, "One minute remains in the discussion."), durationMs - 60_000);
+  }
+  if (stageName === "Introduction") {
+    const durationMs = stage.get("duration") * 1000;
+    const introChatKey = `intro_round_${stage.round.get("index")}`;
+    appendIcebreakerOpening(stage, introChatKey);
+    if (durationMs > 30_000) setTimeout(() => appendTimedMessage(stage, introChatKey, "Thirty seconds remain in the IceBreaker."), durationMs - 30_000);
+    Empirica.flush();
+  }
+  if (stageName === "Break") {
+    const round = stage.round;
+    if (!round.get("breakStartedAt")) {
+      round.set("breakStartedAt", now);
+      round.set("breakScheduledEndAt", now + BREAK_DURATION_SECONDS * 1000);
+      for (const player of assignedHumanPlayers(game)) {
+        player.round.set("breakReadyStatus", "not_ready");
       }
-      game.set("llmLog", [...(game.get("llmLog") || []), openingLogEntry]);
+      updateBreakReadySummary(stage);
     }
   }
 });
+
+Empirica.on("player", "breakReadyRequest", (ctx, { player }) => {
+  const stage = player.currentGame?.currentStage;
+  if (!stage || stage.get("name") !== "Break") return;
+  const round = stage.round;
+  const now = Date.now();
+  const scheduledEnd = round.get("breakScheduledEndAt");
+  if (!canConfirmBreak(scheduledEnd, now)) {
+    player.round.set("breakReadyRejectedAt", now);
+    return;
+  }
+  if (player.round.get("breakReadyStatus") !== "ready") {
+    player.round.set("breakReadyStatus", "ready");
+    player.round.set("breakReadyConfirmedAt", now);
+  }
+  updateBreakReadySummary(stage);
+});
+
+Empirica.on("player", "discussionAdvanceRequest", (_ctx, { player, discussionAdvanceRequest }) => {
+  const game = player.currentGame;
+  const round = game?.currentRound;
+  const stage = game?.currentStage;
+  if (!game || !round || !stage || stage.get("name") !== "Task" || stage.get("ended")) return;
+  if (!discussionAdvanceRequest || discussionAdvanceRequest.stageId !== stage.id || discussionAdvanceRequest.roundId !== round.id) return;
+
+  const allReady = assignedHumanPlayers(game).length > 0
+    && assignedHumanPlayers(game).every((participant) => Boolean(participant.stage?.get("submit")));
+  const deadline = game.get("deadline");
+  const deadlineReached = Number.isFinite(deadline) && Date.now() >= deadline;
+  if (!allReady && !deadlineReached) return;
+
+  // Server-authoritative recovery path for the same two conditions that end
+  // the native Step. Setting Stage.ended also lets Classic advance correctly
+  // if its in-memory Step-to-Stage map was lost during a development reload.
+  stage.set("ended", true);
+  Empirica.flush();
+});
+
+Empirica.on("playerStage", "submit", (_ctx, { playerStage, submit }) => {
+  if (!submit || !playerStage?.stage?.isCurrent?.()) return;
+  const player = playerStage.player;
+  const round = playerStage.stage.round;
+  const stageName = playerStage.stage.get("name");
+  const now = Date.now();
+  const fieldsByStage = {
+    InitialDecision: ["initialSubmittedAt", "initialCompletionDurationMs", "initialDecisionTimeoutReason"],
+    FinalDecision: ["groupFinalSubmittedAt", "groupFinalCompletionDurationMs", "groupFinalTimeoutReason"],
+    IndividualAssessment: ["individualAssessmentSubmittedAt", "individualAssessmentCompletionDurationMs", "individualAssessmentTimeoutReason"],
+  };
+  const fields = fieldsByStage[stageName];
+  if (!fields || player.round.get(fields[0])) return;
+  player.round.set(fields[0], now);
+  const startedAt = round.get(`${stageName}StartedAt`) ?? now;
+  player.round.set(fields[1], now - startedAt);
+  if (fields[2]) player.round.set(fields[2], null);
+});
+
+Empirica.on("player", "humanMessageRequest", (_ctx, { player, humanMessageRequest: request }) => {
+  const game = player.currentGame;
+  const round = game?.currentRound;
+  const stage = game?.currentStage;
+  if (!game || !round || !stage) return;
+  const dedupeKey = `${player.id}:${request?.requestId ?? "invalid"}`;
+  const processed = { ...(game.get("processedHumanMessageRequests") || {}) };
+  if (processed[dedupeKey]) {
+    player.set("humanMessageRequestResult", processed[dedupeKey]);
+    return;
+  }
+  const now = Date.now();
+  const reviewed = reviewHumanMessageRequest({
+    request,
+    playerId: player.id,
+    currentRoundId: round.id,
+    currentRoundIndex: round.get("index"),
+    currentStageId: stage.id,
+    currentStageName: stage.get("name"),
+    deadline: game.get("deadline"),
+    now,
+  });
+  const result = { requestId: request?.requestId ?? null, status: reviewed.accepted ? "accepted" : "rejected", reason: reviewed.reason };
+  if (reviewed.accepted) {
+    appendCanonicalMessage(game, reviewed.attribute, {
+      messageId: reviewed.messageId,
+      groupId: game.id,
+      participantId: player.id,
+      roundIndex: round.get("index"),
+      stage: reviewed.stage,
+      messageType: MESSAGE_TYPES.HUMAN,
+      speakerType: MESSAGE_TYPES.HUMAN,
+      timestamp: now,
+      content: reviewed.content,
+      sender: {
+        id: player.id,
+        name: player.get("name") || player.id,
+        hexCode: player.get("hexCode"),
+        avatar: `https://api.dicebear.com/8.x/identicon/svg?rowColor=${player.get("hexCode")}`,
+      },
+    });
+  }
+  processed[dedupeKey] = result;
+  game.set("processedHumanMessageRequests", processed);
+  player.set("humanMessageRequestResult", result);
+});
+
+// ── Icebreaker-only @Facilitator path ───────────────────────────────────────
+// This listener cannot enter the formal detector/generator/validator pipeline.
+// Its context builder accepts only the isolated intro_round_N transcript.
+async function handleIcebreakerChat(_env, { game }) {
+  const round = game.currentRound;
+  const stage = game.currentStage;
+  if (!round || !stage || stage.get("name") !== "Introduction") return;
+
+  const roundIndex = round.get("index");
+  const introChatKey = `intro_round_${roundIndex}`;
+  const chat = game.get(introChatKey) || [];
+  const lastMessage = chat[chat.length - 1];
+  if (
+    !lastMessage
+    || lastMessage.stage !== "IceBreaker"
+    || lastMessage.speakerType !== MESSAGE_TYPES.HUMAN
+    || !containsFacilitatorMention(lastMessage.content ?? lastMessage.text ?? "")
+  ) return;
+
+  const messageId = lastMessage.messageId;
+  if (typeof messageId !== "string" || !messageId) return;
+  const handled = { ...(game.get("icebreakerFacilitatorHandledMessageIds") || {}) };
+  if (handled[messageId]) return;
+  handled[messageId] = { status: "pending", startedAt: Date.now() };
+  game.set("icebreakerFacilitatorHandledMessageIds", handled);
+  Empirica.flush();
+
+  const originatingRoundId = round.id;
+  const originatingStageId = stage.id;
+  const llmMessages = buildIcebreakerLLMMessages(chat);
+  const response = await getIcebreakerLLMResponse(llmMessages);
+  const parsed = response.success ? parseIcebreakerLLMResponse(response.rawText) : { ok: false, reason: response.error };
+
+  if (
+    game.currentRound?.id !== originatingRoundId
+    || game.currentStage?.id !== originatingStageId
+    || game.currentStage?.get("name") !== "Introduction"
+  ) return;
+
+  const content = parsed.ok
+    ? parsed.message
+    : "I can help using only what has been shared in this icebreaker chat. Please rephrase your question or ask about the icebreaker activity.";
+  const timestamp = Date.now();
+  appendCanonicalMessage(game, introChatKey, {
+    messageId: `icebreaker-facilitator-${originatingStageId}-${timestamp}`,
+    groupId: game.id,
+    speakerId: "icebreaker-ai",
+    roundIndex,
+    stage: "IceBreaker",
+    messageType: MESSAGE_TYPES.ICE_BREAKING_FACILITATOR,
+    speakerType: MESSAGE_TYPES.ICE_BREAKING_FACILITATOR,
+    timestamp,
+    content,
+    sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
+  });
+  game.set("icebreakerFacilitatorHandledMessageIds", {
+    ...(game.get("icebreakerFacilitatorHandledMessageIds") || {}),
+    [messageId]: { status: parsed.ok ? "published" : "safe_fallback", finishedAt: timestamp },
+  });
+  game.set("icebreakerLLMLog", [
+    ...(game.get("icebreakerLLMLog") || []),
+    {
+      timestamp,
+      roundIndex,
+      requestMessageId: messageId,
+      outcome: parsed.ok ? "PUBLISHED" : "SAFE_FALLBACK",
+      failureReason: parsed.ok ? null : parsed.reason,
+      contextBoundary: "PUBLIC_ICEBREAKER_CHAT_ONLY",
+      model: openaiModel,
+    },
+  ]);
+  Empirica.flush();
+}
+
+Empirica.on("game", "intro_round_0", handleIcebreakerChat);
+Empirica.on("game", "intro_round_1", handleIcebreakerChat);
 
 // ── on("game", "chat_round_N") ────────────────────────────────────────────────
 
 // GRAIL's single, shared chat-publication path (Static AND Adaptive) --
 // final defensive check plus the actual game.append/totalInterventions
-// write. By the time this is called from runSharedGeneration, the full
-// basic schema/role/length/grounding validation has already passed, so
-// these checks are trivially satisfied; they remain as a cheap final
-// guard. Returns true if a message was posted. (There is no semantic
-// Validator LLM in the live path -- see server/src/prompts/validatorPlaceholder.js's
-// header comment for why, and validation.schema.json's own status as an
-// offline/pilot evaluation artifact only.)
+// write. By the time this is called from runSharedGeneration, the schema,
+// deterministic, and live Semantic Validator checks have passed, so these
+// checks are a final defensive guard. Returns true if a message was posted.
 function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole, logEntry) {
   if (!llmAction || typeof llmAction.message !== "string" || !llmAction.message.trim()) {
     logEntry.reason = "LLM response missing a valid non-empty 'message' field (per generation.schema.json)";
@@ -581,9 +1035,17 @@ function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole, logE
     logEntry.reason = `LLM response role "${llmAction.role}" does not match the expected role "${expectedRole}" (base.md OUTPUT CONTRACT requires role to be unchanged) -- not posted`;
     return false;
   }
-  game.append(chatKey, {
-    text:   llmAction.message,
-    ts:     new Date().getTime(),
+  const publishedAt = Date.now();
+  appendCanonicalMessage(game, chatKey, {
+    messageId: `facilitator-${game.currentRound?.id}-${publishedAt}`,
+    groupId: game.id,
+    speakerId: "ai",
+    roundIndex: game.currentRound?.get("index"),
+    stage: "Discussion",
+    messageType: MESSAGE_TYPES.FACILITATOR,
+    speakerType: MESSAGE_TYPES.FACILITATOR,
+    timestamp: publishedAt,
+    content: llmAction.message,
     sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
   });
   logEntry.messageAdded = true;
@@ -591,7 +1053,36 @@ function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole, logE
   return true;
 }
 
+// A participant-requested turn must receive a visible response even when the
+// prompt, model, parser, or Validator is unavailable. This deterministic
+// fallback is intentionally neutral and reveals no hidden information.
+function postParticipantRequestFallback(game, chatKey, logEntry) {
+  game.append(chatKey, {
+    text: "I couldn’t produce a verified answer using only the public discussion. Please rephrase your question or point to the public option, criterion, claim, or message you want me to address.",
+    ts: new Date().getTime(),
+    sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
+  });
+  logEntry.messageAdded = true;
+  logEntry.fallbackUsed = "PARTICIPANT_REQUEST_SAFE_CLARIFICATION";
+  logEntry.outcome = "PUBLISHED_REQUEST_FALLBACK";
+  game.set("totalInterventions", (game.get("totalInterventions") || 0) + 1);
+  return true;
+}
+
 async function handleChat(env, { game }) {
+  const recovered = recoverInterruptedInFlight(game, CALLBACKS_INSTANCE_ID);
+  if (recovered.length > 0) Empirica.flush();
+  const previousCallbacksInstanceId = game.get("activeCallbacksInstanceId");
+  if (previousCallbacksInstanceId && previousCallbacksInstanceId !== CALLBACKS_INSTANCE_ID) {
+    recordOperationalEvent(game, {
+      type: "CALLBACKS_RECONNECTED_DURING_GAME",
+      previousServerInstanceId: previousCallbacksInstanceId,
+    });
+    Empirica.flush();
+  }
+  if (previousCallbacksInstanceId !== CALLBACKS_INSTANCE_ID) {
+    game.set("activeCallbacksInstanceId", CALLBACKS_INSTANCE_ID);
+  }
   const currentRound = game.currentRound;
   const roundIndex   = currentRound?.get("index");
   const chatKey      = `chat_round_${roundIndex}`;
@@ -604,49 +1095,90 @@ async function handleChat(env, { game }) {
   // the current Round, never from game.get("treatment") -- treatment-level
   // metadata must never override the Round-level facilitation assignment.
   const facilitation = currentRound?.get("facilitation");
-  if (!facilitation) return;
+  if (!facilitation) {
+    recordOperationalEvent(game, { type: "MISSING_ROUND_FACILITATION", roundId: currentRound?.id ?? null });
+    Empirica.flush();
+    return;
+  }
 
   const players = game.players;
   const chat = game.get(chatKey) || [];
   if (!chat.length) return;
 
   const lastMessage = chat[chat.length - 1];
-  if (lastMessage.sender.id === "ai") return;
+  if (!isFormalHumanMessage(lastMessage)) return;
 
   const currentStageName = game.currentStage?.get("name");
   if (currentStageName !== "Task") return;
+  if (!Number.isFinite(game.get("deadline")) || !Number.isFinite(game.get("taskStartTime"))) {
+    recordOperationalEvent(game, {
+      type: "MISSING_TASK_TIMING_STATE",
+      roundId: currentRound.id,
+      stageId: game.currentStage?.id ?? null,
+    });
+    Empirica.flush();
+    return;
+  }
   const originatingRoundId = currentRound.id;
   const originatingStageId = game.currentStage.id;
 
+  // ── Count the new human message (AI messages do not count, and
+  // we already early-returned above if the last message is from AI). ──
   const humanMessageCount = (game.get("humanMessageCount") || 0) + 1;
   game.set("humanMessageCount", humanMessageCount);
 
-  let messagesSince = (game.get("messagesSinceLastIntervention") || 0) + 1;
-  game.set("messagesSinceLastIntervention", messagesSince);
-
-  if (messagesSince < 6) return;
-
-  // Minimal per-Round checkpoint marker (Part C: checkpoint protection).
-  // Not a new concurrency/publication subsystem -- one field read plus one
-  // write, checked before any LLM work begins, guarding only against this
-  // exact checkpoint (same humanMessageCount, this Round) being handled a
-  // second time. Reset immediately below (before the outcome is even
-  // known), so a failed/blocked/Silent request consumes the checkpoint
-  // exactly like a published one.
-  if (currentRound.get("lastHandledCheckpoint") === humanMessageCount) return;
-  currentRound.set("lastHandledCheckpoint", humanMessageCount);
-  game.set("messagesSinceLastIntervention", 0);
+  // ── Increment the opportunity counter (Phase 3: also tracked as
+  // messagesSinceLastPublish; the legacy messagesSinceLastIntervention
+  // field is kept as a derived/legacy alias so existing logs / tests
+  // that reference it don't break). ──
+  const messagesSinceLastPublish = (game.get("messagesSinceLastPublish") ?? 0) + 1;
+  game.set("messagesSinceLastPublish", messagesSinceLastPublish);
+  // Legacy alias (was reset to 0 on every attempt in the v1 code; now
+  // it tracks the same counter as messagesSinceLastPublish, so old
+  // log readers and tests that read it still get a sensible value).
+  game.set("messagesSinceLastIntervention", messagesSinceLastPublish);
 
   const now = new Date().getTime();
   const remainingTime = Math.max(0, game.get("deadline") - now);
   const timeElapsed   = now - game.get("taskStartTime");
+
+  // ── Phase 3: ask CheckpointManager whether the trigger conditions
+  // are satisfied. The manager handles cooldown / cap / opportunity
+  // gate / dedup / time floor in one place; failed checkpoints no
+  // longer consume the participant's opportunity (Q3).
+  //
+  // Phase 6.4 (Q8 = "即时"): if the latest human message contains an
+  // @-Facilitator mention, set `isMentionCheckpoint: true` so the
+  // manager treats it as a participant request: it bypasses automatic
+  // pacing, cap, and time-floor rules, but retains Task/chat safety and
+  // per-message dedup so one request yields one response.
+  // The mention detection is based on the latest HUMAN message in
+  // the chat, not the full chat, so a participant re-@ing the
+  // Facilitator after a Facilitator reply still triggers a fresh
+  // checkpoint. ──
+  const latestHumanMessages = getHumanMessages(chat);
+  const latestHumanText = latestHumanMessages.length > 0
+    ? latestHumanMessages[latestHumanMessages.length - 1].text
+    : "";
+  const isMentionCheckpoint = containsFacilitatorMention(latestHumanText);
+
+  const trigger = shouldEvaluateCheckpoint({
+    store: game,
+    humanMessageCount,
+    currentStageName,
+    remainingTimeMs: remainingTime,
+    chatKeyPresent: true,
+    now,
+    isMentionCheckpoint,
+  });
 
   let logEntry = {
     timestamp:                     now,
     roundIndex,
     facilitation,
     humanMessageCount,
-    messagesSinceLastIntervention: messagesSince,
+    messagesSinceLastPublish,
+    messagesSinceLastIntervention: messagesSinceLastPublish,
     remainingTime,
     timeElapsed,
     requestMade:    false,
@@ -654,8 +1186,99 @@ async function handleChat(env, { game }) {
     messageAdded:   false,
     outcome:        "SILENT",
     model:          openaiModel,
-    reason:         "",
+    reason:         trigger.trigger ? "" : trigger.reason,
+    // Phase 6.4 (Q8 = "即时"): whether the latest human message
+    // @-mentioned the Facilitator. Drives the `isMentionCheckpoint`
+    // flag the manager uses to bypass the pacing gates. Recorded
+    // unconditionally so the post-hoc log can compute the
+    // mention-trigger rate even on messages that didn't trigger
+    // (e.g. a mention outside the Task stage).
+    mentionDetected: isMentionCheckpoint,
   };
+
+  // Phase 3: capture the full AgentState snapshot for the audit log
+  // (architecture doc §6 节点 13: "记录 features, evidence-use relations,
+  // candidate roles, raw/checked factors, scores, eligibility, selected
+  // action, required reasoning act, message, validator, repair, fallback,
+  // post-intervention uptake, unresolved need, latency and
+  // model/prompt/controller versions"). The agentState object is the
+  // single canonical shape; downstream readers do not need to chase
+  // individual game.get calls.
+  logEntry.agentState = buildAgentState(game, currentRound, chat, { now });
+
+  if (!trigger.trigger) {
+    // Not an error -- just "not yet" / "this round is full" / etc.
+    // Still log so the audit can see the trigger conditions per
+    // human message.
+    finalizeAuditLog(game, logEntry);
+    Empirica.flush();
+    return;
+  }
+
+  logEntry.auditRequestId = `${game.id}:${roundIndex}:${humanMessageCount}:${now}`;
+  logEntry.serverInstanceId = CALLBACKS_INSTANCE_ID;
+  beginInFlight(game, { ...logEntry, outcome: "PENDING" });
+  Empirica.flush();
+
+  // Explicit @Facilitator request: answer with the participant-requested
+  // Generalist before either condition's automatic policy. This path uses
+  // only public context, retains all Generator/Validator safeguards, and is
+  // accounted separately so it cannot alter Static/Adaptive opportunity
+  // matching or automatic intervention caps.
+  if (isMentionCheckpoint) {
+    recordParticipantRequest(game, humanMessageCount);
+    logEntry.triggerType = "PARTICIPANT_REQUEST";
+    logEntry.participantRequested = true;
+    logEntry.routingDecision = "REQUESTED_GENERALIST";
+    logEntry.selectedRole = "REQUESTED_GENERALIST";
+
+    const requestedPrompt = getRequestedGeneralistPromptBundle();
+    const requestedBuilt = buildGeneratorContext(
+      game,
+      players,
+      chat,
+      remainingTime,
+      timeElapsed,
+      "adaptive",
+      "generalist",
+      null,
+      requestedPrompt,
+    );
+    const requestedResult = await runSharedGeneration(
+      game,
+      chatKey,
+      requestedBuilt,
+      logEntry,
+      originatingRoundId,
+      originatingStageId,
+      chat,
+    );
+
+    let published = requestedResult.published;
+    if (
+      !published &&
+      game.currentRound?.id === originatingRoundId &&
+      game.currentStage?.id === originatingStageId &&
+      game.currentStage?.get("name") === "Task"
+    ) {
+      published = postParticipantRequestFallback(game, chatKey, logEntry);
+    }
+    if (published) {
+      recordParticipantRequestedPublish(game, {
+        role: "REQUESTED_GENERALIST",
+        messageId: requestedResult.candidate?.messageId ?? null,
+        now,
+      });
+    }
+    finalizeAuditLog(game, logEntry);
+    Empirica.flush();
+    return;
+  }
+
+  // ── Record the attempt BEFORE the pipeline runs. The dedup field
+  // is part of this so a re-entrant call for the same humanMessageCount
+  // (e.g. a duplicate Empirica event) cannot double-trigger. ──
+  recordAttempt(game, humanMessageCount, now);
 
   // Static and Adaptive share the checkpoint opportunity above, but not the
   // intervention-permission policy. Static's fixed policy requires a message
@@ -676,15 +1299,24 @@ async function handleChat(env, { game }) {
       null,
       null,
     );
-    await runSharedGeneration(
+    const result = await runSharedGeneration(
       game,
       chatKey,
       built,
       logEntry,
       originatingRoundId,
       originatingStageId,
+      chat,
     );
-    game.set("llmLog", [...(game.get("llmLog") || []), logEntry]);
+    // Phase 3: record a publish so the opportunity gate resets for the
+    // next checkpoint. Phase 2 made Static AI's role "STATIC" instead
+    // of "generalist"; the publish is recorded with that role so
+    // interventionHistory, lastRole, publishedThisRound all stay
+    // consistent across both conditions.
+    if (result.published) {
+      recordPublish(game, { role: "STATIC", messageId: result.candidate?.messageId ?? null, now });
+    }
+    finalizeAuditLog(game, logEntry);
     Empirica.flush();
     return;
   }
@@ -693,112 +1325,98 @@ async function handleChat(env, { game }) {
   // either policy. The real S1-S4 table assigns only static/adaptive.
   if (facilitation !== "adaptive") {
     logEntry.reason = `Unrecognized facilitation condition: ${JSON.stringify(facilitation)}`;
-    game.set("llmLog", [...(game.get("llmLog") || []), logEntry]);
+    finalizeAuditLog(game, logEntry);
     Empirica.flush();
     return;
   }
 
-  // ── Adaptive-only Steps 1-3: discussion feature extraction ───────────
-  const localMessages = buildLocalContext(getHumanMessages(chat), 6);
-  const featureStart  = Date.now();
-  const featureResult = await extractFeatures(localMessages);
+  // Adaptive detector: one LLM call assesses every semantic factor. There is
+  // no feature extraction, feature pre-filter, or feature-weighted score.
+  let checkedFactors = null;
+  const assessorStart = Date.now();
+  const assessorResult = await assessSemanticFactors({
+    chat,
+    taskGeneralContext: "",
+    callLLM: getLLMResponse,
+  });
   if (
     game.currentRound?.id !== originatingRoundId ||
     game.currentStage?.id !== originatingStageId ||
     game.currentStage?.get("name") !== "Task"
   ) {
-    logEntry.reason = "Discarded stale feature result after the originating Discussion stage ended";
-    game.set("llmLog", [...(game.get("llmLog") || []), logEntry]);
+    logEntry.reason = "Discarded stale LLM detector result after the originating Discussion stage ended";
+    finalizeAuditLog(game, logEntry);
     Empirica.flush();
     return;
   }
-  logEntry.featureLatency = Date.now() - featureStart;
+  logEntry.detectorLatency = Date.now() - assessorStart;
 
-  if (!featureResult.success) {
-    logEntry.reason = `Feature server unavailable: ${featureResult.error} — Adaptive intervention skipped`;
-    game.set("llmLog", [...(game.get("llmLog") || []), logEntry]);
-    Empirica.flush();
-    return;
+  if (assessorResult.success) {
+    logEntry.rawDetectorFactors = assessorResult.factors;
+    checkedFactors = checkEvidence(assessorResult.factors, { chat });
+    logEntry.checkedDetectorFactors = checkedFactors;
+  } else {
+    logEntry.detectorError = `${assessorResult.code}: ${assessorResult.error}`;
   }
 
-  const features = featureResult.data;
-  logEntry.featureScores = features;
-
-  // Step 4: Candidate Gate -- Adaptive-only, deterministic, no LLM call. An empty
-  // result resolves straight to Abstain below without ever calling the
-  // Semantic Assessor (Brief Step 4: "如果候选角色为空 -> Abstain，不调用LLM").
-  const candidateRoles = getCandidateRoles(features);
-  logEntry.candidateRoles = candidateRoles;
-
-  // Steps 5-6: Semantic Assessor LLM + Evidence Checker. Only run for
-  // Adaptive and only when the Candidate Gate found something worth
-  // investigating.
-  let checkedFactors = null;
-  if (candidateRoles.length > 0) {
-    const assessorStart = Date.now();
-    const generalInfoForAssessor = game.currentRound?.get("generalInfo") || "";
-    const assessorResult = await assessSemanticFactors({
-      chat,
-      candidateRoles,
-      taskGeneralContext: generalInfoForAssessor,
-      callLLM: getLLMResponse,
-    });
-    if (
-      game.currentRound?.id !== originatingRoundId ||
-      game.currentStage?.id !== originatingStageId ||
-      game.currentStage?.get("name") !== "Task"
-    ) {
-      logEntry.reason = "Discarded stale Semantic Assessor result after the originating Discussion stage ended";
-      game.set("llmLog", [...(game.get("llmLog") || []), logEntry]);
-      Empirica.flush();
-      return;
-    }
-    logEntry.assessorLatency = Date.now() - assessorStart;
-
-    if (assessorResult.success) {
-      logEntry.rawFactors = assessorResult.factors;
-      checkedFactors = checkEvidence(assessorResult.factors, { chat, features });
-      logEntry.checkedFactors = checkedFactors;
-    } else {
-      // Assessor unavailable/invalid this checkpoint: checkedFactors stays
-      // null (never fabricated). evaluateGate() below correctly finds no
-      // role can clear its hard gate without checked factors.
-      logEntry.assessorError = `${assessorResult.code}: ${assessorResult.error}`;
-    }
-  }
-
-  // Step 7: Adaptive intervention-permission gate. ABSTAIN returns before
-  // any Generator prompt is built or any Generator request is made.
+  // Step 7: Adaptive intervention-permission gate (Phase 4 three-state).
+  // The gate's decision is one of: "specialist" (clear winner, run
+  // policy compiler + Generator), "generalist" (matched-frequency
+  // fallback, run Generalist bundle), or "abstain" (no message at
+  // all -- just log and return). Shared between Static and Adaptive,
+  // but the Static path never enters this branch (Static always
+  // emits; this gate only governs the Adaptive path).
   const lastRole                = game.get("lastRole");
-  const previousCheckedFactors  = game.get("lastCheckedFactors") || null;
-  const gateResult = evaluateGate(features, checkedFactors, candidateRoles, {
-    remainingTime,
-    previousCheckedFactors,
-    lastRole,
-  });
+  const gateResult = evaluateGate(checkedFactors, { remainingTime, lastRole });
 
-  logEntry.gateDecision  = gateResult.act ? "ACT" : "ABSTAIN";
+  logEntry.gateDecision  = gateResult.decision;  // "specialist" | "generalist" | "abstain"
   logEntry.gateReason    = gateResult.reason;
   logEntry.eligibleRoles = gateResult.eligibleRoles;
   logEntry.stateScores   = gateResult.scores;
+  logEntry.perRole       = gateResult.perRole;
+  logEntry.abstentionKind = gateResult.abstentionKind;
+  logEntry.fallbackKind  = gateResult.fallbackKind;
 
   // Persist this checkpoint's checked factors for the next checkpoint's
-  // persistence term (utils.js's computePersistence -- currently weighted
-  // at 0 via THRESHOLDS.weights.persistence, but wired end-to-end so a
-  // future calibration pass doesn't also need to add this storage step).
+  // audit / calibration use. (computePersistence is currently outside
+  // the main score, but the per-round history is still valuable.)
   if (checkedFactors) {
-    game.set("lastCheckedFactors", checkedFactors);
+    game.set("lastCheckedDetectorFactors", checkedFactors);
   }
 
-  if (!gateResult.act) {
+  if (gateResult.decision === "abstain") {
     logEntry.reason = gateResult.reason;
-    game.set("llmLog", [...(game.get("llmLog") || []), logEntry]);
+    finalizeAuditLog(game, logEntry);
     Empirica.flush();
     return;
   }
 
-  // Adaptive-only role selection and plan compilation. The Generator receives
-  // the already-selected E/C/S identity and has no WAIT/INTERVENE decision.
+  // ── Generalist path: Adaptive's matched-frequency control ─────────
+  // No policy compiler, no plan. The Generalist bundle is loaded by
+  // llmSystemPrompts("adaptive", "generalist") -- the dispatcher
+  // routes to getGeneralistPromptBundle() (Phase 2.4 fail-closed
+  // invariant: getAdaptivePromptBundle("generalist") is rejected).
+  if (gateResult.decision === "generalist") {
+    logEntry.selectedRole = "GENERALIST";
+    logEntry.reasoning    = gateResult.reason;
+
+    const built = buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, "adaptive", "generalist", null);
+    const result = await runSharedGeneration(
+      game, chatKey, built, logEntry, originatingRoundId, originatingStageId, chat
+    );
+
+    if (result.published) {
+      recordPublish(game, { role: "GENERALIST", messageId: result.candidate?.messageId ?? null, now });
+    }
+
+    finalizeAuditLog(game, logEntry);
+    Empirica.flush();
+    return;
+  }
+
+  // ── Specialist path: pick the controller-chosen role and run the
+  // policy compiler + Generator. chooseRole cannot return an Abstain
+  // (the three-state gate already handled that above).
   const synthesiserFired = game.get("synthesiserFired");
   const chosenRole = chooseRole(gateResult, { remainingTime, lastRole, synthesiserFired });
 
@@ -806,8 +1424,8 @@ async function handleChat(env, { game }) {
   logEntry.forced       = chosenRole.forced;
   logEntry.reasoning    = chosenRole.reasoning;
 
-  const chatWithIds        = withMessageIds(chat);
-  const eligibleMessageIds = chatWithIds.filter((m) => m.sender.id !== "ai").map((m) => m.messageId);
+  const chatWithIds        = withMessageIds(chat.filter(isFormalContextMessage));
+  const eligibleMessageIds = chatWithIds.filter(isFormalHumanMessage).map((m) => m.messageId);
   const plan = compilePlan(chosenRole.role, checkedFactors, {
     score:     gateResult.scores[chosenRole.role],
     threshold: getRoleThreshold(chosenRole.role),
@@ -815,35 +1433,117 @@ async function handleChat(env, { game }) {
   });
   logEntry.plan = plan;
 
-  // ── Shared: build context, call the Generator LLM once, validate,
-  // publish once, log ──────────────────────────────────────────────────
+  // ── Shared: build context, run the bounded generation/repair/validation
+  // pipeline, publish at most once, and log ─────────────────────────────
   const built  = buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, "adaptive", chosenRole.role, plan);
-  const result = await runSharedGeneration(
+  let result = await runSharedGeneration(
     game,
     chatKey,
     built,
     logEntry,
     originatingRoundId,
-    originatingStageId
+    originatingStageId,
+    chat
   );
 
+  // Architecture fallback: if a Specialist candidate and its one repair are
+  // both semantically rejected, retry this checkpoint with the shared
+  // Generalist prompt. Preserve the complete Specialist failure separately
+  // so the final Generalist audit fields cannot overwrite its evidence.
+  let publishedRole = chosenRole.role;
+  if (!result.published && logEntry.outcome === "SILENT_VALIDATOR_REJECTED") {
+    logEntry.controllerSelectedRole = chosenRole.role;
+    logEntry.specialistFailure = {
+      reason: logEntry.reason,
+      outcome: logEntry.outcome,
+      attempts: result.attempts ?? 2,
+      promptMetadata: logEntry.promptMetadata,
+      validator: logEntry.validator,
+      validatorRepair: logEntry.validatorRepair,
+    };
+    logEntry.fallbackRoute = "SPECIALIST_TO_GENERALIST";
+    delete logEntry.validator;
+    delete logEntry.validatorRepair;
+
+    const generalistBuilt = buildGeneratorContext(
+      game,
+      players,
+      chat,
+      remainingTime,
+      timeElapsed,
+      "adaptive",
+      "generalist",
+      null,
+    );
+    result = await runSharedGeneration(
+      game,
+      chatKey,
+      generalistBuilt,
+      logEntry,
+      originatingRoundId,
+      originatingStageId,
+      chat,
+    );
+    logEntry.fallbackPublished = result.published;
+    logEntry.totalGeneratorAttempts = logEntry.specialistFailure.attempts + (result.attempts ?? 0);
+    if (result.published) {
+      publishedRole = "GENERALIST";
+      logEntry.selectedRole = "GENERALIST";
+    }
+  }
+
   if (result.published) {
-    // Controller cooldown bookkeeping is updated only after an Adaptive
-    // specialist message is actually published.
-    game.set("lastRole", chosenRole.role);
-    if (chosenRole.role === "synthesiser" && chosenRole.forced) {
+    // Phase 3: use the manager to record the publish uniformly. This
+    // resets messagesSinceLastPublish (so the next 6 human messages
+    // are the next opportunity), increments publishedThisRound,
+    // appends to interventionHistory, and updates lastRole. The
+    // synthesiserFired flag is handled inside recordPublish based on
+    // role alone (not on `forced`); callers that need to mark the
+    // forced-nudge state still set synthesiserFired directly (this
+    // branch is for the Controller's tracking; recordPublish's
+    // general bookkeeping is separate).
+    recordPublish(game, { role: publishedRole, messageId: result.candidate?.messageId ?? null, now });
+    if (publishedRole === chosenRole.role && chosenRole.role === "synthesiser" && chosenRole.forced) {
       game.set("synthesiserFired", true);
     }
   }
 
-  game.set("llmLog", [...(game.get("llmLog") || []), logEntry]);
+  finalizeAuditLog(game, logEntry);
   Empirica.flush();
 }
 
 Empirica.on("game", "chat_round_0", handleChat);
 Empirica.on("game", "chat_round_1", handleChat);
 
-Empirica.onStageEnded(({ stage }) => {});
+Empirica.onStageEnded(({ stage }) => {
+  const round = stage.round;
+  const game = stage.currentGame;
+  const stageName = stage.get("name");
+  if (["Task", "InitialDecision", "FinalDecision", "IndividualAssessment"].includes(stageName)) {
+    round.set(`${stageName}EndedAt`, Date.now());
+  }
+
+  if (stageName === "FinalDecision") {
+    for (const player of assignedHumanPlayers(game)) {
+      if (!player.round.get("groupFinalSubmittedAt")) player.round.set("groupFinalTimeoutReason", "stage_timeout");
+    }
+  }
+
+  if (stageName === "InitialDecision") {
+    for (const player of assignedHumanPlayers(game)) {
+      if (!player.round.get("initialSubmittedAt")) player.round.set("initialDecisionTimeoutReason", "stage_timeout");
+    }
+  }
+
+  if (stageName === "IndividualAssessment") {
+    for (const player of assignedHumanPlayers(game)) {
+      if (!player.round.get("individualAssessmentSubmittedAt")) {
+        player.round.set("individualAssessmentTimeoutReason", "stage_timeout");
+      }
+    }
+  }
+
+});
 
 Empirica.onRoundEnded(({ round }) => {
   const game = round.currentGame;

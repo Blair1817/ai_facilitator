@@ -56,7 +56,7 @@ Follow [this guide](<https://docs.empirica.ly/guides/deploying-my-experiment/ubu
 
 #### Counterbalancing (S1-S4 randomized-block allocation)
 
-Counterbalancing (which of S1-S4 each Game gets) is allocated automatically by `server/src/callbacks.js`'s `onGameStart` -- not by an Admin-configured treatment. Every 4 Games get a shuffled permutation of {S1,S2,S3,S4} (a permuted block), guaranteeing each sequence appears exactly once per 4 Games; the assigned `sequenceId` is persisted on the Game (`game.get("sequenceId")`) the first time `onGameStart` runs for it. This is server-process in-memory state only: if the backend process restarts while a block is partially claimed, the remaining positions in that block are lost and a new block starts from the beginning on the next Game. There is no study-level allocation ledger and no single-backend-process deployment constraint tied to counterbalancing.
+Counterbalancing (which of S1-S4 each Game gets) is allocated automatically immediately before `server/src/callbacks.js`'s `onGameStart` -- not by an Admin-configured treatment. Every 4 Games get a shuffled permutation of {S1,S2,S3,S4}. The allocator persists a versioned study ledger on Empirica's Global scope (`sequenceAllocationLedgerV1`) and the claim on the Game, so callbacks-process restarts and newly created Batches continue the same allocation stream. Existing pre-ledger Game assignments are counted during migration; the least-used valid sequence is then selected at random until balance is restored. This design assumes one active callbacks service; do not run active-active callback replicas without an external atomic allocator.
 
 ### Configuring GRAIL
 
@@ -119,15 +119,13 @@ The sequence of screens participants see before and after a game are defined in 
 - **Intro steps** are shown to each participant after they join a game lobby but before the task begins. By default these include an introduction screen, a UI walkthrough, and an attention check (`Introduction`, `UserInterface`, `AttentionCheck`).
 - **Exit steps** are shown after the game ends. By default these include a final answer submission, a NASA-TLX workload survey, a subjective survey, and a feedback form (`SubmitAnswer`, `TLX`, `SubjectiveSurvey`, `ExpFeedback`).
 
-Each step is a React component located in `client/src/intro-exit/`. To customize the flow, add or remove components from the arrays returned by `introSteps` and `exitSteps` in `App.jsx`. Additional screens like the consent form (`consent`), lobby (`lobby`), and post-experiment completion page (`finished`) can also be swapped by changing the corresponding props on `EmpiricaContext` in the same file.
-
-The default consent form (`client/src/intro-exit/Consent.jsx`) contains placeholder text and must be replaced with your own IRB-approved consent form before deploying a study.
-
-Several exit screens (`FinishedExitCode.jsx`, `GamesFull.jsx`, `NoGames.jsx`) display completion codes with a `[INSERT CODE HERE]` placeholder. Replace these with your own study-specific codes (e.g., Prolific or MTurk completion codes). The participant identifier prompt in `PlayerCreate.tsx` can also be customized to match your recruitment platform.
+Each step is a React component located in `client/src/intro-exit/`. To customize the flow, add or remove components from the arrays returned by `introSteps` and `exitSteps` in `App.jsx`. Consent for this study is completed outside Empirica, so the in-app consent gate is disabled. The experiment ends through Empirica's normal finished screen after Debriefing; it does not display a completion code or redirect to an external completion URL. The participant identifier prompt in `PlayerCreate.tsx` can be customized to match the recruitment platform.
 
 #### Exporting data
 
-All data is stored in the `.empirica/tajriba.json` file. To export it to CSV, run `empirica export` in the root project directory.
+In the local configuration, research data is stored in `.empirica/local/tajriba.json` (some Empirica configurations use `.empirica/tajriba.json`). To export it to CSV, run `empirica export` in the root project directory.
+
+During data collection, use `./scripts/safe-empirica-start.sh` instead of a bare `empirica` command. A normal same-version restart reopens the embedded database; the wrapper additionally copies every existing Tajriba JSON file to `.empirica/backups/` and writes a SHA-256 checksum before launch. This protects against accidental deletion/replacement and incompatible Empirica upgrades. Backups are gitignored and must also be copied to an independently backed-up research-data location.
 
 **NOTE:** Factors such as latency and misconfigured client clocks can make client-side timestamps unreliable for analyses that depend on message order. Instead, see `utils/server_side_timestamps.ipynb` for an example of how to correct these timestamps with server-side timestamps parsed from the raw `tajriba.json` file.
 

@@ -6,6 +6,7 @@ import {
 } from "@empirica/core/player/classic/react";
 import { Loading } from "@empirica/core/player/react";
 import { Button } from "../components/Button";
+import { clearDraftKeys, draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
 import {
   clearIncorrectReviewQuizAnswers,
   evaluateReviewQuiz,
@@ -19,7 +20,13 @@ export function ReviewQuiz() {
   const round = useRound();
   const taskVersion = round?.get("taskVersion") ?? null;
   const quiz = getReviewQuiz(taskVersion);
-  const [answers, setAnswers] = useState({});
+  const answersDraftKey = draftKey({
+    playerId: player.id,
+    roundId: round?.id,
+    form: "reviewQuiz",
+    field: "answers",
+  });
+  const [answers, setAnswers] = usePersistentDraft(answersDraftKey, {});
   const [remediationSections, setRemediationSections] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const processingRef = useRef(false);
@@ -64,8 +71,21 @@ export function ReviewQuiz() {
     processingRef.current = true;
     setIsProcessing(true);
     const evaluation = evaluateReviewQuiz(taskVersion, answers);
+    const previousAttempts = player.round.get("reviewQuizAttempts") || [];
+    const attempt = {
+      attemptNumber: previousAttempts.length + 1,
+      taskVersion,
+      answers: { ...answers },
+      questionCorrectness: evaluation.questionCorrectness,
+      incorrectQuestionIds: evaluation.incorrectQuestionIds,
+      allCorrect: evaluation.allCorrect,
+      submittedAt: Date.now(),
+    };
+    player.round.set("reviewQuizAttempts", [...previousAttempts, attempt]);
 
     if (evaluation.allCorrect) {
+      player.round.set("reviewQuizResult", attempt);
+      clearDraftKeys([answersDraftKey]);
       player.stage.set("submit", true);
       return;
     }
@@ -92,6 +112,7 @@ export function ReviewQuiz() {
           <p className="text-sm text-gray-600 text-center mb-8">
             Please review the relevant experiment information before trying the unanswered questions again.
           </p>
+          <p className="mb-6 text-center text-sm font-bold text-gray-700">Scroll down to review all relevant information.</p>
           <div className="space-y-5">
             {remediationSections.map((section) => (
               <section key={section.key} className="bg-white border border-gray-200 rounded-lg p-5">
@@ -122,6 +143,7 @@ export function ReviewQuiz() {
         <h1 className="text-2xl font-bold text-center mb-3">Review Quiz</h1>
         <h2 className="text-lg font-semibold text-gray-800 mb-2">{quiz.title}</h2>
         <p className="text-sm text-gray-600 mb-8">{quiz.scenario}</p>
+        <p className="mb-6 text-center text-sm font-bold text-gray-700">Scroll down to answer all five questions.</p>
 
         <div className="space-y-8">
           {quiz.questions.map((question, questionIndex) => (

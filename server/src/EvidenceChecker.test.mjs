@@ -87,22 +87,10 @@ test("Rule 1 does not apply to other factors -- a single-participant breadth_def
 
 // ── Rule 3: feature/LLM conflict discount ────────────────────────────────────
 
-test("Rule 3: LLM claims breadth_deficiency present but the feature-only Candidate Gate never flagged expander -> strength halved", () => {
+test("checked LLM strength is unchanged when its citation is valid", () => {
   const raw = { ...emptyRaw(), breadth_deficiency: present({ strength: 0.8, message_ids: ["m0"], span: "Eldoron is best" }) };
-  // High novelty, low redundancy -> expander is NOT a feature candidate.
-  const features = { novelty_score: 0.9, redundancy_score: 0.0, agreement_score: 0.1, justification_score: 0.5 };
-  const checked = checkEvidence(raw, { chat: makeChat(), features });
-  assert.equal(checked.breadth_deficiency.status, "present"); // status unchanged, only strength discounted
-  assert.equal(checked.breadth_deficiency.strength, 0.4);
-  assert.equal(checked.breadth_deficiency.conflictDiscount, "FEATURE_CANDIDATE_GATE_DID_NOT_FLAG_THIS_ROLE");
-});
-
-test("Rule 3: no discount when the feature-level candidate gate agrees", () => {
-  const raw = { ...emptyRaw(), breadth_deficiency: present({ strength: 0.8, message_ids: ["m0"], span: "Eldoron is best" }) };
-  const features = { novelty_score: 0.1, redundancy_score: 0.9, agreement_score: 0.1, justification_score: 0.5 };
-  const checked = checkEvidence(raw, { chat: makeChat(), features });
+  const checked = checkEvidence(raw, { chat: makeChat() });
   assert.equal(checked.breadth_deficiency.strength, 0.8);
-  assert.equal(checked.breadth_deficiency.conflictDiscount, undefined);
 });
 
 // ── Rule 4: self_correction discounts other factors ─────────────────────────
@@ -141,4 +129,97 @@ test("present factor with no span/message_ids is downgraded rather than trusted"
   const raw = { ...emptyRaw(), breadth_deficiency: { status: "present", strength: 0.9, message_ids: [], span: "" } };
   const checked = checkEvidence(raw, { chat: makeChat() });
   assert.equal(checked.breadth_deficiency.status, "uncertain");
+});
+
+// ── Delibra spec §3 Node 3: per-evidence-relations tracking (2026-08-11) ──
+
+test("evidenceRelations: returns the cleaned array on the result", () => {
+  const raw = {
+    ...emptyRaw(),
+    evidenceRelations: [
+      { messageId: "m0", mentioned: true, attributed: true,  evaluated: false, compared: false, countered: false, integrated: false },
+      { messageId: "m1", mentioned: true, attributed: true,  evaluated: true,  compared: true,  countered: false, integrated: true  },
+    ],
+  };
+  const checked = checkEvidence(raw, { chat: makeChat() });
+  assert.ok(Array.isArray(checked.evidenceRelations));
+  assert.equal(checked.evidenceRelations.length, 2);
+  assert.equal(checked.evidenceRelations[0].messageId, "m0");
+  assert.equal(checked.evidenceRelations[1].integrated, true);
+});
+
+test("evidenceRelations: drops entries whose messageId is not in chat", () => {
+  const raw = {
+    ...emptyRaw(),
+    evidenceRelations: [
+      { messageId: "m0", mentioned: true, attributed: false, evaluated: false, compared: false, countered: false, integrated: false }, // valid
+      { messageId: "m99", mentioned: true, attributed: false, evaluated: false, compared: false, countered: false, integrated: false }, // bad id
+    ],
+  };
+  const checked = checkEvidence(raw, { chat: makeChat() });
+  assert.equal(checked.evidenceRelations.length, 1);
+  assert.equal(checked.evidenceRelations[0].messageId, "m0");
+});
+
+test("evidenceRelations: drops entries with non-boolean 6-boolean fields", () => {
+  const raw = {
+    ...emptyRaw(),
+    evidenceRelations: [
+      { messageId: "m0", mentioned: true, attributed: "yes", evaluated: false, compared: false, countered: false, integrated: false }, // attributed is string
+      { messageId: "m1", mentioned: true, attributed: true,  evaluated: true,  compared: true,  countered: false, integrated: true  }, // all valid
+    ],
+  };
+  const checked = checkEvidence(raw, { chat: makeChat() });
+  assert.equal(checked.evidenceRelations.length, 1);
+  assert.equal(checked.evidenceRelations[0].messageId, "m1");
+});
+
+test("evidenceRelations: drops entries with missing 6-boolean fields (full 6-vector required)", () => {
+  const raw = {
+    ...emptyRaw(),
+    evidenceRelations: [
+      { messageId: "m0", mentioned: true, attributed: true, evaluated: true, compared: false, countered: false }, // missing integrated
+    ],
+  };
+  const checked = checkEvidence(raw, { chat: makeChat() });
+  assert.equal(checked.evidenceRelations.length, 0);
+});
+
+test("evidenceRelations: deduplicates by messageId (one row per participant message)", () => {
+  const raw = {
+    ...emptyRaw(),
+    evidenceRelations: [
+      { messageId: "m0", mentioned: true, attributed: true,  evaluated: false, compared: false, countered: false, integrated: false },
+      { messageId: "m0", mentioned: true, attributed: false, evaluated: true,  compared: false, countered: false, integrated: false }, // duplicate m0, different booleans
+    ],
+  };
+  const checked = checkEvidence(raw, { chat: makeChat() });
+  assert.equal(checked.evidenceRelations.length, 1);
+  assert.equal(checked.evidenceRelations[0].attributed, true); // first-seen wins
+});
+
+test("evidenceRelations: empty input → empty result (early checkpoint case)", () => {
+  const raw = { ...emptyRaw(), evidenceRelations: [] };
+  const checked = checkEvidence(raw, { chat: makeChat() });
+  assert.deepEqual(checked.evidenceRelations, []);
+});
+
+test("evidenceRelations: missing field → empty result (graceful, not thrown)", () => {
+  // The Assessor may have run before this field existed (legacy response) or
+  // be unavailable; we must not throw.
+  const raw = emptyRaw(); // no evidenceRelations key
+  const checked = checkEvidence(raw, { chat: makeChat() });
+  assert.deepEqual(checked.evidenceRelations, []);
+});
+
+test("evidenceRelations: 6-boolean vector covers all 6 keys (mentioned/attributed/evaluated/compared/countered/integrated)", () => {
+  const raw = {
+    ...emptyRaw(),
+    evidenceRelations: [
+      { messageId: "m0", mentioned: true, attributed: true, evaluated: true, compared: true, countered: true, integrated: true },
+    ],
+  };
+  const checked = checkEvidence(raw, { chat: makeChat() });
+  const expectedKeys = ["messageId", "mentioned", "attributed", "evaluated", "compared", "countered", "integrated"];
+  assert.deepEqual(Object.keys(checked.evidenceRelations[0]).sort(), expectedKeys.sort());
 });

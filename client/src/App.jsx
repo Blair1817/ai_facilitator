@@ -3,7 +3,6 @@ import { EmpiricaContext } from "@empirica/core/player/classic/react";
 import { EmpiricaMenu, EmpiricaParticipant } from "@empirica/core/player/react";
 import React from "react";
 import { Game } from "./Game";
-import { Consent } from "./intro-exit/Consent.jsx";
 import { GamesFull } from "./intro-exit/GamesFull";
 import { NoGames } from "./intro-exit/NoGames";
 import { OverallInstructions } from "./intro-exit/OverallInstructions";
@@ -13,7 +12,6 @@ import { RecruitmentBootstrap } from "./intro-exit/RecruitmentBootstrap";
 import { Debriefing } from "./intro-exit/Debriefing";
 import { ExpFeedback } from "./intro-exit/ExpFeedback";
 import { FinalQuestions } from "./intro-exit/FinalQuestions";
-import { FinishedExitCode } from "./intro-exit/FinishedExitCode";
 import { CustomLobby } from "./intro-exit/CustomLobby";
 import { getRecruitmentMode } from "./prolific";
 
@@ -61,14 +59,13 @@ export default function App() {
     <EmpiricaParticipant url={url} ns={playerKey} modeFunc={EmpiricaClassic}>
       <div className="h-screen relative">
         <EmpiricaMenu position="bottom-left" />
-        <div className="h-full overflow-auto">
+        <div id="participant-scroll-root" className="h-full overflow-auto">
           <EmpiricaContext
           introSteps={introSteps}
           exitSteps={exitSteps}
           noGames={NoGames}
-          consent={Consent}
+          disableConsent
           playerCreate={recruitmentMode === "prolific" ? ProlificPlayerCreate : PlayerCreate}
-          finished={FinishedExitCode}
           lobby={CustomLobby}>
             <Game />
           </EmpiricaContext>

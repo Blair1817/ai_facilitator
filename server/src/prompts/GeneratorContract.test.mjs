@@ -33,17 +33,58 @@ test("strict parser: rejects invalid JSON", () => {
   assert.equal(result.code, "GENERATOR_PARSE_FAILURE");
 });
 
-test("strict parser: rejects markdown code-fenced JSON", () => {
+test("strict parser: tolerates a single leading ```json + trailing ``` wrapper (Phase 6 pilot fix for MiniMax-Text-01 chatty output)", () => {
+  // Phase 6 pilot update: the live model wraps its JSON in a
+  // markdown code fence despite the prompt forbidding it. The parser
+  // strips a single wrapper and parses the inside. Schema-level
+  // strictness is unchanged (this test confirms both halves: the
+  // wrapper IS stripped, AND the inside is still validated as a
+  // single object).
   const result = parseGeneratorOutputStrict("```json\n" + JSON.stringify(VALID_CANDIDATE) + "\n```");
-  assert.equal(result.ok, false);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.parsed, VALID_CANDIDATE);
 });
 
-test("strict parser: rejects prose before the JSON object", () => {
+test("strict parser: tolerates a single leading ``` + trailing ``` wrapper (no language tag)", () => {
+  const result = parseGeneratorOutputStrict("```\n" + JSON.stringify(VALID_CANDIDATE) + "\n```");
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.parsed, VALID_CANDIDATE);
+});
+
+test("strict parser: tolerates a code fence with extra surrounding whitespace", () => {
+  const result = parseGeneratorOutputStrict("  \n```json\n" + JSON.stringify(VALID_CANDIDATE) + "\n```\n  ");
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.parsed, VALID_CANDIDATE);
+});
+
+test("strict parser: tolerates an uppercase JSON code-fence label from a live provider", () => {
+  const result = strictParseJsonObject('```JSON\n{"role":"STATIC"}\n```');
+  assert.equal(result.ok, true);
+  assert.equal(result.parsed.role, "STATIC");
+});
+
+test("strict parser: still rejects an EMPTY code fence (the inside must still be valid JSON)", () => {
+  const result = parseGeneratorOutputStrict("```json\n\n```");
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "GENERATOR_PARSE_FAILURE");
+});
+
+test("strict parser: still rejects a code fence wrapping INVALID JSON", () => {
+  // The fence-strip fallback succeeds syntactically (extracts the
+  // inside), but the inside is still invalid JSON. The original
+  // strictness is preserved here.
+  const result = parseGeneratorOutputStrict("```json\n{not: valid}\n```");
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "GENERATOR_PARSE_FAILURE");
+  assert.match(result.error, /after code-fence strip/);
+});
+
+test("strict parser: rejects prose before the JSON object (no fence)", () => {
   const result = parseGeneratorOutputStrict("Sure, here is my answer: " + JSON.stringify(VALID_CANDIDATE));
   assert.equal(result.ok, false);
 });
 
-test("strict parser: rejects prose after the JSON object", () => {
+test("strict parser: rejects prose after the JSON object (no fence)", () => {
   const result = parseGeneratorOutputStrict(JSON.stringify(VALID_CANDIDATE) + "\nHope that helps!");
   assert.equal(result.ok, false);
 });

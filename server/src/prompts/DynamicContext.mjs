@@ -75,7 +75,15 @@ export function buildDynamicUserContext({ chat, checkpointDescriptor, selectedRo
     cumulativePublicContext,
     localContext,
     recentAiMessages: recentAiMessagesText,
+    // 2026-08-11: Delibra spec §11 — pipe the 3 new plan fields through
+    // to the Generator's user turn. Same omit-when-plan-null rule as
+    // relevantDiscussionState below: Static and Adaptive Generalist
+    // (which both pass plan = null / no plan) see no change in output.
     relevantDiscussionState: plan ? plan.gap : undefined,
+    target: plan ? plan.target : undefined,
+    requiredReasoningAct: plan ? plan.requiredReasoningAct : undefined,
+    answerableQuestionTemplate: plan ? plan.answerableQuestionTemplate : undefined,
+    allowedGroundingMessageIds: plan ? plan.evidenceIds : undefined,
   });
 
   return {

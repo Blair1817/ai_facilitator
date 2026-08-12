@@ -21,7 +21,11 @@ export default defineConfig({
     port: 8844,
     open: false,
     strictPort: true,
-    host: "0.0.0.0",
+    // Empirica proxies the player app through localhost and macOS commonly
+    // resolves that host to ::1. Listen on IPv6-any so both ::1 and IPv4-
+    // mapped localhost connections work; an IPv4-only listener leaves the
+    // participant route hanging while /admin remains healthy.
+    host: "::",
     hmr: {
       host: "localhost",
       protocol: "ws",

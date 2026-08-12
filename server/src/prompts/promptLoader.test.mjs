@@ -16,10 +16,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // sit in server/src/, the parent of this prompts/ directory, not inside it.
 process.argv[1] = path.join(__dirname, "..", "fake-entry.js");
 
-const { getAdaptivePromptBundle, getStaticPromptBundle, getOpeningMessageBundle } = await import("./promptLoader.js");
+const { getAdaptivePromptBundle, getStaticPromptBundle, getGeneralistPromptBundle } = await import("./promptLoader.js");
 
 const SOURCE_DIR = path.join(__dirname, "source");
 const baseText = fs.readFileSync(path.join(SOURCE_DIR, "base.md"), "utf8");
+const staticText = fs.readFileSync(path.join(SOURCE_DIR, "static.md"), "utf8");
+const generalistText = fs.readFileSync(path.join(SOURCE_DIR, "generalist.md"), "utf8");
 const expanderText = fs.readFileSync(path.join(SOURCE_DIR, "expander.md"), "utf8");
 const challengerText = fs.readFileSync(path.join(SOURCE_DIR, "challenger.md"), "utf8");
 const synthesiserText = fs.readFileSync(path.join(SOURCE_DIR, "synthesiser.md"), "utf8");
@@ -105,29 +107,12 @@ test("concurrent prompt loading for different roles does not contaminate either 
   assert.notEqual(challengerBundle.content, synthesiserBundle.content);
 });
 
-test("Static condition is unaffected by Adaptive mapping work (still gated by static.md's own completeness, per requirement #1)", () => {
-  const bundle = getStaticPromptBundle();
-  assert.equal(typeof bundle.blocked, "boolean");
-});
-
-// ── getOpeningMessageBundle (2026-08-08 addition) ───────────────────────────
-
-test("getOpeningMessageBundle: loads opening_message.md successfully, not blocked", () => {
-  const bundle = getOpeningMessageBundle();
-  assert.equal(bundle.blocked, false, bundle.reason);
-  assert.equal(bundle.metadata.promptStatus, "draft_unapproved");
-  assert.equal(bundle.metadata.condition, "both");
-});
-
-test("getOpeningMessageBundle: content is only the text after the file's last '---' delimiter, no header/status notes leak into it", () => {
-  const bundle = getOpeningMessageBundle();
-  assert.equal(bundle.blocked, false, bundle.reason);
-  assert.doesNotMatch(bundle.content, /DRAFT|engineering-authored|Status:/);
-  assert.match(bundle.content, /^Hi everyone!/);
-});
-
-test("getOpeningMessageBundle: content contains no markdown formatting (plain chat text)", () => {
-  const bundle = getOpeningMessageBundle();
-  assert.equal(bundle.blocked, false, bundle.reason);
-  assert.doesNotMatch(bundle.content, /```|^#{1,6}\s|^[-*+]\s|\*\*[^*]+\*\*/m);
+test("Static and Adaptive-Generalist use distinct approved prompt content", () => {
+  const staticBundle = getStaticPromptBundle();
+  const generalistBundle = getGeneralistPromptBundle();
+  assert.equal(staticBundle.blocked, false, staticBundle.reason);
+  assert.equal(generalistBundle.blocked, false, generalistBundle.reason);
+  assert.equal(staticBundle.content, `${baseText}\n\n---\n\n${staticText}`);
+  assert.equal(generalistBundle.content, `${baseText}\n\n---\n\n${generalistText}`);
+  assert.notEqual(staticBundle.content, generalistBundle.content);
 });

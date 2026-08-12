@@ -1,7 +1,8 @@
 import { usePlayer } from "@empirica/core/player/classic/react";
 import Slider from "@mui/material/Slider";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Button } from "../components/Button";
+import { clearDraftKeys, draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
 
 const CHANGE_OPTIONS = [
   { value: "yes", label: "Yes" },
@@ -13,13 +14,6 @@ const PREFERENCE_OPTIONS = [
   { value: "first_task", label: "The facilitator in the first task" },
   { value: "second_task", label: "The facilitator in the second task" },
   { value: "no_preference", label: "No preference" },
-  { value: "not_sure", label: "Not sure" },
-];
-
-const NEEDS_OPTIONS = [
-  { value: "first_task", label: "The facilitator in the first task" },
-  { value: "second_task", label: "The facilitator in the second task" },
-  { value: "equally_suitable", label: "They were about equally suitable" },
   { value: "not_sure", label: "Not sure" },
 ];
 
@@ -76,22 +70,32 @@ function OptionalDescription({ id, prompt, value, onChange }) {
 
 export function FinalQuestions({ next }) {
   const player = usePlayer();
-  const [discussionApproachChanged, setDiscussionApproachChanged] = useState("");
-  const [discussionApproachChangeDescription, setDiscussionApproachChangeDescription] = useState("");
-  const [firstTaskCarryover, setFirstTaskCarryover] = useState("");
-  const [firstTaskCarryoverDescription, setFirstTaskCarryoverDescription] = useState("");
-  const [facilitatorDifference, setFacilitatorDifference] = useState(null);
-  const [preferredFacilitator, setPreferredFacilitator] = useState("");
-  const [betterNeedsFacilitator, setBetterNeedsFacilitator] = useState("");
+  const keyFor = (field) => draftKey({ playerId: player.id, form: "finalQuestions", field });
+  const draftKeys = {
+    firstTaskCarryover: keyFor("firstTaskCarryover"),
+    firstTaskCarryoverDescription: keyFor("firstTaskCarryoverDescription"),
+    facilitatorDifference: keyFor("facilitatorDifference"),
+    preferredFacilitator: keyFor("preferredFacilitator"),
+  };
+  const [firstTaskCarryover, setFirstTaskCarryover] = usePersistentDraft(draftKeys.firstTaskCarryover, "");
+  const [firstTaskCarryoverDescription, setFirstTaskCarryoverDescription] = usePersistentDraft(draftKeys.firstTaskCarryoverDescription, "");
+  const [facilitatorDifference, setFacilitatorDifference] = usePersistentDraft(draftKeys.facilitatorDifference, null);
+  const [preferredFacilitator, setPreferredFacilitator] = usePersistentDraft(draftKeys.preferredFacilitator, "");
   const [submitting, setSubmitting] = useState(false);
+  const [pendingSubmissionId, setPendingSubmissionId] = useState(null);
   const submittingRef = useRef(false);
 
+  const storedSubmission = player.get("finalQuestions");
+  useEffect(() => {
+    if (!pendingSubmissionId || storedSubmission?.submissionId !== pendingSubmissionId) return;
+    clearDraftKeys(Object.values(draftKeys));
+    next();
+  }, [pendingSubmissionId, storedSubmission?.submissionId]);
+
   const isComplete = Boolean(
-    discussionApproachChanged &&
-      firstTaskCarryover &&
+    firstTaskCarryover &&
       facilitatorDifference !== null &&
-      preferredFacilitator &&
-      betterNeedsFacilitator,
+      preferredFacilitator,
   );
 
   function handleSubmit(event) {
@@ -102,21 +106,19 @@ export function FinalQuestions({ next }) {
 
     submittingRef.current = true;
     setSubmitting(true);
+    const submissionId = `${player.id}:${Date.now()}`;
+    setPendingSubmissionId(submissionId);
 
     player.set("finalQuestions", {
-      discussionApproachChanged,
-      discussionApproachChangeDescription: descriptionApplies(discussionApproachChanged)
-        ? discussionApproachChangeDescription
-        : "",
+      submissionId,
       firstTaskCarryover,
       firstTaskCarryoverDescription: descriptionApplies(firstTaskCarryover)
         ? firstTaskCarryoverDescription
         : "",
       facilitatorDifference: Number(facilitatorDifference),
       preferredFacilitator,
-      betterNeedsFacilitator,
+      submittedAt: Date.now(),
     });
-    next();
   }
 
   return (
@@ -130,29 +132,10 @@ export function FinalQuestions({ next }) {
           <p className="mt-2 whitespace-normal text-sm leading-6 text-gray-600">
             Please answer the following questions about your experience across the two discussion tasks.
           </p>
+          <p className="mt-3 text-sm font-bold text-gray-700">Scroll down to complete all questions.</p>
         </header>
 
         <div className="flex w-full min-w-0 flex-col gap-6">
-          <fieldset className={cardClassName}>
-            <legend className={questionClassName}>
-              Compared with the first task, did your group change how it approached the discussion in the second task?
-            </legend>
-            <RadioOptions
-              name="discussionApproachChanged"
-              options={CHANGE_OPTIONS}
-              selected={discussionApproachChanged}
-              onChange={(event) => setDiscussionApproachChanged(event.target.value)}
-            />
-            {descriptionApplies(discussionApproachChanged) && (
-              <OptionalDescription
-                id="discussionApproachChangeDescription"
-                prompt="If yes or not sure, please briefly describe what changed (optional)."
-                value={discussionApproachChangeDescription}
-                onChange={(event) => setDiscussionApproachChangeDescription(event.target.value)}
-              />
-            )}
-          </fieldset>
-
           <fieldset className={cardClassName}>
             <legend className={questionClassName}>
               Did anything you experienced during the first task influence how you approached the second task?
@@ -224,17 +207,6 @@ export function FinalQuestions({ next }) {
             />
           </fieldset>
 
-          <fieldset className={cardClassName}>
-            <legend className={questionClassName}>
-              Which facilitator better addressed what your group needed during the discussion?
-            </legend>
-            <RadioOptions
-              name="betterNeedsFacilitator"
-              options={NEEDS_OPTIONS}
-              selected={betterNeedsFacilitator}
-              onChange={(event) => setBetterNeedsFacilitator(event.target.value)}
-            />
-          </fieldset>
         </div>
 
         <div className="flex w-full justify-end pt-8 pb-4">

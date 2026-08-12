@@ -12,7 +12,10 @@ reassess, replace, or change it. Do not diagnose why it was selected.
 
 The Information Expander broadens the discussion by prompting participants to
 surface task-relevant information that has not yet entered the public chat. It
-may invite consideration of under-discussed evidence or decision criteria.
+may invite consideration of under-discussed evidence or decision criteria. If
+the public discussion is too factually sparse to evaluate or compare the
+options, it may neutrally invite participants to add concrete task-relevant
+facts from their materials without implying what those materials contain.
 When the runtime supplies a valid `TARGET_PARTICIPANT`, it may neutrally invite
 that participant to contribute task-relevant information from their materials
 without claiming to know what those materials contain.
@@ -21,6 +24,8 @@ without claiming to know what those materials contain.
 
 - Invite the group to share task-relevant information not yet discussed.
 - Invite consideration of additional evidence or decision criteria.
+- Invite concrete task-relevant facts when the public discussion currently
+  consists mainly of impressions or unsupported generalities.
 - Ask for additional information relevant to a criterion explicitly present
   in `TASK_GENERAL_CONTEXT` or the public participant discussion.
 - Use a targeted invitation only when a valid `TARGET_PARTICIPANT` is
@@ -65,6 +70,16 @@ The role-preserving fallback must remain an information-expansion invitation.
 {
   "role": "INFORMATION_EXPANDER",
   "message": "Is there any task-relevant information from your materials that has not yet been discussed?",
+  "groundingMessageIds": []
+}
+```
+
+**Correct — public discussion is factually sparse:**
+
+```json
+{
+  "role": "INFORMATION_EXPANDER",
+  "message": "What concrete task-relevant facts could the group add before comparing the options?",
   "groundingMessageIds": []
 }
 ```

@@ -1,6 +1,7 @@
 {
   "tasks": [
     {
+      "taskVersion": "A",
       "taskIndex": 0,
       "generalInfo": "# Task A: International Youth Games host city\n\nThe International Youth Sports Council organises the International Youth Games every four years. Three cities, Rovenna, Talwick, and Meridia, have submitted bids. All three meet the mandatory requirements for sporting venues, public safety, finance, and legal compliance.\n\nUse only the facts provided in the experiment when evaluating the cities. Do not use outside knowledge or assumptions about the cities. Your task is to judge how the provided non-critical facts affect each city's suitability and then select the city most suitable to host the International Youth Games.\n\n## Talwick\n\n- A frequent direct rail service connects the airport to the venue district.\n- Some event hotels require transfers on the daily journey to the venue district.\n- Visitor surveys report few evening activities available within walking distance of the venue district.\n\n## Rovenna\n\n- The city has a reliable record of delivering similar international events on time and within budget.\n- The city has enough mid-range hotel rooms close to all proposed venues.\n- Local sports clubs and the city business council publicly support hosting the event.\n\n## Meridia\n\n- Direct public transport links the main station with every proposed venue.\n- Visitor help desks close before most evening events and local attractions finish.\n- The temporary media centre needs extra power and network equipment before opening.",
       "decisionOptions": [
@@ -10,23 +11,24 @@
       ],
       "playerConfig": [
         {
-          "playerName": "Red",
-          "hexCode": "FF0000",
-          "playerContent": "# Your Private Report\n\nOnly you can see the information in this report. Share any information you consider relevant with your group.\n\n## Talwick\n\n- A tested digital check-in system handled a recent international event with few delays.\n- Local groups have recruited enough trained volunteers for the event, including many who speak several languages.\n\n## Rovenna\n\n- Visitors consistently rate the waterfront area and its evening cultural programme highly.\n- Residents near several proposed venues have concerns about noise and late-evening crowds.\n\n## Meridia\n\n- University residences can meet the expected need for extra low-cost beds.\n- Road repairs will affect one route between the airport and the northern venue area.\n- The visitor pass includes free museum entry and unlimited travel on local buses."
+          "playerName": "Green",
+          "hexCode": "39BC21",
+          "playerContent": "## Talwick\n\n- A tested digital check-in system handled a recent international event with few delays.\n- Local groups have recruited enough trained volunteers for the event, including many who speak several languages.\n\n## Rovenna\n\n- Visitors consistently rate the waterfront area and its evening cultural programme highly.\n- Residents near several proposed venues have concerns about noise and late-evening crowds.\n\n## Meridia\n\n- University residences can meet the expected need for extra low-cost beds.\n- Road repairs will affect one route between the airport and the northern venue area.\n- The visitor pass includes free museum entry and unlimited travel on local buses."
+        },
+        {
+          "playerName": "Blue",
+          "hexCode": "206EEF",
+          "playerContent": "## Talwick\n\n- The bus operator can add enough event services without reducing normal routes for residents.\n- Most partner hotels allow flexible check-in and can provide coordinated meal times for teams.\n\n## Rovenna\n\n- Several budget hotels require non-refundable bookings before final attendance numbers are confirmed.\n- Mobile coverage becomes unreliable around one venue when crowds are largest.\n- The central market and public squares can host varied free activities for visitors.\n\n## Meridia\n\n- Local schools and sports clubs will organise family activities throughout the event.\n- The city needs more trained stewards to meet the usual staffing level."
         },
         {
           "playerName": "Pink",
           "hexCode": "F90494",
-          "playerContent": "# Your Private Report\n\nOnly you can see the information in this report. Share any information you consider relevant with your group.\n\n## Talwick\n\n- The bus operator can add enough event services without reducing normal routes for residents.\n- Most partner hotels allow flexible check-in and can provide coordinated meal times for teams.\n\n## Rovenna\n\n- Several budget hotels require non-refundable bookings before final attendance numbers are confirmed.\n- Mobile coverage becomes unreliable around one venue when crowds are largest.\n- The central market and public squares can host varied free activities for visitors.\n\n## Meridia\n\n- Local schools and sports clubs will organise family activities throughout the event.\n- The city needs more trained stewards to meet the usual staffing level."
-        },
-        {
-          "playerName": "Green",
-          "hexCode": "39BC21",
-          "playerContent": "# Your Private Report\n\nOnly you can see the information in this report. Share any information you consider relevant with your group.\n\n## Talwick\n\n- A permanent coordination centre already brings together venue staff, emergency services, transport teams, and organisers.\n- The main visitor area is close to museums, restaurants, and evening entertainment.\n- Reusable cups and waste sorting are funded at every proposed event site.\n\n## Rovenna\n\n- One travel pass covers rail, buses, trams, and the airport shuttle.\n- Two venue tram routes share one junction that becomes crowded at peak times.\n\n## Meridia\n\n- Several independent hotels offer affordable rates near the central event area.\n- Public surveys show mixed support because residents expect disruption in nearby neighbourhoods."
+          "playerContent": "## Talwick\n\n- A permanent coordination centre already brings together venue staff, emergency services, transport teams, and organisers.\n- The main visitor area is close to museums, restaurants, and evening entertainment.\n- Reusable cups and waste sorting are funded at every proposed event site.\n\n## Rovenna\n\n- One travel pass covers rail, buses, trams, and the airport shuttle.\n- Two venue tram routes share one junction that becomes crowded at peak times.\n\n## Meridia\n\n- Several independent hotels offer affordable rates near the central event area.\n- Public surveys show mixed support because residents expect disruption in nearby neighbourhoods."
         }
       ]
     },
     {
+      "taskVersion": "B",
       "taskIndex": 1,
       "generalInfo": "# Task B: Global Innovation Summit host campus\n\nThe International Innovation Council organises the Global Innovation Summit every four years. Three university campuses, Fenwick University, Halden University, and Norvale University, have submitted bids. All three meet the mandatory requirements for conference facilities, public safety, finance, and legal compliance.\n\nUse only the facts provided in the experiment when evaluating the university campuses. Do not use outside knowledge or assumptions about the universities. Your task is to judge how the provided non-critical facts affect each campus's suitability and then select the campus most suitable to host the Global Innovation Summit.\n\n## Norvale\n\n- A frequent direct coach service connects the airport to the conference campus.\n- Some summit hotels require transfers on the daily journey to the conference campus.\n- Delegate surveys report few evening dining options within walking distance of the conference campus.\n\n## Halden\n\n- The campus has a reliable record of delivering similar academic conferences on time and within budget.\n- The campus has enough mid-range guest rooms close to all conference buildings.\n- Local faculty groups and the city business council publicly support hosting the summit.\n\n## Fenwick\n\n- Direct public transport links the central station with every conference building.\n- Delegate help desks close before most evening sessions and networking events finish.\n- The proposed exhibition hall needs extra lighting and network equipment before opening.",
       "decisionOptions": [
@@ -36,19 +38,19 @@
       ],
       "playerConfig": [
         {
-          "playerName": "Red",
-          "hexCode": "FF0000",
-          "playerContent": "# Your Private Report\n\nOnly you can see the information in this report. Share any information you consider relevant with your group.\n\n## Norvale\n\n- A tested digital registration system handled a recent academic conference with few delays.\n- Student groups have recruited enough trained assistants for the summit, including many who speak several languages.\n\n## Halden\n\n- Delegates consistently rate the lakeside area and its evening cultural programme highly.\n- Residents near several conference buildings have concerns about traffic and late-evening noise.\n\n## Fenwick\n\n- Student residences can meet the expected need for extra low-cost rooms.\n- Road repairs will affect one route between the airport and the eastern campus entrance.\n- The delegate pass includes free exhibition entry and unlimited travel on local buses."
+          "playerName": "Green",
+          "hexCode": "39BC21",
+          "playerContent": "## Norvale\n\n- A tested digital registration system handled a recent academic conference with few delays.\n- Student groups have recruited enough trained assistants for the summit, including many who speak several languages.\n\n## Halden\n\n- Delegates consistently rate the lakeside area and its evening cultural programme highly.\n- Residents near several conference buildings have concerns about traffic and late-evening noise.\n\n## Fenwick\n\n- Student residences can meet the expected need for extra low-cost rooms.\n- Road repairs will affect one route between the airport and the eastern campus entrance.\n- The delegate pass includes free exhibition entry and unlimited travel on local buses."
+        },
+        {
+          "playerName": "Blue",
+          "hexCode": "206EEF",
+          "playerContent": "## Norvale\n\n- The shuttle operator can add enough summit services without reducing regular routes for students.\n- Most partner hotels allow flexible check-in and can provide coordinated meal times for delegates.\n\n## Halden\n\n- Several budget residences require non-refundable bookings before final delegate numbers are confirmed.\n- Wireless internet becomes unreliable inside one hall when attendance is highest.\n- The riverside gardens and public library can host varied free activities for delegates.\n\n## Fenwick\n\n- Local schools and science charities will organise public activities throughout the summit.\n- The campus needs more trained technicians to meet the usual staffing level."
         },
         {
           "playerName": "Pink",
           "hexCode": "F90494",
-          "playerContent": "# Your Private Report\n\nOnly you can see the information in this report. Share any information you consider relevant with your group.\n\n## Norvale\n\n- The shuttle operator can add enough summit services without reducing regular routes for students.\n- Most partner hotels allow flexible check-in and can provide coordinated meal times for delegates.\n\n## Halden\n\n- Several budget residences require non-refundable bookings before final delegate numbers are confirmed.\n- Wireless internet becomes unreliable inside one hall when attendance is highest.\n- The riverside gardens and public library can host varied free activities for delegates.\n\n## Fenwick\n\n- Local schools and science charities will organise public activities throughout the summit.\n- The campus needs more trained technicians to meet the usual staffing level."
-        },
-        {
-          "playerName": "Green",
-          "hexCode": "39BC21",
-          "playerContent": "# Your Private Report\n\nOnly you can see the information in this report. Share any information you consider relevant with your group.\n\n## Norvale\n\n- A permanent coordination centre already brings together organisers, security staff, technical teams, and campus services.\n- The main delegate area is close to cafés, galleries, and evening events.\n- Refill stations and waste collection are funded at every proposed summit building.\n\n## Halden\n\n- One travel pass covers rail, buses, campus shuttles, and bicycle hire.\n- Two campus shuttle routes share one entrance that becomes crowded at peak times.\n\n## Fenwick\n\n- Several independent guesthouses offer affordable rates near the central conference area.\n- Public surveys show mixed support because residents expect disruption around the campus."
+          "playerContent": "## Norvale\n\n- A permanent coordination centre already brings together organisers, security staff, technical teams, and campus services.\n- The main delegate area is close to cafés, galleries, and evening events.\n- Refill stations and waste collection are funded at every proposed summit building.\n\n## Halden\n\n- One travel pass covers rail, buses, campus shuttles, and bicycle hire.\n- Two campus shuttle routes share one entrance that becomes crowded at peak times.\n\n## Fenwick\n\n- Several independent guesthouses offer affordable rates near the central conference area.\n- Public surveys show mixed support because residents expect disruption around the campus."
         }
       ]
     }

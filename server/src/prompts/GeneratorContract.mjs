@@ -48,23 +48,43 @@ function loadGenerationSchema() {
  * Strict JSON object parser shared by the Generator and (via
  * validatorPlaceholder.js) the semantic Validator response paths.
  *
- * Deliberately just `JSON.parse` on the untouched raw string -- no regex
- * extraction, no code-fence stripping, no trimming beyond what JSON.parse
- * itself tolerates (whitespace). Any code fence, leading/trailing prose, or
- * multiple JSON values makes `JSON.parse` throw, which is exactly the
- * "reject markdown code fences" / "reject prose before or after" behaviour
- * required -- not reimplemented, relied on directly.
+ * Phase 6 pilot update: tolerate a SINGLE leading/trailing markdown
+ * code fence (```json ... ``` or ``` ... ```) wrapping exactly one
+ * JSON object, because the live LLM model (MiniMax-Text-01, verified
+ * 2026-08-11) emits JSON this way despite the prompt explicitly
+ * forbidding it. The schema-level strictness (the object must still
+ * match the relevant schema exactly) is unchanged -- this helper only
+ * strips a benign envelope wrapper. Prose before/after the code
+ * fence, multiple top-level JSON values, or code fences without
+ * valid JSON inside all still fail as PARSE_FAILURE.
  */
 export function strictParseJsonObject(rawText) {
   if (typeof rawText !== "string") {
     return { ok: false, code: "PARSE_FAILURE", error: "response is not a string" };
   }
+
+  // Try the strict path first (raw string IS valid JSON). This is the
+  // "happy path" every test in this repo exercises, and remains the
+  // canonical behaviour the original docstring promised.
   let parsed;
   try {
     parsed = JSON.parse(rawText);
-  } catch (err) {
-    return { ok: false, code: "PARSE_FAILURE", error: `invalid JSON: ${err.message}` };
+  } catch (firstErr) {
+    // Fallback: strip a SINGLE leading ```json (or ```) ... trailing
+    // ``` wrapper, then retry. Anchored so multi-fence / multi-object
+    // payloads (which the strict behaviour correctly rejects) are not
+    // rescued by this fallback.
+    const fenceMatch = rawText.match(/^\s*```(?:json)?\s*\n?([\s\S]*?)\n?\s*```\s*$/i);
+    if (!fenceMatch) {
+      return { ok: false, code: "PARSE_FAILURE", error: `invalid JSON: ${firstErr.message}` };
+    }
+    try {
+      parsed = JSON.parse(fenceMatch[1]);
+    } catch (secondErr) {
+      return { ok: false, code: "PARSE_FAILURE", error: `invalid JSON (after code-fence strip): ${secondErr.message}` };
+    }
   }
+
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return { ok: false, code: "PARSE_FAILURE", error: "parsed value is not a single JSON object" };
   }

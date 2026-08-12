@@ -70,6 +70,20 @@ test("buildDynamicUserContext: public message IDs are stable across two separate
   assert.deepEqual(r1.eligibleMessageIds, r2.eligibleMessageIds);
 });
 
+test("buildDynamicUserContext exposes the plan's grounding allow-list to the Generator", () => {
+  const chat = [humanMsg("Alice", "fact A", 1), humanMsg("Bob", "fact B", 2)];
+  const plan = {
+    gap: "facts need comparison",
+    target: { kind: "message", messageId: "m0" },
+    requiredReasoningAct: "request_specific_comparison_or_tradeoff",
+    answerableQuestionTemplate: "How do A and B compare?",
+    evidenceIds: ["m0", "m1"],
+  };
+  const result = buildDynamicUserContext({ chat, checkpointDescriptor: "cp", selectedRoleForDisplay: "INFORMATION_SYNTHESISER", generalInfo: "task", plan });
+  assert.match(result.userContent, /\[ALLOWED_GROUNDING_MESSAGE_IDS\]\nm0, m1/);
+  assert.deepEqual(result.allowedGroundingIds, ["m0", "m1"]);
+});
+
 test("buildDynamicUserContext: no private-profile or correct-answer data can leak, because only the public chat array is ever read", () => {
   // There is no parameter for private profile/correct-answer data at all --
   // this test documents that fact structurally: the function's only

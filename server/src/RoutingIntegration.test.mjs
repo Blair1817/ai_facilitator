@@ -30,9 +30,9 @@
 // premises are false: callbacks.js reads `const facilitation =
 // currentRound?.get("facilitation")` -- per-Round, sourced from the Round's
 // own facilitation field (set in onGameStart from the sequence table),
-// never from `game.get("treatment")`. ConditionRouting.mjs itself is left in
-// place as an unused, orphaned module from the earlier treatment-level
-// design -- nothing in production imports it.
+// never from `game.get("treatment")`. ConditionRouting.mjs and its test
+// were deleted in Phase 6.1 (Q7 = "可" -- nothing in production imported
+// them, and callbacks.js performs the dispatch inline).
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
@@ -84,18 +84,25 @@ test("callbacks.js: Static bypasses Adaptive assessment while both conditions re
   const handleChatSource = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
   const staticStart = handleChatSource.indexOf('if (facilitation === "static")');
   const staticEnd = handleChatSource.indexOf('if (facilitation !== "adaptive")', staticStart);
-  const featureStart = handleChatSource.indexOf("extractFeatures(", staticEnd);
+  const detectorStart = handleChatSource.indexOf("assessSemanticFactors(", staticEnd);
   const staticBlock = handleChatSource.slice(staticStart, staticEnd);
 
-  assert.ok(staticStart !== -1 && staticEnd !== -1 && featureStart !== -1);
-  assert.ok(staticStart < featureStart, "Static must branch before Adaptive feature extraction");
+  assert.ok(staticStart !== -1 && staticEnd !== -1 && detectorStart !== -1);
+  assert.ok(staticStart < detectorStart, "Static must branch before the Adaptive LLM detector");
   assert.match(staticBlock, /buildGeneratorContext\([\s\S]*?"static"[\s\S]*?null[\s\S]*?null/);
   assert.match(staticBlock, /runSharedGeneration\(/);
   assert.match(staticBlock, /return;/, "Static must return before entering the Adaptive assessment path");
   assert.doesNotMatch(staticBlock, /extractFeatures|getCandidateRoles|assessSemanticFactors|checkEvidence|evaluateGate|chooseRole|compilePlan/);
 
   assert.equal([...callbacksSource.matchAll(/async function runSharedGeneration\(/g)].length, 1, "there must still be exactly one shared generation implementation");
-  assert.equal([...handleChatSource.matchAll(/runSharedGeneration\(/g)].length, 2, "one Static branch and one Adaptive branch should call the same implementation");
+  // Phase 4 design (audit-phase1.md v3): the Adaptive path has TWO
+  // independent branches after the gate -- Generalist (matched-frequency
+  // control) and Specialist (one of the three Controllers). Both call
+  // the same shared `runSharedGeneration` as the Static branch, so
+  // there are 5 call sites in handleChat: 1 participant-requested
+  // Generalist + 1 Static + 1 automatic Generalist + 1 Specialist +
+  // 1 Specialist-to-Generalist repair fallback.
+  assert.equal([...handleChatSource.matchAll(/runSharedGeneration\(/g)].length, 5, "requested Generalist and all automatic routes must share the same generation implementation");
 });
 
 test("callbacks.js: getLLMResponse has exactly one INVOCATION site in the whole file (the shared generation path), not one per facilitation branch", () => {
@@ -109,9 +116,12 @@ test("callbacks.js: getLLMResponse has exactly one INVOCATION site in the whole 
 
 test("callbacks.js: handleChat bails out before any dispatch if the current Round has no facilitation value at all", () => {
   const handleChatSource = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
-  const earlyReturnIndex = handleChatSource.indexOf("if (!facilitation) return;");
+  const earlyReturnIndex = handleChatSource.indexOf("if (!facilitation) {");
   const sharedCallIndex = handleChatSource.indexOf("runSharedGeneration(");
   assert.ok(earlyReturnIndex !== -1 && sharedCallIndex !== -1 && earlyReturnIndex < sharedCallIndex);
+  const guardBlock = handleChatSource.slice(earlyReturnIndex, handleChatSource.indexOf("const players", earlyReturnIndex));
+  assert.match(guardBlock, /MISSING_ROUND_FACILITATION/);
+  assert.match(guardBlock, /return;/);
 });
 
 // ── Round-level facilitation regression coverage (Gate 3) ──────────────────
@@ -208,8 +218,8 @@ test("round creation stores exposure index directly and consumes taskVersion/fac
   assert.match(round2Block, /taskVersion:\s*sequence\.taskVersionOrder\[1\]/);
   assert.match(round2Block, /facilitation:\s*sequence\.facilitationOrder\[1\]/);
 
-  assert.match(callbacksSource, /const TASK_CONFIG_INDEX_BY_VERSION = Object\.freeze\(\{ A: 0, B: 1 \}\)/, "Task A/B must retain their existing HPTConfig.json material indexes");
-  assert.match(callbacksSource, /const taskConfigIndex = TASK_CONFIG_INDEX_BY_VERSION\[taskVersion\]/, "Task materials must be selected by canonical taskVersion");
+  assert.match(callbacksSource, /taskConfig\.tasks\.filter\(\(candidate\) => candidate\.taskVersion === taskVersion\)/, "Task materials must be selected only by canonical taskVersion");
+  assert.doesNotMatch(callbacksSource, /TASK_CONFIG_INDEX_BY_VERSION|taskConfigIndex/, "material identity must not fall back to an exposure index");
   assert.doesNotMatch(callbacksSource, /taskVersion:\s*sequence\.facilitationOrder/, "taskVersion must never be inferred from facilitation");
 });
 

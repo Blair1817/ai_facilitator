@@ -1,18 +1,19 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Generator Output Schema",
-  "description": "Generator(基于 Spec 第三、四、五节：三个角色约束 + 输出长度约束)只输出一条干预，role 必须与 Controller 已选定的角色一致，不得自行更改。",
+  "description": "Generator(基于 Spec 第三、四、五节：三个角色约束 + 输出长度约束)只输出一条干预，role 必须与 Controller 已选定的角色一致，不得自行更改。v2 设计：STATIC 专属于 Static AI facilitator（Alsobay 复刻条件），GENERALIST + 三个 Specialist 专属于 Adaptive AI facilitator。两者是两个独立 agent，不互通。",
   "type": "object",
   "properties": {
     "role": {
       "type": "string",
       "enum": [
         "STATIC",
+        "GENERALIST",
         "INFORMATION_EXPANDER",
         "EVIDENCE_CHALLENGER",
         "INFORMATION_SYNTHESISER"
       ],
-      "description": "STATIC 用于 static_ai 条件；其余三项对应 adaptive_ai 条件下 Controller 已选定的角色。该值必须与输入的 SELECTED_ROLE 完全一致。"
+      "description": "STATIC 用于 Static AI facilitator（Alsobay 复刻）；GENERALIST 是 Adaptive AI facilitator 的频率控制模式（在 Specialist 不清晰 / margin 不足时使用）；其余三项是 Adaptive AI facilitator 的三个 Specialist 角色。该值必须与输入的 SELECTED_ROLE 完全一致。Static 条件下 role 必须为 STATIC；Adaptive 条件下 role 必须为 GENERALIST / INFORMATION_EXPANDER / EVIDENCE_CHALLENGER / INFORMATION_SYNTHESISER 之一。"
     },
     "message": {
       "type": "string",

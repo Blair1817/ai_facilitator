@@ -1,7 +1,8 @@
-import { usePlayer } from "@empirica/core/player/classic/react";
+import { usePlayer, useRound } from "@empirica/core/player/classic/react";
 import React, { useState } from "react";
 import { Alert } from "../components/Alert";
 import { Button } from "../components/Button";
+import { clearDraftKeys, draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
 
 export function TLX() {
     const labelClassName = "block text-md font-bold text-gray-700 my-2";
@@ -9,19 +10,27 @@ export function TLX() {
     const inputClassName =
         "appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-empirica-500 focus:border-empirica-500 sm:text-sm";
     const player = usePlayer();
+    const round = useRound();
 
     // Define state variables for each question
-    const [question1, setQuestion1] = useState("");
-    const [question2, setQuestion2] = useState("");
-    const [question3, setQuestion3] = useState("");
-    const [question4, setQuestion4] = useState("");
-    const [question5, setQuestion5] = useState("");
-    const [question6, setQuestion6] = useState("");
+    const existing = player.round.get("tlxSurvey") ?? {};
+    const keyFor = (field) => draftKey({ playerId: player.id, roundId: round?.id, form: "tlx", field });
+    const draftKeys = ["tlxMentalDemand", "tlxPhysicalDemand", "tlxTemporalDemand", "tlxPerformance", "tlxEffort", "tlxFrustration"].map(keyFor);
+    const [question1, setQuestion1] = usePersistentDraft(draftKeys[0], existing.tlxMentalDemand ?? "");
+    const [question2, setQuestion2] = usePersistentDraft(draftKeys[1], existing.tlxPhysicalDemand ?? "");
+    const [question3, setQuestion3] = usePersistentDraft(draftKeys[2], existing.tlxTemporalDemand ?? "");
+    const [question4, setQuestion4] = usePersistentDraft(draftKeys[3], existing.tlxPerformance ?? "");
+    const [question5, setQuestion5] = usePersistentDraft(draftKeys[4], existing.tlxEffort ?? "");
+    const [question6, setQuestion6] = usePersistentDraft(draftKeys[5], existing.tlxFrustration ?? "");
     const [submitting, setSubmitting] = useState(false);
 
     const isComplete = Boolean(
         question1 && question2 && question3 && question4 && question5 && question6
     );
+
+    const updateAnswer = (_key, value, setter) => {
+        setter(value);
+    };
 
     function handleSubmit(event) {
         event.preventDefault();
@@ -36,7 +45,9 @@ export function TLX() {
             tlxPerformance: question4,
             tlxEffort: question5,
             tlxFrustration:question6,
+            submittedAt: Date.now(),
         });
+        clearDraftKeys(draftKeys);
         player.stage.set("submit", true);
     }
 
@@ -66,6 +77,7 @@ export function TLX() {
                                 <h3 className="text-xl leading-6 font-medium text-gray-900">
                                     Please take a moment to describe your experience during the task along the following dimensions:
                                 </h3>
+                                <p className="mt-3 text-sm font-bold text-gray-700">Scroll down to complete all questions.</p>
                             </div>
     
                             <div className="space-y-8 mt-9">
@@ -77,7 +89,7 @@ export function TLX() {
                                         <LikertScale
                                             selected={question1}
                                             name="question1"
-                                            onChange={(e) => setQuestion1(e.target.value)}
+                                            onChange={(e) => updateAnswer("tlxMentalDemand", e.target.value, setQuestion1)}
                                             showLabels={true}
                                         />
                                     </div>
@@ -91,7 +103,7 @@ export function TLX() {
                                         <LikertScale
                                             selected={question2}
                                             name="question2"
-                                            onChange={(e) => setQuestion2(e.target.value)}
+                                            onChange={(e) => updateAnswer("tlxPhysicalDemand", e.target.value, setQuestion2)}
                                             showLabels={false}
                                         />
                                     </div>
@@ -105,7 +117,7 @@ export function TLX() {
                                         <LikertScale
                                             selected={question3}
                                             name="question3"
-                                            onChange={(e) => setQuestion3(e.target.value)}
+                                            onChange={(e) => updateAnswer("tlxTemporalDemand", e.target.value, setQuestion3)}
                                             showLabels={false}
                                         />
                                     </div>
@@ -119,7 +131,7 @@ export function TLX() {
                                         <LikertScale
                                             selected={question4}
                                             name="question4"
-                                            onChange={(e) => setQuestion4(e.target.value)}
+                                            onChange={(e) => updateAnswer("tlxPerformance", e.target.value, setQuestion4)}
                                             showLabels={false}
                                         />
                                     </div>
@@ -133,7 +145,7 @@ export function TLX() {
                                         <LikertScale
                                             selected={question5}
                                             name="question5"
-                                            onChange={(e) => setQuestion5(e.target.value)}
+                                            onChange={(e) => updateAnswer("tlxEffort", e.target.value, setQuestion5)}
                                             showLabels={false}
                                         />
                                     </div>
@@ -147,7 +159,7 @@ export function TLX() {
                                         <LikertScale
                                             selected={question6}
                                             name="question6"
-                                            onChange={(e) => setQuestion6(e.target.value)}
+                                            onChange={(e) => updateAnswer("tlxFrustration", e.target.value, setQuestion6)}
                                             showLabels={false}
                                         />
                                     </div>
@@ -155,11 +167,13 @@ export function TLX() {
     
                                 <div className="mb-12 text-right">
                                     {!isComplete && (
-                                        <p className="text-sm text-gray-500 mb-2">
-                                            Please answer all six questions above to continue.
-                                        </p>
+                                        <Alert title="Survey incomplete">
+                                            Please answer every question shown above before continuing.
+                                        </Alert>
                                     )}
-                                    <Button type="submit" disabled={submitting || !isComplete}>Next</Button>
+                                    <div className="mt-6">
+                                        <Button type="submit" disabled={submitting || !isComplete}>Next</Button>
+                                    </div>
                                 </div>
                             </div>
                         </div>

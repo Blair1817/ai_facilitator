@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Facilitation Agent Architecture — v2</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --cream: #f7f5f0;
+    --paper: #ffffff;
+    --line: #e9e3d6;
+    --line-soft: #f0ebde;
+    --ink: #14171e;
+    --ink-soft: #3a4256;
+    --muted: #7c7a72;
+    --primary: #2f6f5e;       /* deep teal */
+    --primary-soft: #2f6f5e10;
+    --accent: #c97b3f;         /* warm clay */
+    --accent-soft: #c97b3f12;
+    --warn: #b06367;
+    --static: #4a5d8f;         /* slate blue */
+    --static-soft: #4a5d8f10;
+    --adaptive: #2f6f5e;
+    --adaptive-soft: #2f6f5e10;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--cream); color: var(--ink); font-family: 'Outfit', sans-serif; line-height: 1.55; }
+  body { min-height: 100dvh; }
+  body::before { content: ""; position: fixed; top: -200px; right: -200px; width: 600px; height: 600px; background: radial-gradient(circle, #2f6f5e08 0%, transparent 70%); pointer-events: none; }
+  body::after { content: ""; position: fixed; bottom: -200px; left: -200px; width: 600px; height: 600px; background: radial-gradient(circle, #c97b3f08 0%, transparent 70%); pointer-events: none; }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 64px 32px 96px; }
+
+  /* HERO */
+  .hero { margin-bottom: 64px; }
+  .eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 16px; }
+  h1 { font-family: 'DM Serif Display', serif; font-weight: 400; font-size: 44px; line-height: 1.1; letter-spacing: -0.01em; margin: 0 0 16px; color: var(--ink); }
+  .lede { font-size: 18px; color: var(--ink-soft); max-width: 720px; margin: 0; }
+  .lede em { color: var(--primary); font-style: normal; font-weight: 500; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 24px; margin-top: 32px; font-size: 13px; color: var(--muted); }
+  .meta-row span strong { color: var(--ink); font-weight: 600; }
+
+  /* SECTION */
+  section { margin-bottom: 64px; }
+  h2 { font-family: 'DM Serif Display', serif; font-weight: 400; font-size: 28px; line-height: 1.2; margin: 0 0 12px; color: var(--ink); }
+  .section-lede { color: var(--ink-soft); font-size: 15px; max-width: 720px; margin: 0 0 28px; }
+  h3 { font-family: 'Outfit', sans-serif; font-weight: 600; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 0 0 16px; }
+
+  /* TOP-LEVEL SPLIT */
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .agent-card { background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 28px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); position: relative; overflow: hidden; }
+  .agent-card::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+  .agent-card.static::before { background: var(--static); }
+  .agent-card.adaptive::before { background: var(--adaptive); }
+  .agent-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .agent-pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; padding: 4px 10px; border-radius: 999px; }
+  .agent-card.static .agent-pill { background: var(--static-soft); color: var(--static); }
+  .agent-card.adaptive .agent-pill { background: var(--adaptive-soft); color: var(--adaptive); }
+  .agent-name { font-family: 'DM Serif Display', serif; font-size: 24px; font-weight: 400; line-height: 1.1; }
+  .agent-card.static .agent-name { color: var(--static); }
+  .agent-card.adaptive .agent-name { color: var(--adaptive); }
+  .agent-desc { font-size: 14px; color: var(--ink-soft); margin: 4px 0 20px; }
+  .agent-flow { display: flex; flex-direction: column; gap: 10px; }
+  .step { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--cream); border: 1px solid var(--line-soft); border-radius: 10px; font-size: 13px; }
+  .step-icon { width: 28px; height: 28px; border-radius: 6px; background: var(--paper); border: 1px solid var(--line); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--muted); }
+  .step-text { flex: 1; }
+  .step-text strong { color: var(--ink); font-weight: 600; display: block; }
+  .step-text span { color: var(--muted); font-size: 12px; }
+  .step-arrow { color: var(--muted); font-size: 14px; line-height: 1; }
+  .step-down { margin-left: 14px; color: var(--line); font-size: 12px; }
+  .static .step-down { color: var(--static); opacity: 0.4; }
+  .adaptive .step-down { color: var(--adaptive); opacity: 0.4; }
+
+  .agent-tag { display: inline-block; font-size: 11px; padding: 2px 8px; background: var(--accent-soft); color: var(--accent); border-radius: 4px; font-weight: 500; margin-top: 12px; }
+  .static .agent-tag { background: var(--static-soft); color: var(--static); }
+
+  /* SPECIALIST GRID inside Adaptive */
+  .specialists { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 4px; }
+  .specialist { padding: 10px 12px; background: var(--cream); border: 1px solid var(--line-soft); border-radius: 10px; font-size: 12px; }
+  .specialist strong { display: block; color: var(--ink); font-size: 12px; margin-bottom: 2px; }
+  .specialist span { color: var(--muted); font-size: 11px; line-height: 1.4; }
+
+  /* DECISION BADGES */
+  .decision-row { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+  .decision { font-size: 11px; font-weight: 600; letter-spacing: 0.04em; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--paper); }
+  .decision.specialist { color: var(--primary); border-color: var(--primary); }
+  .decision.generalist { color: var(--accent); border-color: var(--accent); }
+  .decision.abstain { color: var(--muted); }
+
+  /* MAIN PIPELINE SVG DIAGRAM */
+  .diagram { background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); overflow-x: auto; }
+  .diagram svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+  .diagram-caption { text-align: center; font-size: 12px; color: var(--muted); margin-top: 16px; }
+
+  /* VALIDATOR CRITERIA */
+  .criteria { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  .criterion { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: flex; align-items: center; gap: 10px; font-size: 13px; }
+  .criterion-code { font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 3px 7px; background: var(--cream); border: 1px solid var(--line); border-radius: 4px; color: var(--ink-soft); white-space: nowrap; }
+  .criterion-text { color: var(--ink-soft); font-size: 12px; }
+
+  /* CHECKPOINT RULES */
+  .rules { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .rule { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; }
+  .rule-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .rule-head strong { font-size: 13px; color: var(--ink); }
+  .rule-head .val { font-family: 'JetBrains Mono', monospace; font-size: 11px; padding: 2px 8px; background: var(--cream); border: 1px solid var(--line); border-radius: 4px; color: var(--ink-soft); margin-left: auto; }
+  .rule-desc { font-size: 12px; color: var(--ink-soft); }
+  .rule.mention { border-color: var(--accent); background: var(--accent-soft); }
+  .rule.mention .rule-head strong { color: var(--accent); }
+
+  /* KEY DECISIONS TABLE */
+  table.decisions { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.decisions th { text-align: left; padding: 12px 16px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line); }
+  table.decisions td { padding: 14px 16px; border-bottom: 1px solid var(--line-soft); color: var(--ink-soft); vertical-align: top; }
+  table.decisions td:first-child { color: var(--ink); font-weight: 600; }
+  table.decisions tr:last-child td { border-bottom: none; }
+  table.decisions td code { font-family: 'JetBrains Mono', monospace; font-size: 11px; background: var(--cream); border: 1px solid var(--line); padding: 1px 6px; border-radius: 4px; color: var(--ink); }
+
+  /* FOOTER */
+  footer { margin-top: 80px; padding-top: 32px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+
+  @media (max-width: 768px) {
+    .wrap { padding: 40px 20px 64px; }
+    h1 { font-size: 32px; }
+    h2 { font-size: 22px; }
+    .split, .rules { grid-template-columns: 1fr; }
+    .specialists { grid-template-columns: 1fr; }
+    .meta-row { flex-direction: column; gap: 8px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- HERO -->
+  <header class="hero">
+    <div class="eyebrow">System Architecture · v2 · Phase 6 frozen</div>
+    <h1>Two parallel agents, one chat pipeline.</h1>
+    <p class="lede">
+      每条用户消息走同一条 <em>Check → Route → Generate → Validate → Publish</em> 主线。
+      区别只在 <em>Route</em> 这一步：<code>round.facilitation</code> 是 <em>static</em>
+      就走 STATIC 通道，<em>adaptive</em> 就跑 Assessor 决定 4 选 1。
+      Static 和 Adaptive 不互通，连 prompt 都是独立的。
+    </p>
+    <div class="meta-row">
+      <span><strong>Phases 1–6</strong> frozen</span>
+      <span><strong>230/230</strong> unit tests</span>
+      <span><strong>5/5</strong> E2E</span>
+      <span><strong>7</strong> Validator criteria</span>
+      <span><strong>3</strong> specialist roles</span>
+    </div>
+  </header>
+
+  <!-- SECTION 1: Top-level split -->
+  <section>
+    <h2>1. Top level — two agents, no overlap</h2>
+    <p class="section-lede">
+      <code>round.facilitation</code> 决定走哪条主线。两条线在 Generator 之前互不相干，prompt 模板、role 枚举、abstain 策略都是各自独立。
+    </p>
+    <div class="split">
+
+      <!-- STATIC -->
+      <div class="agent-card static">
+        <div class="agent-head">
+          <span class="agent-pill">A. Static</span>
+        </div>
+        <div class="agent-name">Fixed prompt · 每条必发</div>
+        <p class="agent-desc">无 Assessor，无 abstain。每条消息满足频控就强制生成并 publish。</p>
+        <div class="agent-flow">
+          <div class="step">
+            <span class="step-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+            <div class="step-text"><strong>prompt: static.md</strong><span>同 Generator 同一份 base + role 段</span></div>
+          </div>
+          <div class="step-down">↓</div>
+          <div class="step">
+            <span class="step-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3v18M19 3v18M3 5h18M3 19h18"/></svg></span>
+            <div class="step-text"><strong>Generator (LLM)</strong><span>MiniMax-Text-01 · /v1/chat/completions</span></div>
+          </div>
+        </div>
+        <span class="agent-tag">decision enum 不参与 · 没有 generalist/specialist 概念</span>
+      </div>
+
+      <!-- ADAPTIVE -->
+      <div class="agent-card adaptive">
+        <div class="agent-head">
+          <span class="agent-pill">B. Adaptive</span>
+        </div>
+        <div class="agent-name">Assessor → 4 选 1</div>
+        <p class="agent-desc">每条消息先打分（8 factors），再决定让哪个角色说话，必要时降级为 generalist 或 abstention。</p>
+        <div class="agent-flow">
+          <div class="step">
+            <span class="step-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.93 4.93l2.12 2.12M16.95 16.95l2.12 2.12M4.93 19.07l2.12-2.12M16.95 7.05l2.12-2.12"/></svg></span>
+            <div class="step-text"><strong>SemanticAssessor</strong><span>8 factors · feature 0.2 + semantic 0.8</span></div>
+          </div>
+          <div class="step-down">↓</div>
+          <div class="step">
+            <span class="step-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg></span>
+            <div class="step-text"><strong>Routing decision</strong><span>margin 大 → specialist · 小 → generalist · 太小 → abstain</span></div>
+            <div class="decision-row">
+              <span class="decision specialist">specialist</span>
+              <span class="decision generalist">generalist</span>
+              <span class="decision abstain">abstain</span>
+            </div>
+          </div>
+          <div class="step-down">↓</div>
+          <div class="specialists">
+            <div class="specialist"><strong>Information Expander</strong><span>补 participants 漏掉的事实 / perspective</span></div>
+            <div class="specialist"><strong>Evidence Challenger</strong><span>质疑 ungrounded 的 claim · 拉证据</span></div>
+            <div class="specialist"><strong>Information Synthesiser</strong><span>把零散观点揉成有结构的小结</span></div>
+          </div>
+          <div class="step-down">↓</div>
+          <div class="step">
+            <span class="step-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3v18M19 3v18M3 5h18M3 19h18"/></svg></span>
+            <div class="step-text"><strong>Generator (LLM)</strong><span>prompt = base + 角色 .md · 同样进 Validator</span></div>
+          </div>
+        </div>
+        <span class="agent-tag">Generalist ≠ 第 4 个 specialist · 它是 specialist 不够格时的兜底</span>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- SECTION 2: Main pipeline diagram -->
+  <section>
+    <h2>2. 每条消息的生命周期</h2>
+    <p class="section-lede">
+      从用户在 chat 里发消息，到 llmLog 多一条 entry，完整流程。一次发送可能触发 1 次或 2 次 Generator 调用（带 repair）。
+    </p>
+    <div class="diagram">
+      <svg viewBox="0 0 1080 640" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#7c7a72"/>
+          </marker>
+          <marker id="arr-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#c97b3f"/>
+          </marker>
+          <marker id="arr-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#b06367"/>
+          </marker>
+        </defs>
+
+        <!-- Entry: human message -->
+        <g>
+          <rect x="20" y="280" width="150" height="64" rx="10" fill="#ffffff" stroke="#e9e3d6" stroke-width="1.5"/>
+          <text x="95" y="305" text-anchor="middle" font-size="12" font-weight="600" fill="#14171e" font-family="Outfit">Human message</text>
+          <text x="95" y="324" text-anchor="middle" font-size="10" fill="#7c7a72" font-family="Outfit">Empirica chat 事件</text>
+        </g>
+
+        <!-- Checkpoint Manager -->
+        <g>
+          <rect x="210" y="240" width="170" height="144" rx="10" fill="#f7f5f0" stroke="#2f6f5e" stroke-width="1.5"/>
+          <text x="295" y="266" text-anchor="middle" font-size="12" font-weight="600" fill="#2f6f5e" font-family="Outfit">CheckpointManager</text>
+          <text x="295" y="288" text-anchor="middle" font-size="10" fill="#3a4256" font-family="Outfit">• chat ready</text>
+          <text x="295" y="304" text-anchor="middle" font-size="10" fill="#3a4256" font-family="Outfit">• stage == Task</text>
+          <text x="295" y="320" text-anchor="middle" font-size="10" fill="#3a4256" font-family="Outfit">• time floor 10s</text>
+          <text x="295" y="336" text-anchor="middle" font-size="10" fill="#3a4256" font-family="Outfit">• cap 3 / round</text>
+          <text x="295" y="352" text-anchor="middle" font-size="10" fill="#3a4256" font-family="Outfit">• cooldown 30s</text>
+          <text x="295" y="370" text-anchor="middle" font-size="10" font-weight="600" fill="#c97b3f" font-family="Outfit">⚡ @[Facilitator] bypass</text>
+        </g>
+
+        <!-- Arrow: msg -> CheckpointManager -->
+        <line x1="170" y1="312" x2="208" y2="312" stroke="#7c7a72" stroke-width="1.5" marker-end="url(#arr)"/>
+
+        <!-- Branch label: round.facilitation -->
+        <g>
+          <rect x="430" y="180" width="160" height="40" rx="8" fill="#ffffff" stroke="#e9e3d6" stroke-width="1.5"/>
+          <text x="510" y="198" text-anchor="middle" font-size="11" font-weight="600" fill="#14171e" font-family="Outfit">round.facilitation</text>
+          <text x="510" y="212" text-anchor="middle" font-size="10" fill="#7c7a72" font-family="Outfit">"static" | "adaptive"</text>
+        </g>
+
+        <!-- Arrow: CheckpointManager -> routing -->
+        <line x1="380" y1="312" x2="428" y2="200" stroke="#7c7a72" stroke-width="1.5" marker-end="url(#arr)"/>
+
+        <!-- STATIC branch box -->
+        <g>
+          <rect x="640" y="100" width="180" height="100" rx="10" fill="#4a5d8f10" stroke="#4a5d8f" stroke-width="1.5"/>
+          <text x="730" y="128" text-anchor="middle" font-size="11" font-weight="600" fill="#4a5d8f" font-family="Outfit">STATIC</text>
+          <text x="730" y="150" text-anchor="middle" font-size="10" fill="#3a4256" font-family="Outfit">prompt: static.md</text>
+          <text x="730" y="168" text-anchor="middle" font-size="10" fill="#3a4256" font-family="Outfit">无 abstention</text>
+          <text x="730" y="186" text-anchor="middle" font-size="10" fill="#3a4256" font-family="Outfit">每条必 publish</text>
+        </g>
+
+        <!-- ADAPTIVE branch box -->
+        <g>
+          <rect x="640" y="220" width="180" height="240" rx="10" fill="#2f6f5e10" stroke="#2f6f5e" stroke-width="1.5"/>
+          <text x="730" y="248" text-anchor="middle" font-size="11" font-weight="600" fill="#2f6f5e" font-family="Outfit">ADAPTIVE</text>
+          <line x1="660" y1="258" x2="800" y2="258" stroke="#2f6f5e" stroke-width="0.5" opacity="0.3"/>
+          <text x="730" y="278" text-anchor="middle" font-size="10" font-weight="600" fill="#14171e" font-family="Outfit">Assessor</text>
+          <text x="730" y="294" text-anchor="middle" font-size="9" fill="#7c7a72" font-family="Outfit">8 factors · 0.2/0.8</text>
+          <line x1="660" y1="306" x2="800" y2="306" stroke="#2f6f5e" stroke-width="0.5" opacity="0.3"/>
+          <text x="730" y="324" text-anchor="middle" font-size="10" font-weight="600" fill="#14171e" font-family="Outfit">3 specialists</text>
+          <text x="730" y="340" text-anchor="middle" font-size="9" fill="#7c7a72" font-family="Outfit">Expander · Challenger · Synthesiser</text>
+          <line x1="660" y1="352" x2="800" y2="352" stroke="#2f6f5e" stroke-width="0.5" opacity="0.3"/>
+          <text x="730" y="370" text-anchor="middle" font-size="10" font-weight="600" fill="#14171e" font-family="Outfit">Generalist 兜底</text>
+          <text x="730" y="386" text-anchor="middle" font-size="9" fill="#7c7a72" font-family="Outfit">同 Static 上下文，无 plan.gap</text>
+          <line x1="660" y1="398" x2="800" y2="398" stroke="#2f6f5e" stroke-width="0.5" opacity="0.3"/>
+          <text x="730" y="416" text-anchor="middle" font-size="10" fill="#7c7a72" font-family="Outfit">→ abstain 跳过</text>
+        </g>
+
+        <!-- Arrows from routing to branches -->
+        <line x1="590" y1="195" x2="638" y2="150" stroke="#4a5d8f" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="590" y1="205" x2="638" y2="310" stroke="#2f6f5e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+        <!-- Generator -->
+        <g>
+          <rect x="880" y="180" width="170" height="200" rx="10" fill="#ffffff" stroke="#2f6f5e" stroke-width="2"/>
+          <text x="965" y="208" text-anchor="middle" font-size="12" font-weight="600" fill="#2f6f5e" font-family="Outfit">Generator</text>
+          <text x="965" y="226" text-anchor="middle" font-size="10" fill="#7c7a72" font-family="Outfit">LLM call</text>
+          <text x="965" y="244" text-anchor="middle" font-size="10" fill="#7c7a72" font-family="Outfit">MiniMax-Text-01</text>
+          <text x="965" y="262" text-anchor="middle" font-size="10" fill="#7c7a72" font-family="Outfit">/v1/chat/completions</text>
+          <line x1="900" y1="276" x2="1030" y2="276" stroke="#e9e3d6"/>
+          <text x="965" y="296" text-anchor="middle" font-size="10" font-weight="600" fill="#14171e" font-family="Outfit">prompt =</text>
+          <text x="965" y="312" text-anchor="middle" font-size="10" fill="#3a4256" font-family="Outfit">base.md</text>
+          <text x="965" y="328" text-anchor="middle" font-size="10" fill="#3a4256" font-family="Outfit">+ role 专属 .md</text>
+          <text x="965" y="344" text-anchor="middle" font-size="10" fill="#3a4256" font-family="Outfit">+ 14 features</text>
+          <text x="965" y="360" text-anchor="middle" font-size="10" fill="#3a4256" font-family="Outfit">+ chat history</text>
+        </g>
+
+        <!-- Arrows: branches -> Generator -->
+        <line x1="820" y1="150" x2="878" y2="240" stroke="#4a5d8f" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="820" y1="310" x2="878" y2="280" stroke="#2f6f5e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+        <!-- Validator -->
+        <g>
+          <rect x="640" y="500" width="180" height="100" rx="10" fill="#ffffff" stroke="#c97b3f" stroke-width="1.5"/>
+          <text x="730" y="528" text-anchor="middle" font-size="12" font-weight="600" fill="#c97b3f" font-family="Outfit">SemanticValidator</text>
+          <text x="730" y="546" text-anchor="middle" font-size="10" fill="#7c7a72" font-family="Outfit">独立 LLM call · 同 model</text>
+          <text x="730" y="566" text-anchor="middle" font-size="10" fill="#3a4256" font-family="Outfit">7 criteria · pass/fail</text>
+          <text x="730" y="584" text-anchor="middle" font-size="10" fill="#7c7a72" font-family="Outfit">失败 → 1 次 repair</text>
+        </g>
+
+        <!-- Arrow: Generator -> Validator -->
+        <line x1="965" y1="380" x2="965" y2="430" x2="730" y2="430" x2="730" y2="498" stroke="#7c7a72" stroke-width="1.5" marker-end="url(#arr)" fill="none"/>
+
+        <!-- Repair arrow: Validator back to Generator (dashed, accent) -->
+        <path d="M 820 540 L 900 540 L 900 350 L 880 350" stroke="#c97b3f" stroke-width="1.5" stroke-dasharray="4 3" fill="none" marker-end="url(#arr-accent)"/>
+        <text x="855" y="455" font-size="10" font-style="italic" fill="#c97b3f" font-family="Outfit" text-anchor="middle">[PRIOR_FAILED_</text>
+        <text x="855" y="470" font-size="10" font-style="italic" fill="#c97b3f" font-family="Outfit" text-anchor="middle">CRITERIA] hint</text>
+
+        <!-- Publish + llmLog -->
+        <g>
+          <rect x="430" y="500" width="160" height="60" rx="10" fill="#2f6f5e" stroke="#2f6f5e" stroke-width="1.5"/>
+          <text x="510" y="525" text-anchor="middle" font-size="12" font-weight="600" fill="#ffffff" font-family="Outfit">Publish</text>
+          <text x="510" y="544" text-anchor="middle" font-size="10" fill="#ffffff" font-family="Outfit">append to llmLog</text>
+        </g>
+
+        <!-- Silent outcome box -->
+        <g>
+          <rect x="240" y="500" width="160" height="60" rx="10" fill="#ffffff" stroke="#b06367" stroke-width="1.5" stroke-dasharray="4 3"/>
+          <text x="320" y="525" text-anchor="middle" font-size="12" font-weight="600" fill="#b06367" font-family="Outfit">SILENT</text>
+          <text x="320" y="544" text-anchor="middle" font-size="10" fill="#7c7a72" font-family="Outfit">+ 强 log 标记</text>
+        </g>
+
+        <!-- Arrows: Validator -> Publish / Silent -->
+        <line x1="640" y1="540" x2="592" y2="540" stroke="#2f6f5e" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="640" y1="560" x2="402" y2="540" stroke="#b06367" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr-warn)"/>
+        <text x="520" y="535" font-size="9" fill="#2f6f5e" font-family="Outfit" text-anchor="middle">passed</text>
+        <text x="500" y="500" font-size="9" fill="#b06367" font-family="Outfit" text-anchor="middle">repair 仍失败</text>
+      </svg>
+      <p class="diagram-caption">实线 = 正常路径 · 橙色虚线 = repair 循环（最多 1 次）· 红色虚线 = silent 失败路径</p>
+    </div>
+  </section>
+
+  <!-- SECTION 3: Validator criteria -->
+  <section>
+    <h2>3. Validator — 7 frozen criteria</h2>
+    <p class="section-lede">
+      每条 Generator 输出都会被独立 LLM 调用打分。任何一个 <code>true</code> = fail，触发 repair。
+      frozen 不可改，evidenceChecker 那边复用同一份。
+    </p>
+    <div class="criteria">
+      <div class="criterion"><span class="criterion-code">notGrounded</span><span class="criterion-text">不基于已说过的内容，引入外部事实</span></div>
+      <div class="criterion"><span class="criterion-code">nonNeutral</span><span class="criterion-text">带价值判断 / 立场偏向</span></div>
+      <div class="criterion"><span class="criterion-code">roleMisaligned</span><span class="criterion-text">做的事跟当前角色定义不符</span></div>
+      <div class="criterion"><span class="criterion-code">inventedInformation</span><span class="criterion-text">捏造 chat 里没出现过的细节</span></div>
+      <div class="criterion"><span class="criterion-code">recommendationDetected</span><span class="criterion-text">替用户做决策 / 给最终答案</span></div>
+      <div class="criterion"><span class="criterion-code">unsupportedInformationDetected</span><span class="criterion-text">提到的事找不到 source</span></div>
+      <div class="criterion"><span class="criterion-code">unsupportedConsensusClaim</span><span class="criterion-text">宣称"大家都同意 X"但没人说过</span></div>
+    </div>
+  </section>
+
+  <!-- SECTION 4: Checkpoint rules -->
+  <section>
+    <h2>4. CheckpointManager — 频控规则</h2>
+    <p class="section-lede">
+      每条消息进 pipeline 之前先过这 6 条 gate。任何一条失败就 silent 跳过（不消耗 opportunity）。
+      <code>@[Facilitator]</code> 是唯一绕过频控的通道。
+    </p>
+    <div class="rules">
+      <div class="rule">
+        <div class="rule-head"><strong>1. chat ready</strong><span class="val">required</span></div>
+        <div class="rule-desc">stage 处于 chat 阶段，不在 intro / final decision / survey</div>
+      </div>
+      <div class="rule">
+        <div class="rule-head"><strong>2. stage == Task</strong><span class="val">required</span></div>
+        <div class="rule-desc">只在 Task 阶段评估，Result / Debrief 阶段全部跳过</div>
+      </div>
+      <div class="rule">
+        <div class="rule-head"><strong>3. time floor</strong><span class="val">10s</span></div>
+        <div class="rule-desc">距离 round 开始 ≥ 10 秒，否则太早</div>
+      </div>
+      <div class="rule">
+        <div class="rule-head"><strong>4. intervention cap</strong><span class="val">3 / round</span></div>
+        <div class="rule-desc">硬上限，不可绕过（包括 @-mention）</div>
+      </div>
+      <div class="rule">
+        <div class="rule-head"><strong>5. cooldown</strong><span class="val">30s</span></div>
+        <div class="rule-desc">距离上次成功 publish ≥ 30s</div>
+      </div>
+      <div class="rule">
+        <div class="rule-head"><strong>6. opportunity gate</strong><span class="val">≥ 6 msgs</span></div>
+        <div class="rule-desc">距上次 evaluate ≥ 6 条新消息</div>
+      </div>
+      <div class="rule mention" style="grid-column: 1 / -1;">
+        <div class="rule-head"><strong>⚡ @[Facilitator] mention bypass</strong><span class="val">mention_bypass</span></div>
+        <div class="rule-desc">新消息里出现 <code>@[Facilitator]</code> 时无条件放行：跳过 cooldown / opportunity gate / dedup，但仍尊重 cap / stage / time floor / chat ready。reason 记为 <code>mention_bypass</code>，llmLog 里能区分。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 5: Key design decisions -->
+  <section>
+    <h2>5. 关键设计决策（来自 Q1–Q12）</h2>
+    <table class="decisions">
+      <thead>
+        <tr><th style="width: 28%">决策</th><th>选择</th><th style="width: 18%">对应</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Static vs Adaptive</td>
+          <td>两个完全独立的 system，role 枚举不同，prompt 模板不同，abstain 策略不同</td>
+          <td><code>v2 design</code></td>
+        </tr>
+        <tr>
+          <td>Generalist 是什么</td>
+          <td>Adaptive 的频率控制分支（margin 太小降级）— 不是第 4 个 specialist</td>
+          <td><code>Q3</code></td>
+        </tr>
+        <tr>
+          <td>Failed checkpoint 是否消耗机会</td>
+          <td>不消耗，下次重新评估</td>
+          <td><code>Q3</code></td>
+        </tr>
+        <tr>
+          <td>频控默认值</td>
+          <td>cap=3, cooldown=30s, min_time=10s</td>
+          <td><code>Q4</code></td>
+        </tr>
+        <tr>
+          <td>Validator 行为</td>
+          <td>1 次 repair + 持续失败 silent + 强 log</td>
+          <td><code>Q6</code></td>
+        </tr>
+        <tr>
+          <td>Validator 用哪个 model</td>
+          <td>跟 Generator 同 model（MiniMax-Text-01）</td>
+          <td><code>Q6</code></td>
+        </tr>
+        <tr>
+          <td>@-mention 行为</td>
+          <td>即时回应，标记 <code>@[Facilitator]</code>，绕过 cooldown/opportunity</td>
+          <td><code>Q8</code></td>
+        </tr>
+        <tr>
+          <td>API endpoint</td>
+          <td><code>https://api.minimax.chat/v1</code>（.chat 不是 .com）</td>
+          <td><code>Q9</code></td>
+        </tr>
+        <tr>
+          <td>Feature / semantic 权重</td>
+          <td>feature: 0.2 / semantic: 0.8（倒过来）</td>
+          <td><code>delibra spec</code></td>
+        </tr>
+        <tr>
+          <td>plan.gap 传给 Generalist 吗</td>
+          <td>不传。Generalist 跟 Static 看到的上下文完全一样</td>
+          <td><code>Q12</code></td>
+        </tr>
+        <tr>
+          <td>feature 不可用时</td>
+          <td>返回 <code>null</code>，不默认 0</td>
+          <td><code>assessor spec</code></td>
+        </tr>
+        <tr>
+          <td>CheckpointsManager 决策字段</td>
+          <td><code>decision: "specialist" | "generalist" | "abstain"</code></td>
+          <td><code>v2 design</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer>
+    <span>ai_facilitator-main · v2 architecture · Phase 6 frozen</span>
+    <span>230/230 unit · 5/5 E2E · 11/11 readiness</span>
+  </footer>
+</div>
+</body>
+</html>

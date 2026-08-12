@@ -5,23 +5,42 @@
 // prompt text that was used before the real source material was migrated
 // in.
 //
-// Contract change from the earlier placeholder version: this now returns an
-// OBJECT ({ blocked, content, reason, metadata }), not a plain string,
-// because the real static.md is a skeleton (see PROMPT_MODULE_STATUS.md)
-// and the caller (callbacks.js's handleChat) must be able to detect a
-// blocked prompt and skip the LLM call entirely, rather than silently
-// sending incomplete content. callbacks.js has been updated to match this
-// contract.
-import { getStaticPromptBundle, getAdaptivePromptBundle, assembleDynamicUserContext } from "./prompts/promptLoader.js";
+// v2 design (Phase 2): TWO independent facilitator systems. Static AI
+// and Adaptive AI are separate agents and do not share a prompt path.
+//   - Static AI facilitator: base.md + static.md (Alsobay 2026 D.2)
+//   - Adaptive AI facilitator: base.md + generalist.md (frequency control)
+//                              | base.md + {expander,challenger,synthesiser}.md
+//
+// Contract: this returns an OBJECT ({ blocked, content, reason, metadata }),
+// not a plain string, because the promptLoader's fail-closed detection
+// (unresolved markers, missing files) needs the caller to detect a blocked
+// prompt and skip the LLM call entirely, rather than silently sending
+// incomplete content. callbacks.js's handleChat is updated to match.
+//
+// Routing: `role` is unused for the Static condition (Static always
+// emits role "STATIC"). For the Adaptive condition, `role` is one of
+// {"expander", "challenger", "synthesiser", "generalist"}:
+//   - the three Specialists are routed to getAdaptivePromptBundle(role);
+//   - "generalist" is the Adaptive's matched-frequency control and is
+//     routed to getGeneralistPromptBundle(), NOT getAdaptivePromptBundle.
+//     (They are different prompts and are deliberately not interchangeable.)
+import { getStaticPromptBundle, getGeneralistPromptBundle, getAdaptivePromptBundle, assembleDynamicUserContext } from "./prompts/promptLoader.js";
 
 export { assembleDynamicUserContext };
 
 export function llmSystemPrompts(facilitation, role) {
     if (facilitation === "static") {
+        // Static AI facilitator: role is always STATIC; ignore any role arg.
         return getStaticPromptBundle();
     }
 
     if (facilitation === "adaptive") {
+        if (role === "generalist") {
+            // Adaptive Generalist (frequency control). Separate bundle from
+            // any Specialist; routed via getGeneralistPromptBundle() so the
+            // dispatcher and the bundle API are symmetric.
+            return getGeneralistPromptBundle();
+        }
         return getAdaptivePromptBundle(role);
     }
 

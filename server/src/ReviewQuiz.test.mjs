@@ -37,9 +37,9 @@ test("Task A and Task B each define the five retained ReviewQuiz questions under
   assert.doesNotMatch(JSON.stringify(REVIEW_QUIZZES), /sameInformation|Must all group members have exactly the same information/);
   assert.equal(getReviewQuiz("A").questions.find((question) => question.id === "discussionMinutes").correctAnswer, "10");
   assert.equal(getReviewQuiz("B").questions.find((question) => question.id === "discussionMinutes").correctAnswer, "10");
-  assert.match(getReviewQuiz("A").scenario, /International Youth Sports Council/);
+  assert.match(getReviewQuiz("A").scenario, /International Youth Games/);
   assert.doesNotMatch(JSON.stringify(getReviewQuiz("A")), /International Sports Federation/);
-  assert.match(getReviewQuiz("B").scenario, /International Innovation Council/);
+  assert.match(getReviewQuiz("B").scenario, /Global Innovation Summit/);
   assert.match(getReviewQuiz("B").scenario, /Global Innovation Summit/);
   assert.doesNotMatch(JSON.stringify(REVIEW_QUIZZES), /12 minutes|"12"/);
 });
@@ -55,6 +55,10 @@ test("HPT briefings use the same canonical Task A/B identities as ReviewQuiz", (
   assert.match(hptConfig.tasks[0].generalInfo, /Do not use outside knowledge or assumptions about the cities/);
   assert.match(hptConfig.tasks[1].generalInfo, /Task B: Global Innovation Summit host campus/);
   assert.match(hptConfig.tasks[1].generalInfo, /Do not use outside knowledge or assumptions about the universities/);
+  assert.doesNotMatch(
+    JSON.stringify(hptConfig.tasks.flatMap((task) => task.playerConfig)),
+    /Your Private Report|Only you can see|Share any information|different report|same information/i,
+  );
 });
 
 test("each question is scored individually at runtime and any incorrect answer prevents passing", () => {
@@ -126,10 +130,13 @@ test("both Rounds implement the approved task lifecycle in order", () => {
       'name: "TaskInformation"',
       'name: "Walkthrough"',
       "addReviewQuizStage(",
+      'name: "IceBreakerStartCountdown"',
       'name: "Introduction"',
+      'name: "IceBreakerEndCountdown"',
       'name: "InitialDecision"',
       'name: "Task"',
       'name: "FinalDecision"',
+      'name: "IndividualAssessment"',
       'name: "TLX"',
       'name: "SubjectiveSurvey"',
     ];
@@ -142,17 +149,22 @@ test("both Rounds implement the approved task lifecycle in order", () => {
   }
 
   assert.equal([...callbacksSource.matchAll(/name: "Break"/g)].length, 1);
+  assert.match(callbacksSource, /const BREAK_STAGE_SAFETY_DURATION_SECONDS = 24 \* 60 \* 60;/);
   assert.match(callbacksSource, /const TASK_INFORMATION_DURATION_SECONDS = 10 \* 60;/);
   assert.match(callbacksSource, /const WALKTHROUGH_DURATION_SECONDS = 10 \* 60;/);
+  assert.match(callbacksSource, /const ICEBREAKER_TRANSITION_DURATION_SECONDS = 10;/);
+  assert.match(callbacksSource, /const REVIEW_QUIZ_SAFETY_DURATION_SECONDS = 24 \* 60 \* 60;/);
+  assert.doesNotMatch(callbacksSource, /heldStagePauseTransition|heldStageCompletionTransitions|breakProgressRequest/);
+  assert.doesNotMatch(callbacksSource, /365 \* 24 \* 60 \* 60/);
   assert.match(callbacksSource, /const TLX_DURATION_SECONDS = 10 \* 60;/);
   assert.match(callbacksSource, /const SUBJECTIVE_SURVEY_DURATION_SECONDS = 10 \* 60;/);
   assert.match(callbacksSource, /const BREAK_DURATION_SECONDS = 300;/);
-  assert.match(round1Stages, /name: "SubjectiveSurvey"[\s\S]*name: "Break",\s+duration: BREAK_DURATION_SECONDS/);
+  assert.match(round1Stages, /name: "SubjectiveSurvey"[\s\S]*name: "Break",\s+duration: BREAK_STAGE_SAFETY_DURATION_SECONDS/);
   assert.doesNotMatch(round2Stages, /name: "Break"/);
   assert.ok(callbacksSource.indexOf('round1.addStage({ name: "Break"') < callbacksSource.indexOf('round2.addStage({ name: "TaskInformation"'));
 });
 
-test("client routes ReviewQuiz, keeps retries local, guards double-submit, and persists no ReviewQuiz data", () => {
+test("client routes ReviewQuiz, guards double-submit, preserves drafts locally, and persists scored attempts", () => {
   assert.match(gameSource, /stageName == "ReviewQuiz"/);
   assert.match(gameSource, /<ReviewQuiz key=\{roundStageKey\}/);
   assert.match(reviewQuizSource, /round\?\.get\("taskVersion"\)/);
@@ -161,8 +173,9 @@ test("client routes ReviewQuiz, keeps retries local, guards double-submit, and p
   assert.match(reviewQuizSource, /disabled=\{!isComplete \|\| isProcessing\}/);
   assert.match(reviewQuizSource, /clearIncorrectReviewQuizAnswers/);
   assert.match(reviewQuizSource, /Return to Review Quiz/);
-  assert.doesNotMatch(reviewQuizSource, /player\.round\.set|player\.set\(|round\.set\(|game\.set\(/);
-  assert.doesNotMatch(reviewQuizSource, /attemptCount|attempts\s*[:=]|submittedAt|passedAt/);
+  assert.match(reviewQuizSource, /usePersistentDraft/);
+  assert.match(reviewQuizSource, /player\.round\.set\("reviewQuizAttempts"/);
+  assert.match(reviewQuizSource, /submittedAt/);
   assert.doesNotMatch(reviewQuizSource, /retryCount|maxRetries|maxAttempts/);
   assert.doesNotMatch(readFileSync(path.join(dirname, "../../client/src/stages/reviewQuizConfig.js"), "utf8"), /addReviewQuizAttempt|attemptCount|submittedAt|passedAt/);
 });
@@ -171,10 +184,12 @@ test("global intro keeps only one-time global steps and round screens use round 
   assert.match(appSource, /return \[OverallInstructions, RecruitmentBootstrap\];/);
   assert.doesNotMatch(appSource, /return \[[^\]]*(Introduction|UserInterface|AttentionCheck)/);
   assert.match(introductionSource, /round\?\.get\("generalInfo"\)/);
+  assert.match(introductionSource, /taskBackgroundOnly\(generalInfo\)/);
+  assert.match(introductionSource, /<RenderMarkdown markdownText=\{taskBackground\}/);
   assert.match(introductionSource, /round\?\.get\("taskVersion"\)/);
   assert.doesNotMatch(introductionSource, /IntroContent/);
-  assert.match(userInterfaceSource, /round\?\.get\("facilitation"\)/);
-  assert.doesNotMatch(userInterfaceSource, /game\.get\("treatment"\).*facilitation/);
+  assert.equal([...callbacksSource.matchAll(/name: "Walkthrough"/g)].length, 2);
+  assert.doesNotMatch(userInterfaceSource, /facilitation\s*=/);
 });
 
 test("round questionnaires preserve payloads on player.round and leave the global exit", () => {
@@ -190,15 +205,16 @@ test("stale async Discussion results are discarded after their originating stage
   assert.match(callbacksSource, /game\.currentRound\?\.id !== originatingRoundId/);
   assert.match(callbacksSource, /game\.currentStage\?\.id !== originatingStageId/);
   assert.match(callbacksSource, /Discarded stale AI result after the originating Discussion stage ended/);
-  assert.match(callbacksSource, /Discarded stale feature result after the originating Discussion stage ended/);
+  assert.match(callbacksSource, /Discarded stale LLM detector result after the originating Discussion stage ended/);
 });
 
-test("Discussion remains 10 minutes with unchanged timer/early-ready wiring", () => {
+test("Discussion remains 10 minutes and retains unanimous participant early-ready wiring", () => {
   assert.match(treatmentsSource, /gameDuration:\s+10/);
   assert.equal([...callbacksSource.matchAll(/name: "Task",\s+duration: gameDuration \* 60/g)].length, 2);
   assert.match(callbacksSource, /now \+ gameDuration \* 60 \* 1000/);
   assert.match(discussionSource, /player\.stage\.set\("submit", !isReady\)/);
-  assert.match(callbacksSource, /if \(messagesSince < 6\) return;/);
+  assert.match(discussionSource, /ReadyToDecidePanel|Ready to make the final decision/);
+  assert.match(callbacksSource, /shouldEvaluateCheckpoint\(\{/);
 });
 
 test("existing HPT fact-bank shape and private-profile assignment remain intact", () => {
@@ -207,7 +223,8 @@ test("existing HPT fact-bank shape and private-profile assignment remain intact"
   assert.deepEqual(hptConfig.tasks[1].decisionOptions.map((option) => option.label), ["Norvale", "Halden", "Fenwick"]);
   for (const task of hptConfig.tasks) {
     assert.equal(task.playerConfig.length, 3);
-    assert.deepEqual(task.playerConfig.map((profile) => profile.playerName), ["Red", "Pink", "Green"]);
+    assert.deepEqual(task.playerConfig.map((profile) => profile.playerName), ["Green", "Blue", "Pink"]);
+    assert.deepEqual(task.playerConfig.map((profile) => profile.hexCode), ["39BC21", "206EEF", "F90494"]);
     assert.deepEqual(task.playerConfig.map((profile) => (profile.playerContent.match(/\n- /g) || []).length), [7, 7, 7]);
   }
 });

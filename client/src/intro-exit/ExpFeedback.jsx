@@ -1,7 +1,8 @@
 import { usePlayer, useGame } from "@empirica/core/player/classic/react";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Alert } from "../components/Alert";
 import { Button } from "../components/Button";
+import { clearDraftKeys, draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
 
 export function ExpFeedback({ next }) {
     const labelClassName = "block text-md font-bold text-gray-700 my-2";
@@ -9,12 +10,24 @@ export function ExpFeedback({ next }) {
     const inputClassName =
         "appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-empirica-500 focus:border-empirica-500 sm:text-sm";
     const player = usePlayer();
+    // Phase 6.2 cleanup: previously read `const { facilitation } =
+    // game.get("treatment")` here. v2 design dropped the treatment-level
+    // `facilitation` factor, so the value is always undefined and was
+    // never actually used in this component. Removed.
     const game = useGame();
-    const { facilitation } = game.get("treatment");
 
     // Define state variables for each question
-    const [question1, setQuestion1] = useState("");
+    const feedbackDraftKey = draftKey({ playerId: player.id, form: "expFeedback", field: "question1" });
+    const [question1, setQuestion1] = usePersistentDraft(feedbackDraftKey, "");
     const [submitting, setSubmitting] = useState(false);
+    const [pendingSubmissionId, setPendingSubmissionId] = useState(null);
+    const storedSubmission = player.get("expFeedback");
+
+    useEffect(() => {
+        if (!pendingSubmissionId || storedSubmission?.submissionId !== pendingSubmissionId) return;
+        clearDraftKeys([feedbackDraftKey]);
+        next();
+    }, [pendingSubmissionId, storedSubmission?.submissionId]);
 
 
     function handleSubmit(event) {
@@ -23,10 +36,13 @@ export function ExpFeedback({ next }) {
             return;
         }
         setSubmitting(true);
+        const submissionId = `${player.id}:${Date.now()}`;
+        setPendingSubmissionId(submissionId);
         player.set("expFeedback", {
+            submissionId,
             expFeedback: question1,
+            submittedAt: Date.now(),
         });
-        next();
     }
 
     return (
