@@ -3,7 +3,7 @@ import React, {
     useRef,
     useState,
 } from "react";
-import { usePlayer, usePlayers, useGame, useRound, useStage} from "@empirica/core/player/classic/react";
+import { usePlayer, usePlayers, useStage, useRound } from "@empirica/core/player/classic/react";
 import { Loading } from "@empirica/core/player/react";
 import { MentionsInput, Mention } from 'react-mentions';
 import ReactMentionsStyling from "./ReactMentionsStyling.jsx";
@@ -18,22 +18,23 @@ export function Chat({
     loading: LoadingComp = Loading,
 }) {
     const player = usePlayer();
-    const msgs = scope.getAttribute(attribute)?.items || []
+    const stage = useStage();
+    const round = useRound();
+    const msgs = scope.getAttribute(attribute)?.items || [];
+    const requestResult = player.get("humanMessageRequestResult");
 
 
 
 
     const handleNewMessage = (text) => {
-        scope.append(attribute, {
-            text,
-            ts: new Date().getTime(),
-            sender: {
-                id: player.id,
-                name: player.get("name") || player.id,
-                hexCode: player.get("hexCode"),
-                avatar: player.get("name") != "Facilitator" ? `https://api.dicebear.com/8.x/identicon/svg?rowColor=${player.get("hexCode")}` : "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F",
-            },
+        const requestId = globalThis.crypto?.randomUUID?.() ?? `${player.id}-${Date.now()}`;
+        player.set("humanMessageRequest", {
+            requestId,
+            roundId: round?.id ?? null,
+            stageId: stage.id,
+            content: text,
         });
+        return requestId;
     };
 
     return (
@@ -42,7 +43,7 @@ export function Chat({
             {player.stage.get("newMessages") && <div className="text-center bg-red-500 text-white py-1 px-4 rounded shadow-lg">
                 <p>Scroll to bottom to see latest messages...</p>
             </div>}
-            <Input onNewMessage={handleNewMessage} />
+            <Input onNewMessage={handleNewMessage} requestResult={requestResult} />
         </div>
     );
 }
@@ -53,10 +54,7 @@ function Messages(props) {
     const player = usePlayer();
     const playerRef = useRef(player);
     playerRef.current = player;
-    const stage = useStage();
-    const game = useGame();
     const [msgCount, setMsgCount] = useState(0);
-    const { hiddenInfoCue } = game.get("treatment");
 
     // This first effect is to detect scrolling to the bottom.
     // Depends on msgs.length so it re-runs when the scrollable div first mounts
@@ -113,23 +111,10 @@ function Messages(props) {
                         </svg>
                     </div>
 
-                    {stage.get("name") == "Task" & hiddenInfoCue ? 
-                    <>
                     <h4 className="text-gray-700 font-semibold">No messages sent yet.</h4>
-
-                    <p className="text-gray-500 text-center">
-                    People may have different information about what is being discussed in this meeting, so encourage everyone to share all of the relevant information they have.
-                    </p>
-                    </>
-                    :
-                    <>
-                    <h4 className="text-gray-700 font-semibold">No messages sent yet.</h4>
-
                     <p className="text-gray-500 text-center">
                         Send a message to start the conversation.
                     </p>
-                    </>
-                    }                    
                 </div>
             </div>
         );
@@ -138,17 +123,6 @@ function Messages(props) {
     return (
         <div className="h-full overflow-auto pl-2 pr-4 pb-2" ref={scroller}>
             
-            {stage.get("name") == "Task" & hiddenInfoCue ?
-            <>
-            <div className="flex items-start my-5 ml-4 justify-center">
-                <div className="ml-3 text-sm">
-                    <p className="text-gray-400 group-hover:text-gray-800 pt-3px" style={{ whiteSpace: "pre-line" }}>{"People may have different information about what is being discussed in this meeting, so encourage everyone to share all of the relevant information they have."}</p>
-                </div>
-            </div>
-            </>
-            : <></>
-            }
-
             {msgs.map((msg) => (
                 <MessageComp key={msg.id} attribute={msg} />
             ))}
@@ -169,7 +143,8 @@ function MessageComp({ attribute }) {
     };
 
     let avatar = msg.sender.avatar;
-    let hexCode = msg.sender.hexCode;
+    const isHuman = (msg.speakerType ?? (msg.sender.id === "ai" ? "facilitator" : "human")) === "human";
+    let hexCode = isHuman ? msg.sender.hexCode : "4B5563";
 
     let avatarImage = (
         <img
@@ -196,32 +171,38 @@ function MessageComp({ attribute }) {
 
                     <span className="pl-2 text-gray-400">{ts && relTime(ts)}</span>
                 </p>
-                <p className="text-gray-900 group-hover:text-gray-800 pt-3px" style={{ whiteSpace: "pre-line" }}>{renderMessageWithMentions(msg.text)}</p>
+                <p className="text-gray-900 group-hover:text-gray-800 pt-3px" style={{ whiteSpace: "pre-line" }}>{renderMessageWithMentions(msg.content ?? msg.text)}</p>
             </div>
         </div>
     );
 }
 
-function Input({ onNewMessage }) {
+function Input({ onNewMessage, requestResult }) {
     const player = usePlayer();
-    const game = useGame();
     const round = useRound();
     const messageDraftKey = draftKey({ playerId: player.id, roundId: round?.id, form: "chat", field: "message" });
     const [text, setText] = usePersistentDraft(messageDraftKey, "");
-    // Phase 6.2 (Q10 = "不显示"): the v2 design dropped the
-    // treatment-level `facilitation` factor; the round-level value is
-    // what gates the @Facilitator mention option today. v2 design only
-    // has "static" and "adaptive" (both AI), so the @Facilitator option
-    // is available in every practical case; the != "none" guard is kept
-    // for the theoretical no-facilitator case.
+    const [pendingRequestId, setPendingRequestId] = useState(null);
+    const [requestError, setRequestError] = useState("");
     const facilitation = round?.get("facilitation");
+
+    useEffect(() => {
+        if (!pendingRequestId || requestResult?.requestId !== pendingRequestId) return;
+        if (requestResult.status === "accepted") {
+            setText("");
+            setRequestError("");
+        } else {
+            setRequestError("Your message was not sent because this discussion stage is no longer accepting messages.");
+        }
+        setPendingRequestId(null);
+    }, [pendingRequestId, requestResult]);
 
     const mentionUsers = usePlayers().map((player) => ({
         id: player.id,
         display: player.get("name"),
     }));
 
-    if (facilitation != "none") {
+    if (facilitation != "none" && facilitation != "human") {
         mentionUsers.push({
             id: "ai",
             display: "Facilitator",
@@ -252,9 +233,10 @@ function Input({ onNewMessage }) {
             return;
         }
 
-        onNewMessage(txt);
+        if (pendingRequestId) return;
+        setRequestError("");
+        setPendingRequestId(onNewMessage(txt));
         player.set("isTyping", false);
-        setText("");
     };
 
     const handleKeyDown = (e) => {
@@ -302,6 +284,7 @@ function Input({ onNewMessage }) {
             <div className="flex-col w-full">
                 <MentionsInput
                     value={text}
+                    disabled={Boolean(pendingRequestId)}
                     onKeyDown={(e) => {
                         handleKeyDown(e);
                         handleBackspace(e);
@@ -324,11 +307,13 @@ function Input({ onNewMessage }) {
                 <div style={{ height: "1rem" }}>
                     <TypingIndicator />
                 </div>
+                {requestError && <p className="text-sm text-red-600" role="alert">{requestError}</p>}
             </div>
 
 
             <button
                 type="button"
+                disabled={Boolean(pendingRequestId)}
                 className="rounded-md bg-gray-100 w-9 h-9 p-2 text-sm font-semibold text-gray-500 shadow-sm hover:bg-gray-200 hover:text-empirica-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-empirica-500"
                 onClick={handleSubmit}
             >

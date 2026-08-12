@@ -38,9 +38,9 @@ test("global exit forms wait for their exact stored submission before advancing"
   }
 });
 
-test("chat drafts survive reloads while sent messages still use Empirica append", () => {
+test("chat drafts survive reloads while sent messages use the reviewed server request boundary", () => {
   const source = read("components/CustomChat.jsx");
   assert.match(source, /form: "chat"/);
   assert.match(source, /usePersistentDraft/);
-  assert.match(source, /scope\.append\(attribute/);
+  assert.match(source, /player\.set\("humanMessageRequest"/);
 });

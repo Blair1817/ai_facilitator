@@ -36,7 +36,7 @@ export function PlayerCreate({ onPlayerID, connecting }: PlayerCreateProps) {
                   htmlFor="playerID"
                   className="block text-sm font-medium text-gray-700 text-center"
                 >
-                  Identifier (e.g., Prolific ID)
+                  Identifier
                 </label>
                 <div className="mt-1 w-full">
                   <input

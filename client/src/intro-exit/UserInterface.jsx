@@ -1,21 +1,17 @@
-import React from "react";
+import React, { useLayoutEffect, useRef } from "react";
 import { Button } from "../components/Button";
-import { usePlayer, useGame, useRound } from "@empirica/core/player/classic/react";
+import { usePlayer } from "@empirica/core/player/classic/react";
 
 
 export function UserInterface() {
   const player = usePlayer();
-  const game = useGame();
-  const round = useRound();
-  const { gameDuration } = game.get("treatment");
-  // Phase 6.2 (Q10 = "不显示"): the round-level facilitation condition is
-  // a research-side concept only. The walkthrough used to vary the visible
-  // text based on it ("a human" vs "an AI"), which would unblind the
-  // participant to the between-condition manipulation. v2 design has only
-  // AI facilitators (Static and Adaptive) so the text is unconditional
-  // (modulo the "no facilitator at all" guard, kept for the theoretical
-  // facilitation=none case the YAML still allows).
-  const facilitation = round?.get("facilitation");
+  const scrollContainerRef = useRef(null);
+
+  useLayoutEffect(() => {
+    scrollContainerRef.current?.scrollTo(0, 0);
+    document.getElementById("participant-scroll-root")?.scrollTo(0, 0);
+    window.scrollTo(0, 0);
+  }, []);
 
   if (player.stage.get("submit")) {
     return (
@@ -30,30 +26,35 @@ export function UserInterface() {
   }
 
   return (
-    <div className="flex-col justify-center mx-20% mt-5%">
-      <div className="prose !max-w-none">
-        <h1> Task walkthrough:</h1>
-        <ul className="space-y-4">
-          <li><strong>During the task, you'll be assigned a color as a nickname, and be able to chat with your group members using the chat window in the right half of the screen.</strong></li>
-          <li><strong>In the chat window, you can use "@" to tag another member of the committee in your message.</strong></li>
-          {facilitation != "none" && <li><strong>Other than the members of the committee, there will be an AI facilitator whose role is to listen to the conversation and support the group as you reach a decision.</strong> You can also tag the facilitator in your messages using "@" to address them directly.</li>}
-          <li><strong>On the left side of the screen, you'll be able to review information about the task, and view a research report that was prepared for you before the meeting.</strong></li>
-          <li><strong>You will have a total of {gameDuration} minutes to discuss the decision as a group;</strong> the remaining time is shown at the top of the screen. After the timer is up, you will:
-            <ol>
-              <li>Submit your final individual decision.</li>
-              <li>Complete the questionnaire for this task.</li>
-            </ol>
-          </li>
-        </ul>
-      </div>
-      <div className="flex mt-10 justify-end">
-        <div className="text-right">
-          <Button handleClick={() => player.stage.set("submit", true)} autoFocus>
-            <p>Next</p>
+    <div ref={scrollContainerRef} className="h-full w-full overflow-y-auto bg-gray-50 px-4 py-8 sm:px-8">
+      <main className="mx-auto w-full max-w-3xl rounded-lg border border-gray-200 bg-white p-6 shadow-sm sm:p-8">
+        <article className="prose !max-w-none">
+          <h1>Task Walkthrough</h1>
+          <p><strong>Scroll down to review the full walkthrough.</strong></p>
+          <section>
+            <h2>1. Read the materials</h2>
+            <p>Read the task information and your Task Report carefully. The report contains the information for this task. You will then complete a short review quiz.</p>
+          </section>
+          <section>
+            <h2>2. Make an initial decision</h2>
+            <p>Choose the option you currently think is most appropriate and rate your confidence from 0 to 100. This response is private.</p>
+          </section>
+          <section>
+            <h2>3. Discuss with your group</h2>
+            <p>After a short icebreaker, you will discuss the task for 10 minutes. Your Task Report will remain visible beside the chat.</p>
+            <p>Use the chat to discuss information from the task materials and the available options. You may tag a group member by typing <code>@</code> followed by their nickname. The AI facilitator may also post brief messages during the discussion.</p>
+          </section>
+          <section>
+            <h2>4. Record the final decision</h2>
+            <p>After the discussion, record your group’s final decision. If your group did not reach a final decision, you will then complete a short set of individual questions. Your individual responses will not be shown to the other group members.</p>
+          </section>
+        </article>
+        <div className="mt-8 flex justify-end border-t border-gray-100 pt-6">
+          <Button handleClick={() => player.stage.set("submit", true)}>
+            <span>Next</span>
           </Button>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
-

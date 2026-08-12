@@ -28,13 +28,11 @@ test("FinalQuestions is the first global exit step and is not a round stage", ()
   assert.doesNotMatch(finalQuestionsSource, /player\.(round|stage)\.set/);
 });
 
-test("FinalQuestions contains the five required primary questions and two optional follow-ups", () => {
+test("FinalQuestions retains only the three approved primary questions and one optional follow-up", () => {
   const exactQuestions = [
-    "Compared with the first task, did your group change how it approached the discussion in the second task?",
     "Did anything you experienced during the first task influence how you approached the second task?",
     "How different did the automated facilitators appear across the two tasks?",
     "Which automated facilitator did you prefer overall?",
-    "Which facilitator better addressed what your group needed during the discussion?",
   ];
   for (const question of exactQuestions) {
     assert.ok(finalQuestionsSource.includes(question), `missing exact question: ${question}`);
@@ -42,10 +40,9 @@ test("FinalQuestions contains the five required primary questions and two option
 
   assert.match(
     finalQuestionsSource,
-    /discussionApproachChanged &&[\s\S]*firstTaskCarryover &&[\s\S]*facilitatorDifference !== null &&[\s\S]*preferredFacilitator &&[\s\S]*betterNeedsFacilitator/,
+    /firstTaskCarryover &&[\s\S]*facilitatorDifference !== null &&[\s\S]*preferredFacilitator/,
   );
   assert.match(finalQuestionsSource, /value === "yes" \|\| value === "not_sure"/);
-  assert.match(finalQuestionsSource, /If yes or not sure, please briefly describe what changed \(optional\)\./);
   assert.match(finalQuestionsSource, /If yes or not sure, please briefly explain what carried over from the first task \(optional\)\./);
 
   const textareas = [...finalQuestionsSource.matchAll(/<textarea[\s\S]*?\/>/g)];
@@ -61,7 +58,6 @@ test("FinalQuestions uses the specified stable option values and a discrete nume
     "first_task",
     "second_task",
     "no_preference",
-    "equally_suitable",
   ]) {
     assert.match(finalQuestionsSource, new RegExp(`value: "${value}"`));
   }
@@ -74,37 +70,24 @@ test("FinalQuestions uses the specified stable option values and a discrete nume
   assert.match(finalQuestionsSource, /facilitatorDifference: Number\(facilitatorDifference\)/);
 });
 
-test("the final question retains its four intended options and excludes a human facilitator", () => {
-  const needsOptions = finalQuestionsSource.match(/const NEEDS_OPTIONS = \[([\s\S]*?)\];/);
-  assert.ok(needsOptions, "NEEDS_OPTIONS should still define the final question options");
-
-  for (const option of [
-    '{ value: "first_task", label: "The facilitator in the first task" }',
-    '{ value: "second_task", label: "The facilitator in the second task" }',
-    '{ value: "equally_suitable", label: "They were about equally suitable" }',
-    '{ value: "not_sure", label: "Not sure" }',
-  ]) {
-    assert.ok(needsOptions[1].includes(option), `missing final-question option: ${option}`);
-  }
-  assert.doesNotMatch(needsOptions[1], /human facilitator/i);
+test("obsolete final questions and their payload keys are absent", () => {
+  assert.doesNotMatch(finalQuestionsSource, /NEEDS_OPTIONS|betterNeedsFacilitator|discussionApproachChanged|discussionApproachChangeDescription/);
 });
 
-test("FinalQuestions stores one participant-level payload and waits until that submission is observable before advancing", () => {
+test("FinalQuestions stores one participant-level payload and advances after storage acknowledgement", () => {
   assert.match(finalQuestionsSource, /submittingRef\.current/);
   assert.match(finalQuestionsSource, /player\.set\("finalQuestions", \{/);
   for (const key of [
-    "discussionApproachChanged",
-    "discussionApproachChangeDescription",
     "firstTaskCarryover",
     "firstTaskCarryoverDescription",
     "facilitatorDifference",
     "preferredFacilitator",
-    "betterNeedsFacilitator",
   ]) {
     assert.match(finalQuestionsSource, new RegExp(`\\b${key}\\b`));
   }
   assert.match(finalQuestionsSource, /storedSubmission\?\.submissionId !== pendingSubmissionId/);
-  assert.match(finalQuestionsSource, /submissionId,/);
-  assert.match(finalQuestionsSource, /submittedAt: Date\.now\(\)/);
+  assert.match(finalQuestionsSource, /player\.set\("finalQuestions", \{[\s\S]*submissionId/);
+  assert.match(finalQuestionsSource, /clearDraftKeys\([\s\S]*next\(\);/);
+  assert.doesNotMatch(finalQuestionsSource, /finalQuestionsCompletion(Request|Ack)|completionRequestRef|completionAck/);
   assert.doesNotMatch(finalQuestionsSource, /usePlayers|useRound|useStage|player\.stage\.set\("submit"/);
 });

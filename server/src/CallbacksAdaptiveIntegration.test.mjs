@@ -34,10 +34,10 @@ const customChatSource = readFileSync(
 
 // ── structural assertions on callbacks.js ────────────────────────────────
 
-test("round chats are created by vector append without scalar initialization", () => {
+test("round chats are read as vectors and human sends use the reviewed server request boundary", () => {
   assert.doesNotMatch(callbacksSource, /game\.set\(\s*["']chat_round_0["']/);
   assert.doesNotMatch(callbacksSource, /game\.set\(\s*["']chat_round_1["']/);
-  assert.match(customChatSource, /scope\.append\(attribute,\s*\{/);
+  assert.match(customChatSource, /player\.set\("humanMessageRequest",\s*\{/);
   assert.match(customChatSource, /scope\.getAttribute\(attribute\)\?\.items\s*\|\|\s*\[\]/);
 });
 
