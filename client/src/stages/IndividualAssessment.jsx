@@ -2,15 +2,18 @@ import React, { useEffect, useRef, useState } from "react";
 import { usePlayer, usePlayers, useRound } from "@empirica/core/player/classic/react";
 import { Loading } from "@empirica/core/player/react";
 import { Button } from "../components/Button";
-import { ConfidenceSlider, NO_GROUP_FINAL_DECISION_OPTION, OptionChoice } from "../components/DecisionControls";
+import { ConfidenceSlider, OptionChoice } from "../components/DecisionControls";
 
 export function IndividualAssessment() {
   const player = usePlayer();
   const players = usePlayers();
   const round = useRound();
   const options = round?.get("decisionOptions") ?? [];
-  const groupChoice = player.round.get("groupFinalChoice");
-  const groupReachedDecision = options.some((option) => option.id === groupChoice);
+  const officialGroupChoice = round?.get("officialGroupFinalChoice");
+  const finalDecisionOutcome = round?.get("finalDecisionOutcome");
+  const groupReachedDecision = finalDecisionOutcome === "consensus_choice"
+    && options.some((option) => option.id === officialGroupChoice);
+  const groupFailedToDecide = finalDecisionOutcome === "declared_fail" || finalDecisionOutcome === "timeout_fail";
   const [choice, setChoice] = useState(() => player.round.get("finalPersonalChoice") ?? "");
   const [confidence, setConfidence] = useState(() => player.round.get("finalPersonalChoiceConfidence") ?? null);
   const [rationale, setRationale] = useState(() => player.round.get("finalPersonalChoiceRationale") ?? "");
@@ -41,7 +44,7 @@ export function IndividualAssessment() {
     <div className="h-full w-full overflow-y-auto bg-gray-50 px-4 py-8 sm:px-8">
       <form onSubmit={submit} className="mx-auto block min-w-0 w-full max-w-3xl rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
         <h1 className="text-2xl font-bold text-gray-900">Individual Assessment</h1>
-        <p className="mt-3 rounded-md bg-gray-100 p-4 font-semibold text-gray-800">{groupChoice === NO_GROUP_FINAL_DECISION_OPTION.id ? "Your group did not reach a final decision." : "No group decision was recorded."}</p>
+        <p className="mt-3 rounded-md bg-gray-100 p-4 font-semibold text-gray-800">{groupFailedToDecide ? "Your group did not reach a final decision." : "No group decision was recorded."}</p>
         <p className="mt-2 text-sm text-gray-600">Your answers on this page are private and are not shown to your teammates.</p>
         <p className="mt-3 text-sm font-bold text-gray-700">Scroll down to complete all questions.</p>
         <div className="mt-7"><OptionChoice legend="After the group discussion, which option do you personally consider most suitable?" options={options} value={choice} onChange={(value)=>persist("finalPersonalChoice",value,setChoice)} name="finalPersonalChoice" /></div>

@@ -2,12 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   canConfirmBreak,
+  allFinalDecisionConfirmationsMatch,
+  classifyFinalDecision,
   MESSAGE_TYPES,
+  NO_GROUP_FINAL_DECISION,
   allocateSequencePosition,
   buildCanonicalMessage,
   normalizeMessageContent,
-  requestFeatureScores,
   reviewHumanMessageRequest,
+  summarizeFinalDecisionDrafts,
 } from "./ExperimentPolicies.mjs";
 
 const breakEnd = 1_000_000;
@@ -15,6 +18,30 @@ const breakEnd = 1_000_000;
 test("T32-T33: readiness opens exactly 45 seconds before the scheduled end", () => {
   assert.equal(canConfirmBreak(breakEnd, breakEnd - 45_001), false);
   assert.equal(canConfirmBreak(breakEnd, breakEnd - 45_000), true);
+});
+
+test("FinalDecision requires exactly three identical non-empty drafts", () => {
+  assert.deepEqual(summarizeFinalDecisionDrafts([{ choice: "A" }, { choice: "A" }, { choice: "A" }]), { status: "agreed", matchedChoice: "A" });
+  assert.deepEqual(summarizeFinalDecisionDrafts([{ choice: "A" }, { choice: "B" }, { choice: "A" }]), { status: "not_agreed", matchedChoice: null });
+  assert.deepEqual(summarizeFinalDecisionDrafts([{ choice: "A" }, { choice: "A" }, { choice: "" }]), { status: "not_agreed", matchedChoice: null });
+});
+
+test("FinalDecision confirmations must all bind to the current matching choice", () => {
+  assert.equal(allFinalDecisionConfirmationsMatch([
+    { confirmedChoice: "A" }, { confirmedChoice: "A" }, { confirmedChoice: "A" },
+  ], "A"), true);
+  assert.equal(allFinalDecisionConfirmationsMatch([
+    { confirmedChoice: "A" }, { confirmedChoice: null }, { confirmedChoice: "A" },
+  ], "A"), false);
+  assert.equal(allFinalDecisionConfirmationsMatch([
+    { confirmedChoice: "A" }, { confirmedChoice: "A" }, { confirmedChoice: "A" },
+  ], "B"), false);
+});
+
+test("FinalDecision classifies consensus, declared FAIL, and timeout FAIL distinctly", () => {
+  assert.deepEqual(classifyFinalDecision("A"), { officialChoice: "A", outcome: "consensus_choice", timedOut: false });
+  assert.deepEqual(classifyFinalDecision(NO_GROUP_FINAL_DECISION), { officialChoice: "FAIL", outcome: "declared_fail", timedOut: false });
+  assert.deepEqual(classifyFinalDecision(null, { timedOut: true }), { officialChoice: "FAIL", outcome: "timeout_fail", timedOut: true });
 });
 
 const baseRequestContext = {
@@ -114,19 +141,4 @@ test("R13/D6: canonical human/facilitator/timer/system/IceBreaker messages satis
     assert.equal(value.text, value.content);
     assert.equal(normalizeMessageContent(value), value.content);
   }
-});
-
-test("R20/G4: feature HTTP boundary preserves the sidecar request/response contract with a local mock", async () => {
-  let captured;
-  const data = await requestFeatureScores({
-    fetchImpl: async (_url, options) => {
-      captured = JSON.parse(options.body);
-      return { ok: true, json: async () => ({ novelty_score: 0.5, redundancy_score: 0.2, agreement_score: 0.1, justification_score: 0.4, gini_score: 0 }) };
-    },
-    url: "http://localhost:5001/features",
-    messages: [{ sender: { name: "Participant 1" }, content: "Reason", text: "legacy" }],
-    redundancyThreshold: 0.85,
-  });
-  assert.deepEqual(captured, { messages: [{ sender: "Participant 1", text: "Reason" }], redundancy_threshold: 0.85 });
-  assert.equal(data.novelty_score, 0.5);
 });

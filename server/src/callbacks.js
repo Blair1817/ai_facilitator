@@ -31,16 +31,59 @@ import { buildAgentState } from "./AgentState.mjs";
 import { validateCandidate } from "./SemanticValidator.js";
 import { claimSequenceForStudy, RANDOMIZATION_LEDGER_KEY } from "./RandomizationLedger.mjs";
 import { randomUUID } from "node:crypto";
-import { beginInFlight, finalizeAuditLog, recoverInterruptedInFlight } from "./InFlightAudit.mjs";
+import { beginInFlight, finalizeAuditLog as finalizeAuditLogBase, recoverInterruptedInFlight } from "./InFlightAudit.mjs";
 import {
   canConfirmBreak,
+  allFinalDecisionConfirmationsMatch,
+  classifyFinalDecision,
   MESSAGE_TYPES,
+  NO_GROUP_FINAL_DECISION,
   allocateSequencePosition,
   buildCanonicalMessage,
   reviewHumanMessageRequest,
+  summarizeFinalDecisionDrafts,
 } from "./ExperimentPolicies.mjs";
+import {
+  buildGlobalResponseRow,
+  buildInterventionMirror,
+  buildMessageRow,
+  buildRoundResponseRows,
+  mirrorNonBlocking,
+  persistAssignmentOrBlock,
+  researchParticipantId,
+  researchPersistence,
+} from "./SupabasePersistence.mjs";
 
 dotenv.config();
+
+let researchMirrorQueue = Promise.resolve();
+function queueResearchMirror(operation, task) {
+  researchMirrorQueue = mirrorNonBlocking(researchMirrorQueue.then(task), {
+    operation,
+    onError: (failure) => console.warn("[research mirror] non-blocking write failed", failure),
+  });
+  return researchMirrorQueue;
+}
+
+function finalizeAuditLog(store, entry) {
+  finalizeAuditLogBase(store, entry);
+  const round = store.currentRound;
+  if (!round) return;
+  const chat = store.get(`chat_round_${round.get("index")}`) || [];
+  const completed = { ...entry, auditCompletedAt: Date.now() };
+  queueResearchMirror("intervention", async () => {
+    const persistence = researchPersistence();
+    for (const message of chat) {
+      await persistence.upsertMessage(buildMessageRow({
+        gameId: store.id, roundId: round.id,
+        transcriptKey: `chat_round_${round.get("index")}`, message,
+      }));
+    }
+    await persistence.mirrorIntervention(buildInterventionMirror({
+      gameId: store.id, roundId: round.id, facilitation: round.get("facilitation"), chat, entry: completed,
+    }));
+  });
+}
 
 // Phase 6.3 (model-version freeze): the default was previously the
 // "gpt-4o" alias, which silently picks the latest snapshot on every
@@ -506,8 +549,9 @@ function addReviewQuizStage(round) {
 // every Game's durable claim plus counts and block history, shared across all
 // Batches in this Tajriba database. The before-listener runs ahead of
 // onGameStart so Round creation can fail closed unless a durable claim exists.
-Empirica.before("game", "start", (ctx, { game, start }) => {
+Empirica.before("game", "start", async (ctx, { game, start }) => {
   if (!start) return;
+  if (game.get("assignmentPersistenceStatus") === "confirmed") return;
   const games = [...ctx.scopesByKind("game").values()];
   const { ledger, claim } = claimSequenceForStudy(ctx.globals, games, game, SEQUENCE_IDS);
 
@@ -524,11 +568,35 @@ Empirica.before("game", "start", (ctx, { game, start }) => {
     counts: ledger.counts,
     updatedAt: Date.now(),
   });
+
+  try {
+    await persistAssignmentOrBlock(researchPersistence(), {
+      game_id: game.id,
+      sequence_id: claim.sequenceId,
+      allocation_number: claim.allocationNumber,
+      allocation_block_id: claim.allocationBlockId,
+      allocation_position: claim.allocationPosition,
+      allocation_claimed_at: new Date(claim.claimedAt).toISOString(),
+      allocation_method: "global_persisted_least-count-permuted-block-v1",
+      ledger_key: RANDOMIZATION_LEDGER_KEY,
+      assignment_status: "confirmed",
+      updated_at: new Date().toISOString(),
+    });
+    game.set("assignmentPersistenceStatus", "confirmed");
+  } catch (error) {
+    game.set("assignmentPersistenceStatus", "blocked");
+    game.set("assignmentPersistenceError", error.message);
+    throw error;
+  }
 });
 
 // ── onGameStart ───────────────────────────────────────────────────────────────
 
 Empirica.onGameStart(({ game }) => {
+  if (game.get("assignmentPersistenceStatus") !== "confirmed") {
+    game.end("failed", game.get("assignmentPersistenceError") || "Research assignment persistence failed before this session could begin.");
+    return;
+  }
   const treatment = game.get("treatment");
   const { gameDuration, phase1Duration, introDuration } = treatment;
   // facilitation is no longer read from treatment. It is assigned per-round
@@ -553,10 +621,9 @@ Empirica.onGameStart(({ game }) => {
   game.set("activeCallbacksInstanceId", CALLBACKS_INSTANCE_ID);
   if (!game.get("systemInfo")) {
     game.set("systemInfo", {
-      model:           openaiModel,
-      featureServer:   "http://localhost:5001",
-      thresholdSource: "hardcoded_placeholder",
-      thresholds:      THRESHOLDS,
+      model: openaiModel,
+      detectorPipeline: ["semantic_assessor", "evidence_checker", "gate"],
+      thresholds: THRESHOLDS,
     });
   }
 
@@ -601,7 +668,7 @@ Empirica.onGameStart(({ game }) => {
   round1.addStage({ name: "IceBreakerEndCountdown",   duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
   round1.addStage({ name: "InitialDecision",          duration: phase1Duration * 60 });
   round1.addStage({ name: "Task",                     duration: gameDuration * 60 });
-  round1.addStage({ name: "FinalDecision",            duration: 120 });
+  round1.addStage({ name: "FinalDecision",            duration: 90 });
   round1.addStage({ name: "IndividualAssessment",     duration: INDIVIDUAL_ASSESSMENT_DURATION_SECONDS });
   round1.addStage({ name: "TLX",                      duration: TLX_DURATION_SECONDS });
   round1.addStage({ name: "SubjectiveSurvey",         duration: SUBJECTIVE_SURVEY_DURATION_SECONDS });
@@ -621,7 +688,7 @@ Empirica.onGameStart(({ game }) => {
   round2.addStage({ name: "IceBreakerEndCountdown",   duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
   round2.addStage({ name: "InitialDecision",          duration: phase1Duration * 60 });
   round2.addStage({ name: "Task",                     duration: gameDuration * 60 });
-  round2.addStage({ name: "FinalDecision",            duration: 120 });
+  round2.addStage({ name: "FinalDecision",            duration: 90 });
   round2.addStage({ name: "IndividualAssessment",     duration: INDIVIDUAL_ASSESSMENT_DURATION_SECONDS });
   round2.addStage({ name: "TLX",                      duration: TLX_DURATION_SECONDS });
   round2.addStage({ name: "SubjectiveSurvey",         duration: SUBJECTIVE_SURVEY_DURATION_SECONDS });
@@ -641,8 +708,35 @@ Empirica.onGameStart(({ game }) => {
       player.set("participantColorIndex", slot);
       player.set("hexCode",     aliasSource[slot].hexCode);
       player.set("profileSlot", slot);
+      player.set("researchGameId", game.id);
     });
   }
+
+  const mirrorTimestamp = new Date().toISOString();
+  queueResearchMirror("game_structure", async () => {
+    const persistence = researchPersistence();
+    await persistence.upsertParticipants(game.players.map((player) => ({
+      participant_id: researchParticipantId(game.id, player.id),
+      game_id: game.id,
+      participant_number: player.get("participantNumber"),
+      profile_slot: player.get("profileSlot"),
+      participant_status: "assigned",
+      joined_at: mirrorTimestamp,
+      updated_at: mirrorTimestamp,
+    })));
+    await persistence.upsertRounds([
+      {
+        round_id: round1.id, game_id: game.id, task_index: 0,
+        task_version: sequence.taskVersionOrder[0], facilitation: sequence.facilitationOrder[0],
+        round_status: "created", updated_at: mirrorTimestamp,
+      },
+      {
+        round_id: round2.id, game_id: game.id, task_index: 1,
+        task_version: sequence.taskVersionOrder[1], facilitation: sequence.facilitationOrder[1],
+        round_status: "created", updated_at: mirrorTimestamp,
+      },
+    ]);
+  });
 });
 
 // ── onRoundStart ──────────────────────────────────────────────────────────────
@@ -655,6 +749,12 @@ Empirica.onRoundStart(({ round }) => {
   const taskVersion = round.get("taskVersion");
   const matchingTasks = taskConfig.tasks.filter((candidate) => candidate.taskVersion === taskVersion);
   const task = matchingTasks.length === 1 ? matchingTasks[0] : null;
+
+  queueResearchMirror("round_started", () => researchPersistence().upsertRounds({
+    round_id: round.id, game_id: game.id, task_index: taskIndex, task_version: taskVersion,
+    facilitation: round.get("facilitation"), round_status: "started",
+    started_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+  }));
 
   if (!task) {
     console.error(`[onRoundStart] No task found for taskVersion ${JSON.stringify(taskVersion)} (exposure taskIndex ${taskIndex})`);
@@ -733,12 +833,75 @@ function updateBreakReadySummary(stage) {
   return { readyCount, totalCount, allReady };
 }
 
+function finalDecisionDrafts(game) {
+  return assignedHumanPlayers(game).map((participant) => ({
+    participantId: participant.id,
+    choice: participant.round?.get("groupFinalChoice") || "",
+    confidence: participant.round?.get("groupChoiceConfidence") ?? null,
+    confirmedChoice: participant.round?.get("groupFinalConfirmedChoice") || null,
+  }));
+}
+
+function publishFinalDecisionStatus(round, summary) {
+  round.set("finalDecisionAgreementStatus", summary.status);
+  round.set("finalDecisionMatchedChoice", summary.matchedChoice);
+}
+
+function clearFinalDecisionConfirmations(game) {
+  for (const participant of assignedHumanPlayers(game)) {
+    participant.round.set("groupFinalConfirmedChoice", null);
+    participant.round.set("groupFinalConfirmedAt", null);
+  }
+}
+
+function finalizeGroupDecision(stage, { timedOut = false, now = Date.now() } = {}) {
+  const round = stage?.round;
+  const game = stage?.currentGame;
+  if (!round || !game || round.get("finalDecisionConfirmed")) return false;
+  const drafts = finalDecisionDrafts(game);
+  const summary = summarizeFinalDecisionDrafts(drafts);
+  if (!timedOut && (summary.status !== "agreed" || !allFinalDecisionConfirmationsMatch(drafts, summary.matchedChoice))) return false;
+
+  const classification = classifyFinalDecision(summary.matchedChoice, { timedOut });
+  // Write the official result once. The latest private drafts are retained
+  // separately for analysis and are never used as a first-player fallback.
+  round.set("officialGroupFinalChoice", classification.officialChoice);
+  round.set("finalDecisionOutcome", classification.outcome);
+  round.set("finalDecisionTimedOut", classification.timedOut);
+  round.set("finalDecisionFinalizedAt", now);
+  round.set("finalDecisionDraftChoices", drafts.map(({ participantId, choice, confidence }) => ({ participantId, choice, confidence })));
+  round.set("finalDecisionConfirmed", true);
+  publishFinalDecisionStatus(round, { status: "finalized", matchedChoice: summary.matchedChoice });
+
+  for (const participant of assignedHumanPlayers(game)) {
+    const choice = participant.round.get("groupFinalChoice") || "";
+    const confidence = participant.round.get("groupChoiceConfidence") ?? null;
+    participant.round.set("finalDecision", {
+      choice,
+      confidence,
+      submittedAt: now,
+      officialGroupFinalChoice: classification.officialChoice,
+      finalDecisionOutcome: classification.outcome,
+    });
+    if (!participant.stage?.get("submit")) participant.stage?.set("submit", true);
+  }
+  stage.set("ended", true);
+  Empirica.flush();
+  return true;
+}
+
 function appendCanonicalMessage(game, attribute, fields) {
   const counters = { ...(game.get("messageSequenceCounters") || {}) };
   const sequencePosition = allocateSequencePosition(counters, attribute);
   game.set("messageSequenceCounters", counters);
   const message = buildCanonicalMessage({ ...fields, sequencePosition });
   game.append(attribute, message);
+  const round = game.currentRound;
+  if (round) {
+    queueResearchMirror("message", () => researchPersistence().upsertMessage(buildMessageRow({
+      gameId: game.id, roundId: round.id, transcriptKey: attribute, message,
+    })));
+  }
   return message;
 }
 
@@ -826,6 +989,37 @@ Empirica.onStageStart(({ stage }) => {
     if (durationMs > 30_000) setTimeout(() => appendTimedMessage(stage, introChatKey, "Thirty seconds remain in the IceBreaker."), durationMs - 30_000);
     Empirica.flush();
   }
+  if (stageName === "FinalDecision") {
+    stage.round.set("finalDecisionAgreementStatus", "not_agreed");
+    stage.round.set("finalDecisionMatchedChoice", null);
+    stage.round.set("officialGroupFinalChoice", null);
+    stage.round.set("finalDecisionOutcome", null);
+    stage.round.set("finalDecisionTimedOut", false);
+    stage.round.set("finalDecisionFinalizedAt", null);
+    stage.round.set("finalDecisionDraftChoices", []);
+    stage.round.set("finalDecisionConfirmed", false);
+    for (const participant of assignedHumanPlayers(game)) {
+      participant.round.set("groupFinalChoice", "");
+      participant.round.set("groupChoiceConfidence", null);
+      participant.round.set("groupFinalConfirmedChoice", null);
+      participant.round.set("groupFinalConfirmedAt", null);
+    }
+    // Empirica owns the visible stage clock; this server timer is the
+    // authoritative fail-safe and remains valid across client refreshes.
+    setTimeout(() => {
+      if (stage.get("name") === "FinalDecision" && !stage.round.get("finalDecisionConfirmed")) {
+        finalizeGroupDecision(stage, { timedOut: true });
+      }
+    }, 90_000);
+    Empirica.flush();
+  }
+  if (stageName === "IndividualAssessment" && stage.round.get("finalDecisionOutcome") === "consensus_choice") {
+    for (const participant of assignedHumanPlayers(game)) {
+      participant.stage?.set("submit", true);
+    }
+    stage.set("ended", true);
+    Empirica.flush();
+  }
   if (stageName === "Break") {
     const round = stage.round;
     if (!round.get("breakStartedAt")) {
@@ -873,6 +1067,55 @@ Empirica.on("player", "discussionAdvanceRequest", (_ctx, { player, discussionAdv
   // the native Step. Setting Stage.ended also lets Classic advance correctly
   // if its in-memory Step-to-Stage map was lost during a development reload.
   stage.set("ended", true);
+  Empirica.flush();
+});
+
+Empirica.on("player", "finalDecisionDraftRequest", (_ctx, { player, finalDecisionDraftRequest: request }) => {
+  const game = player.currentGame;
+  const round = game?.currentRound;
+  const stage = game?.currentStage;
+  if (!game || !round || !stage || stage.get("name") !== "FinalDecision" || round.get("finalDecisionConfirmed")) return;
+  if (!request || request.roundId !== round.id || request.stageId !== stage.id) return;
+
+  const validChoices = new Set([
+    ...(round.get("decisionOptions") || []).map((option) => option.id),
+    NO_GROUP_FINAL_DECISION,
+  ]);
+  const choice = typeof request.choice === "string" ? request.choice : "";
+  const confidence = request.confidence === null ? null : Number(request.confidence);
+  if (!validChoices.has(choice) || (confidence !== null && (!Number.isFinite(confidence) || confidence < 0 || confidence > 100))) return;
+
+  const choiceChanged = player.round.get("groupFinalChoice") !== choice;
+  player.round.set("groupFinalChoice", choice);
+  player.round.set("groupChoiceConfidence", confidence);
+  player.round.set("finalDecision", { choice, confidence, updatedAt: Date.now() });
+  if (choiceChanged) {
+    // A new draft invalidates every confirmation tied to the previous
+    // agreement attempt, including confirmations from other participants.
+    clearFinalDecisionConfirmations(game);
+  }
+  publishFinalDecisionStatus(round, summarizeFinalDecisionDrafts(finalDecisionDrafts(game)));
+  Empirica.flush();
+});
+
+Empirica.on("player", "finalDecisionConfirmRequest", (_ctx, { player, finalDecisionConfirmRequest: request }) => {
+  const game = player.currentGame;
+  const round = game?.currentRound;
+  const stage = game?.currentStage;
+  if (!game || !round || !stage || stage.get("name") !== "FinalDecision" || round.get("finalDecisionConfirmed")) return;
+  if (!request || request.roundId !== round.id || request.stageId !== stage.id) return;
+
+  const drafts = finalDecisionDrafts(game);
+  const summary = summarizeFinalDecisionDrafts(drafts);
+  const ownChoice = player.round.get("groupFinalChoice");
+  const allConfidenceRecorded = drafts.every((draft) => Number.isFinite(draft.confidence));
+  if (summary.status !== "agreed" || !allConfidenceRecorded || !ownChoice || ownChoice !== summary.matchedChoice) return;
+
+  // Duplicate confirmations are idempotent and always bind to the current
+  // matching choice, never merely to a participant identity.
+  player.round.set("groupFinalConfirmedChoice", summary.matchedChoice);
+  player.round.set("groupFinalConfirmedAt", Date.now());
+  finalizeGroupDecision(stage);
   Empirica.flush();
 });
 
@@ -1036,7 +1279,7 @@ function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole, logE
     return false;
   }
   const publishedAt = Date.now();
-  appendCanonicalMessage(game, chatKey, {
+  const publishedMessage = appendCanonicalMessage(game, chatKey, {
     messageId: `facilitator-${game.currentRound?.id}-${publishedAt}`,
     groupId: game.id,
     speakerId: "ai",
@@ -1049,6 +1292,7 @@ function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole, logE
     sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
   });
   logEntry.messageAdded = true;
+  logEntry.publishedMessageId = publishedMessage.messageId;
   game.set("totalInterventions", (game.get("totalInterventions") || 0) + 1);
   return true;
 }
@@ -1057,12 +1301,21 @@ function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole, logE
 // prompt, model, parser, or Validator is unavailable. This deterministic
 // fallback is intentionally neutral and reveals no hidden information.
 function postParticipantRequestFallback(game, chatKey, logEntry) {
-  game.append(chatKey, {
-    text: "I couldn’t produce a verified answer using only the public discussion. Please rephrase your question or point to the public option, criterion, claim, or message you want me to address.",
-    ts: new Date().getTime(),
+  const publishedAt = Date.now();
+  const publishedMessage = appendCanonicalMessage(game, chatKey, {
+    messageId: `facilitator-fallback-${game.currentRound?.id}-${publishedAt}`,
+    groupId: game.id,
+    speakerId: "ai",
+    roundIndex: game.currentRound?.get("index"),
+    stage: "Discussion",
+    messageType: MESSAGE_TYPES.FACILITATOR,
+    speakerType: MESSAGE_TYPES.FACILITATOR,
+    timestamp: publishedAt,
+    content: "I couldn’t produce a verified answer using only the public discussion. Please rephrase your question or point to the public option, criterion, claim, or message you want me to address.",
     sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
   });
   logEntry.messageAdded = true;
+  logEntry.publishedMessageId = publishedMessage.messageId;
   logEntry.fallbackUsed = "PARTICIPANT_REQUEST_SAFE_CLARIFICATION";
   logEntry.outcome = "PUBLISHED_REQUEST_FALLBACK";
   game.set("totalInterventions", (game.get("totalInterventions") || 0) + 1);
@@ -1524,8 +1777,9 @@ Empirica.onStageEnded(({ stage }) => {
   }
 
   if (stageName === "FinalDecision") {
+    if (!round.get("finalDecisionConfirmed")) finalizeGroupDecision(stage, { timedOut: true });
     for (const player of assignedHumanPlayers(game)) {
-      if (!player.round.get("groupFinalSubmittedAt")) player.round.set("groupFinalTimeoutReason", "stage_timeout");
+      if (round.get("finalDecisionTimedOut")) player.round.set("groupFinalTimeoutReason", "stage_timeout");
     }
   }
 
@@ -1543,15 +1797,74 @@ Empirica.onStageEnded(({ stage }) => {
     }
   }
 
+  for (const player of assignedHumanPlayers(game)) {
+    const rows = buildRoundResponseRows({
+      gameId: game.id,
+      roundId: round.id,
+      participantId: player.id,
+      stageName,
+      read: (key) => player.round.get(key),
+    });
+    if (rows.length) queueResearchMirror(`response_${stageName}`, () => researchPersistence().upsertResponses(rows));
+  }
+
 });
 
 Empirica.onRoundEnded(({ round }) => {
   const game = round.currentGame;
+  const endedAt = new Date().toISOString();
+  queueResearchMirror("round_ended", async () => {
+    const persistence = researchPersistence();
+    await persistence.upsertRounds({
+      round_id: round.id, game_id: game.id, task_index: round.get("taskIndex"),
+      task_version: round.get("taskVersion"), facilitation: round.get("facilitation"),
+      round_status: "ended", ended_at: endedAt, updated_at: endedAt,
+    });
+    await persistence.upsertSnapshot({
+      snapshot_id: `${game.id}:${round.id}:round_ended`, game_id: game.id, round_id: round.id,
+      snapshot_type: "round_ended",
+      runtime_status: {
+        taskIndex: round.get("taskIndex"), taskVersion: round.get("taskVersion"),
+        facilitation: round.get("facilitation"), totalInterventions: game.get("totalInterventions") || 0,
+      },
+      occurred_at: endedAt,
+    });
+  });
   console.log(`[Round ${round.get("index")} ended] facilitation: ${round.get("facilitation")}, total interventions so far: ${game.get("totalInterventions")}`);
 });
 
 Empirica.onGameEnded(({ game }) => {
+  const endedAt = new Date().toISOString();
+  queueResearchMirror("game_ended", async () => {
+    const persistence = researchPersistence();
+    await persistence.upsertParticipants(game.players.map((player) => ({
+      participant_id: researchParticipantId(game.id, player.id), game_id: game.id,
+      participant_number: player.get("participantNumber"), profile_slot: player.get("profileSlot"),
+      participant_status: "completed", completed_at: endedAt, updated_at: endedAt,
+    })));
+    await persistence.upsertSnapshot({
+      snapshot_id: `${game.id}:game_ended`, game_id: game.id, round_id: null,
+      snapshot_type: "game_ended",
+      runtime_status: {
+        sequenceId: game.get("sequenceId"), totalInterventions: game.get("totalInterventions") || 0,
+        totalHumanMessages: game.get("humanMessageCount") || 0,
+      },
+      occurred_at: endedAt,
+    });
+  });
   console.log(`[Game ended] Total interventions: ${game.get("totalInterventions")}`);
   console.log(`[Game ended] Total human messages: ${game.get("humanMessageCount")}`);
   console.log(`[Game ended] sequenceId: ${game.get("sequenceId")}, allocationBlockId: ${game.get("allocationBlockId")}, allocationPosition: ${game.get("allocationPosition")}`);
 });
+
+for (const responseType of ["finalQuestions", "expFeedback"]) {
+  Empirica.on("player", responseType, (_ctx, { player }) => {
+    const game = player.currentGame;
+    const gameId = game?.id || player.get("researchGameId");
+    if (!gameId) return;
+    const row = buildGlobalResponseRow({
+      gameId, participantId: player.id, responseType, stored: player.get(responseType),
+    });
+    if (row) queueResearchMirror(`response_${responseType}`, () => researchPersistence().upsertResponses(row));
+  });
+}

@@ -20,9 +20,9 @@
  *   - assembles the "dynamic user context" using only the field names
  *     listed in prompt_design_specification.Rmd's "Context Fields" section.
  *
- * Does NOT touch feature extraction, role eligibility/priority/cooldown, or
- * intervention limits (those remain entirely in utils.js / feature_server.py
- * / callbacks.js's handleChat, unmodified by this module).
+ * Does NOT run the Semantic Assessor, Evidence Checker, Gate, role selection,
+ * cooldown, or intervention limits. Those remain in their server modules and
+ * callbacks.js's handleChat; this module only owns prompt loading/composition.
  *
  * Self-check (Phase 2.5): `runStartupSelfCheck()` validates the source
  * directory at boot time so a missing file or unresolved marker fails the
