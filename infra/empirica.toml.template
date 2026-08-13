@@ -1,0 +1,18 @@
+# Tajriba admin config template.
+#
+# Source-of-truth: .empirica/empirica.toml.example (same shape, just with
+#                  placeholders). After `cp` to a local `empirica.toml`,
+#                  replace every `__REGENERATE_*__` placeholder with the
+#                  output of `openssl rand -hex 32` (32 random bytes,
+#                  64 hex chars). Then `chmod 600 empirica.toml` because
+#                  Tajriba refuses to start if this file is world-readable.
+
+name = "Delibra Formal Study"
+
+[tajriba.auth]
+srtoken = "__REGENERATE_TAJRIBA_SRTOKEN__"
+
+[[tajriba.auth.users]]
+name = "Admin"
+username = "admin"
+password = "__REGENERATE_TAJRIBA_ADMIN_PASSWORD__"

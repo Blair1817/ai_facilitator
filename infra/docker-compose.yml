@@ -1,0 +1,150 @@
+# Formal-study deployment on the user's home NAS.
+# Source-of-truth: project-knowledge/deployment-analysis-2026-08-13.html
+#                   project-knowledge/decisions.md (D-008)
+#
+# Brings up four containers on a single host. None of the four listens on a
+# public port; only `cloudflared` opens an outbound tunnel to Cloudflare's
+# edge. The internal private network (`delibra-net`) is what carries
+# tajriba <-> callbacks <-> client traffic.
+#
+# Bring-up:
+#   1. cp .env.example .env; $EDITOR .env   # fill every __REGENERATE__ value
+#   2. cp empirica.toml.template empirica.toml
+#      $EDITOR empirica.toml                # fill every __REGENERATE_*__ value
+#      chmod 600 empirica.toml
+#   3. docker compose --env-file .env up -d
+#   4. docker compose ps                     # all 4 services must be healthy
+
+name: delibra
+
+# All containers share the project name; docker compose uses this as the
+# prefix for network, volume, and container names.
+services:
+  # ── tajriba ────────────────────────────────────────────────────────────────
+  # The Empirica game server. Reads the admin token from empirica.toml.
+  # The 9180 port is the Empirica admin UI; the 3000 port is the public game
+  # API. Both are reachable from the local network but NOT exposed to the
+  # public internet (only `cloudflared` is).
+  tajriba:
+    image: empirica/tajriba:latest
+    container_name: delibra-tajriba
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Tajriba reads its admin token from empirica.toml, not from env.
+      # But the container needs NODE_ENV=production to skip dev warnings.
+      - NODE_ENV=production
+    volumes:
+      # The render of empirica.toml.template is mounted read-only. The
+      # template file is the source; the local copy (with real secrets)
+      # lives in /opt/delibra/infra/empirica.toml on the NAS host.
+      - ./empirica.toml:/app/.empirica/empirica.toml:ro
+      # Tajriba's JSON database persists to a named volume so a `docker
+      # compose restart` does not lose the live game.
+      - tajriba-data:/app/.empirica/local
+    networks:
+      - delibra-net
+    healthcheck:
+      # Tajriba exposes a /health endpoint on its admin port.
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:9180/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ── callbacks ──────────────────────────────────────────────────────────────
+  # The Node.js callbacks service. Listens on 8080 internally; never
+  # exposed to the public internet. The Cloudflare Tunnel routes
+  # api.<your-domain> -> callbacks:8080.
+  callbacks:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    container_name: delibra-callbacks
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PORT=8080
+    networks:
+      - delibra-net
+    depends_on:
+      tajriba:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ── client ─────────────────────────────────────────────────────────────────
+  # The Vite-built React client. Served on 5173 internally; the Cloudflare
+  # Tunnel routes game.<your-domain> -> client:5173.
+  client:
+    build:
+      context: ..
+      dockerfile: client/Dockerfile
+    container_name: delibra-client
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - delibra-net
+    depends_on:
+      callbacks:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:5173"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ── cloudflared ────────────────────────────────────────────────────────────
+  # The Cloudflare Tunnel client. Reads its config from
+  # infra/cloudflared/config.yml. The tunnel token authenticates the
+  # connector to the Cloudflare edge; the credentials-file referenced
+  # inside config.yml must be present on the host at the path given in
+  # the credentials-file directive.
+  cloudflared:
+    image: cloudflare/cloudflared:2024.1.0
+    container_name: delibra-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    env_file:
+      - .env
+    volumes:
+      - ./cloudflared:/etc/cloudflared:ro
+    networks:
+      - delibra-net
+    healthcheck:
+      # cloudflared does not expose a /health endpoint. The accepted
+      # convention is to check the container is still running and the
+      # recent log line shows the connection state. Use `cloudflared
+      # tunnel info` as the health check instead.
+      test: ["CMD", "cloudflared", "tunnel", "info", "delibra-nas"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+# ── networks ──────────────────────────────────────────────────────────────────
+# The four services share one private network. The NAS host can reach them
+# on their service-name ports (tajriba:9180, callbacks:8080, client:5173)
+# for diagnostic purposes; nothing else on the LAN can, and the public
+# internet cannot reach any of them except via cloudflared.
+networks:
+  delibra-net:
+    driver: bridge
+    name: delibra-net
+
+# ── volumes ───────────────────────────────────────────────────────────────────
+# Tajriba's JSON database persists here. A backup script (see
+# infra/scripts/backup-tajriba-b2.sh) ships a checksummed copy to Backblaze
+# B2 every night at 03:00.
+volumes:
+  tajriba-data:
+    name: delibra-tajriba-data

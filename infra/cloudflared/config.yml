@@ -1,0 +1,62 @@
+# Cloudflare Tunnel config for the formal-study deployment.
+#
+# Source-of-truth: project-knowledge/deployment-analysis-2026-08-13.html
+#                  line 716-763 (step 5: Tunnel + Access)
+#
+# Before editing:
+#   1. Create the tunnel in the Cloudflare Zero Trust dashboard:
+#      https://one.dash.cloudflare.com
+#      → Networks → Tunnels → Create a tunnel
+#      → Type: Cloudflared
+#      → Name: delibra-nas
+#      → Save tunnel → "Docker" install run command shows the
+#        CLOUDFLARE_TUNNEL_TOKEN (goes into .env, not this file).
+#   2. Download the tunnel credentials JSON from the same dashboard page
+#      and place it at /etc/cloudflared/<tunnel-uuid>.json on the NAS.
+#      The path in `credentials-file:` below must match.
+#   3. Replace every `__TUNNEL_UUID__` placeholder in this file with the
+#      tunnel UUID from step 1.
+#   4. Add the public hostname records (CNAME-style) in the Cloudflare
+#      DNS tab; the dashboard will suggest them automatically when you
+#      save the tunnel. Three hostnames are required:
+#        tajriba.<your-domain>  -> this tunnel, http://tajriba:9180
+#        game.<your-domain>     -> this tunnel, http://client:5173
+#        api.<your-domain>      -> this tunnel, http://callbacks:8080
+#   5. Lock tajriba.* behind Cloudflare Access (see the deployment
+#      analysis line 762). Only the researcher's email (one address)
+#      should be allowed to pass the OTP gate.
+
+tunnel: delibra-nas
+credentials-file: /etc/cloudflared/__TUNNEL_UUID__.json
+
+# Pull the connect log out to stdout; docker-compose will capture it.
+loglevel: info
+no-autoupdate: true
+
+# ── ingress rules ─────────────────────────────────────────────────────────────
+# Cloudflare Tunnel ingress is order-sensitive: the first matching rule
+# wins. The final `service: http_status:404` is a required catch-all that
+# prevents the tunnel from erroring on hostnames you forgot to add.
+ingress:
+  # 1. Tajriba admin UI. Locked behind Cloudflare Access (set in the
+  #    dashboard; this file only defines the route, not the auth policy).
+  - hostname: tajriba.*
+    service: http://tajriba:9180
+    originRequest:
+      # Admin UI is small; do not buffer uploads.
+      noTLSVerify: false
+
+  # 2. Participant-facing client. Public to all participants.
+  - hostname: game.*
+    service: http://client:5173
+    originRequest:
+      noTLSVerify: false
+
+  # 3. Callbacks / API endpoint. Internal use only; lock behind Access.
+  - hostname: api.*
+    service: http://callbacks:8080
+    originRequest:
+      noTLSVerify: false
+
+  # 4. Required catch-all. Do not remove.
+  - service: http_status:404
