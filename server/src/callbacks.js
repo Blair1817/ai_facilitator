@@ -117,7 +117,38 @@ async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens) {
     // (server/src/prompts/GeneratorContract.mjs) can parse the untouched
     // response text itself, rather than trust this function's own
     // best-effort JSON.parse below.
-    return { success: true, data: JSON.parse(text), rawText: text };
+    //
+    // 2026-08-12 fix: `data` must be computed as a best-effort convenience
+    // field, not a gate on success. Previously `JSON.parse(text)` sat
+    // directly inside this return statement, so any model that wraps its
+    // JSON in a ```json ... ``` code fence (confirmed live with gpt-4o;
+    // MiniMax-Text-01 just never happened to do this, which is why the bug
+    // was latent) threw here, fell into the catch block below, and
+    // returned {success:false} WITHOUT rawText -- silently discarding the
+    // response before GeneratorContract.mjs's strictParseJsonObject (which
+    // already tolerates exactly one code-fence wrapper) ever got a chance
+    // to run. No caller in this codebase reads `.data` (only `.rawText` is
+    // consumed by attemptGeneration/assessSemanticFactors/validateCandidate/
+    // parseIcebreakerLLMResponse), so `data` failing to parse here must
+    // never block returning rawText.
+    //
+    // Named `parsedResponseData`, not `data` -- this function already has
+    // an outer `const data` (the request body above, used in
+    // `JSON.stringify(data)`). A same-named `let data` anywhere later in
+    // this same try block would put the ENTIRE block's `data` references
+    // -- including that earlier `JSON.stringify(data)` call -- into the
+    // new binding's temporal dead zone, throwing "Cannot access 'data'
+    // before initialization" at runtime. Confirmed live: this exact
+    // collision broke every LLM call (Static, Adaptive, Icebreaker, and
+    // the requested-Generalist @Facilitator path all funnel through this
+    // one function) until renamed.
+    let parsedResponseData;
+    try {
+      parsedResponseData = JSON.parse(text);
+    } catch {
+      parsedResponseData = undefined;
+    }
+    return { success: true, data: parsedResponseData, rawText: text };
   } catch (error) {
     console.error("LLM endpoint error:", error);
     return { success: false, error: error.message };
