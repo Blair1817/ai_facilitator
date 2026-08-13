@@ -286,8 +286,8 @@ test("resetRoundState wipes all per-round state to defaults", () => {
 test("Static and Adaptive have identical trigger conditions (the manager has no condition field)", () => {
   // Same inputs -> same trigger. The post-trigger pipeline is what
   // differs between Static and Adaptive (Static goes straight to
-  // Static AI bundle; Adaptive runs feature extraction + Assessor +
-  // Controller). The trigger itself must be identical so the two
+  // its fixed policy; Adaptive runs the Semantic Assessor, Evidence
+  // Checker, Gate, and role selection). The trigger itself must be identical so the two
   // conditions see the same number of opportunities.
   const args = baseArgs({ humanMessageCount: 6, store: makeStore({ messagesSinceLastPublish: 6 }) });
   const r1 = shouldEvaluateCheckpoint(args);

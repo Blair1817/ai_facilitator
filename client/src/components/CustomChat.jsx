@@ -3,7 +3,7 @@ import React, {
     useRef,
     useState,
 } from "react";
-import { usePlayer, usePlayers, useStage, useRound } from "@empirica/core/player/classic/react";
+import { useGame, usePlayer, usePlayers, useStage, useRound } from "@empirica/core/player/classic/react";
 import { Loading } from "@empirica/core/player/react";
 import { MentionsInput, Mention } from 'react-mentions';
 import ReactMentionsStyling from "./ReactMentionsStyling.jsx";
@@ -18,10 +18,17 @@ export function Chat({
     loading: LoadingComp = Loading,
 }) {
     const player = usePlayer();
+    const game = useGame();
     const stage = useStage();
     const round = useRound();
     const msgs = scope.getAttribute(attribute)?.items || [];
     const requestResult = player.get("humanMessageRequestResult");
+    const facilitatorRequestPending = Object.values(game.get("llmInFlight") || {}).some((entry) => (
+        entry?.outcome === "PENDING"
+        && entry?.participantRequested === true
+        && entry?.originatingRoundId === round?.id
+        && entry?.originatingStageId === stage?.id
+    ));
 
 
 
@@ -40,6 +47,11 @@ export function Chat({
     return (
         <div className="h-full w-full flex flex-col">
             <Messages msgs={msgs} />
+            {facilitatorRequestPending && (
+                <p className="px-4 py-1 text-xs italic text-gray-500" role="status">
+                    Facilitator is reviewing your request… You can continue discussing while it responds.
+                </p>
+            )}
             {player.stage.get("newMessages") && <div className="text-center bg-red-500 text-white py-1 px-4 rounded shadow-lg">
                 <p>Scroll to bottom to see latest messages...</p>
             </div>}

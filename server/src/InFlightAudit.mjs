@@ -17,7 +17,18 @@ export function finalizeAuditLog(store, entry) {
     delete pending[requestId];
     store.set(IN_FLIGHT_KEY, pending);
   }
-  appendLog(store, { ...entry, auditCompletedAt: Date.now() });
+  const auditCompletedAt = Date.now();
+  const humanMessageCountAtCompletion = store.get("humanMessageCount");
+  const responseContextDriftMessages = Number.isFinite(entry?.humanMessageCount) && Number.isFinite(humanMessageCountAtCompletion)
+    ? Math.max(0, humanMessageCountAtCompletion - entry.humanMessageCount)
+    : null;
+  appendLog(store, {
+    ...entry,
+    auditCompletedAt,
+    totalLatencyMs: Number.isFinite(entry?.timestamp) ? Math.max(0, auditCompletedAt - entry.timestamp) : null,
+    humanMessageCountAtCompletion: Number.isFinite(humanMessageCountAtCompletion) ? humanMessageCountAtCompletion : null,
+    responseContextDriftMessages,
+  });
 }
 
 export function recoverInterruptedInFlight(store, currentServerInstanceId, now = Date.now()) {

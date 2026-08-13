@@ -145,13 +145,12 @@ export function buildAssessorUserContext({ chat, taskGeneralContext }) {
  * never performs the fetch itself.
  *
  * Returns:
- *   {success:true, factors: <5-key object>}
+ *   {success:true, factors: <schema-validated semantic state>}
  *   {success:false, code, error} on any failure (blocked prompt, LLM
  *     error, invalid JSON, schema failure) -- callers should treat this
  *     the same as "Semantic Assessor unavailable this checkpoint" and let
- *     evaluateGate() see checkedFactors=null (Candidate Gate's feature-only
- *     signal still applies, but no role can pass its hard gate without
- *     checked semantic factors -- see utils.js's requiredSemanticFactorsPresent).
+ *     evaluateGate() see checkedFactors=null, which fails closed as an
+ *     unavailable detector result.
  */
 export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM }) {
   if (typeof callLLM !== "function") {
@@ -176,13 +175,13 @@ export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM 
 
   const parseResult = strictParseJsonObject(llmResponse.rawText);
   if (!parseResult.ok) {
-    return { success: false, code: "ASSESSOR_PARSE_FAILURE", error: parseResult.error };
+    return { success: false, code: "ASSESSOR_PARSE_FAILURE", error: parseResult.error, rawText: llmResponse.rawText };
   }
 
   const schemaResult = validateAgainstAssessorSchema(parseResult.parsed);
   if (!schemaResult.ok) {
-    return { success: false, code: "ASSESSOR_SCHEMA_FAILURE", error: JSON.stringify(schemaResult.errors) };
+    return { success: false, code: "ASSESSOR_SCHEMA_FAILURE", error: JSON.stringify(schemaResult.errors), rawText: llmResponse.rawText };
   }
 
-  return { success: true, factors: parseResult.parsed };
+  return { success: true, factors: parseResult.parsed, rawText: llmResponse.rawText };
 }

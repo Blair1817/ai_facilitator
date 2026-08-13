@@ -1,184 +1,84 @@
 # Delibra Adaptive Pipeline — Implementation Logic
 
-Written 2026-08-07, after adding the Semantic Assessor / Evidence Checker /
-Policy Compiler layer and the shared Act-Abstain gate described in
-`Delibra_Agent_System_Architecture_A0(2).docx`. This document explains, in
-plain language, what the code in `server/src/` now actually does end to
-end, what was decided along the way, what is still a placeholder, and what
-is still open for the research team to resolve. It is not a research
-document and does not carry a version number in
-`prompt_design_specification.Rmd`'s scheme -- it is an engineering
-reference for reading the code.
+This engineering reference describes the current server implementation. The
+live Adaptive pipeline is LLM-semantic rather than feature-server based.
 
-## 1. Why this changed
+## Checkpoint and routing flow
 
-Before this pass, the live pipeline had two problems relative to the
-Methods manuscript and the architecture document.
+`callbacks.js` receives canonical public Discussion messages and asks the
+`CheckpointManager` whether the shared checkpoint trigger has fired. Static
+and Adaptive use the same checkpoint schedule, but their post-trigger routes
+are intentionally separate.
 
-First, Static and Adaptive did not share a real Act/Abstain gate. Every
-checkpoint (every sixth human message), Static would fire unconditionally
-as long as `static.md`'s content wasn't a skeleton -- there was no
-feature-based or semantic check at all for Static. Adaptive, meanwhile,
-could Abstain whenever no role's feature score cleared its threshold. That
-meant intervention frequency could differ systematically between the two
-conditions, which directly undermines the experiment's central design
-principle: the same Act/Abstain decision is supposed to apply to both
-conditions, so that any measured difference in outcomes can be attributed
-to role-conditioned strategy, not to differences in how often the AI spoke
-at all.
+### Static
 
-Second, the codebase's own `prompt_design_specification.Rmd` had, at an
-earlier stage of the project, explicitly ruled out an independent semantic
-judgment LLM ("不存在独立的LLM判断组件") and recommended a design where
-every checkpoint always produces a visible message ("方案A"). That
-directly conflicts with the architecture document, which specifies a
-Semantic Assessor LLM (Step 5) and a deterministic Evidence Checker (Step
-6) as part of the detection pipeline, and with the Methods manuscript's
-description of a threshold-based Act/Abstain gate. On 2026-08-07 this was
-raised explicitly and the decision was made, in this session, to implement
-the architecture document's version: add the Semantic Assessor LLM +
-Evidence Checker, and adopt threshold-based Abstain rather than
-always-intervene. That reversal is recorded in
-`server/src/prompts/PROMPT_MODULE_STATUS.md`'s addendum and in a short
-pointer added to `prompt_design_specification.Rmd` itself. Neither
-document was taken through its own formal re-versioning process --
-someone on the research side should do that deliberately rather than treat
-this file as having done it for them.
+Static uses the fixed Static policy with the current round's shared task
+overview, complete public transcript, and available timing context. It does
+not run the Adaptive detector, Gate, Policy Compiler, or role selection.
 
-The semantic Validator LLM (a separate, still-dormant component that would
-grade the *generated message* for steering/false-consensus/etc.) and the
-regeneration/retry loop described in Methods 3.2.4 were explicitly left
-out of this pass. They were removed in an earlier "GRAIL scope-reduction
-refactor" and nothing here reinstates them. `validatorPlaceholder.js` and
-`regenerationPlaceholder.js` are unchanged.
+### Adaptive
 
-## 2. What the pipeline does now, checkpoint by checkpoint
+At an Adaptive checkpoint:
 
-Every sixth human message in the Task stage, for both `static` and
-`adaptive` rounds, `callbacks.js`'s `handleChat()` runs the following
-sequence. Everything through step 4 (the gate decision) is identical
-regardless of `facilitation` -- the same function calls, the same inputs,
-the same output. The branch only happens after the gate has already
-decided Act.
+1. `SemanticAssessor.js` makes one LLM call over the public transcript and
+   returns the schema-validated semantic discussion state.
+2. `EvidenceChecker.js` verifies cited message IDs and exact spans, enforces
+   the multi-participant requirement for group preference, validates
+   message-level evidence relations, and applies the self-correction discount.
+3. `utils.js`'s `evaluateGate()` classifies the checkpoint as `specialist`,
+   `generalist`, or `abstain` using only checked semantic detector strengths,
+   deterministic thresholds, and remaining time.
+4. `chooseRole()` selects Expander, Challenger, or Synthesiser only for a
+   specialist decision. A generalist decision uses the fixed Generalist policy;
+   an abstain decision publishes nothing.
+5. `PolicyCompiler.js` creates a bounded, evidence-grounded plan for a selected
+   Specialist. The shared Generator and Validator path then produces and checks
+   the candidate facilitator message before publication.
 
-**Step 1-3, unchanged.** The checkpoint-dedup guard, the six-message
-cooldown, and the "Task stage only" check are exactly as before. The last
-six human messages are sent to the Python feature sidecar
-(`feature_server.py`), which returns `novelty_score`, `redundancy_score`,
-`agreement_score`, and `justification_score` (the `gini_score` it also
-returns is no longer consumed by anything -- see section 4).
+Detector failure is fail-closed: invalid or unavailable Semantic Assessor
+output reaches the Gate as unavailable checked state and resolves to abstain.
 
-**Step 4, Candidate Gate (`utils.js`'s `getCandidateRoles()`).** A
-deliberately loose, high-recall pass over the four feature scores decides
-which of Expander/Challenger/Synthesiser are worth investigating this
-checkpoint. If none are, the checkpoint resolves to Abstain immediately,
-without ever calling an LLM. This is the same behavior for Static and
-Adaptive.
+## Detector state and research persistence
 
-**Step 5, Semantic Assessor (`SemanticAssessor.js`).** If the Candidate
-Gate found at least one candidate, exactly one LLM call is made -- for
-both conditions, not just Adaptive. The model is given the candidate role
-list, the local and cumulative public transcript (message-ID annotated),
-and the task's general context, and asked to judge five factors
-(`breadth_deficiency`, `group_preference`, `justification_deficiency`,
-`integration_deficiency`, `self_correction`), each with a status
-(present/absent/uncertain), a strength, supporting message IDs, and a
-verbatim span. The prompt (`prompts/source/assessor.md`) instructs the
-model to only genuinely investigate the factors tied to the candidate
-roles, plus `self_correction` always, and to default everything else to
-absent rather than invent evidence. The response is strictly parsed and
-schema-validated (`assessor.schema.json`) before anything downstream sees
-it. If the call fails, times out, or returns something invalid, the
-checkpoint proceeds with `checkedFactors = null` -- this is treated
-exactly like "nothing was confirmed," not as an error that blocks the
-round.
+The `feature_snapshots` database table name is retained by the research schema,
+but its content is checkpoint audit state from the current Adaptive pipeline:
 
-**Step 6, Evidence Checker (`EvidenceChecker.js`).** Purely deterministic,
-no LLM. Four rules run on the Assessor's raw output: a span must actually
-occur verbatim in a message the factor cited, or the factor is downgraded
-to uncertain; `group_preference` specifically requires that the surviving
-supporting messages come from more than one distinct participant, not one
-person's opinion cited twice; if a factor's role never even reached
-Candidate Gate status from the feature scores alone, an LLM claim of
-"present" has its strength halved rather than being trusted outright or
-thrown out; and if `self_correction` is present, every other present
-factor's strength is discounted in proportion to `self_correction`'s own
-strength. The result, `checkedFactors`, has the same shape as the raw
-input and is what everything downstream actually uses.
+- `semantic_assessor`: raw semantic factors or assessor error;
+- `evidence_checker`: checked factors and validated evidence relations;
+- `gate_state`: decision, reason, eligible roles, role scores, and per-role
+  classification details.
 
-**Step 7, the shared gate (`utils.js`'s `evaluateGate()`).** This is the
-actual fix. Given the features, `checkedFactors`, the candidate list, and
-the remaining round time, it returns one `{act, reason, scores,
-eligibleRoles}` object. A role only becomes eligible if it clears a hard
-gate (it must be both a feature-level candidate AND have its associated
-semantic factor(s) confirmed present by the Evidence Checker) and its
-combined score clears its threshold; if two or more roles are eligible but
-the gap between the best and second-best score is too small, the result is
-Abstain rather than a guess; and if the remaining round time is below a
-fixed floor, the result is Abstain regardless of any score, matching the
-Methods manuscript's "insufficient time for a meaningful
-intervention-response cycle" condition. **This exact function, called with
-the exact same arguments, decides Act/Abstain for Static and Adaptive
-alike.** If it returns Abstain, the checkpoint logs the reason and ends --
-for both conditions, before anything condition-specific happens.
+It does not contain hand-engineered discussion features. Selected role,
+publication outcome, and published message linkage live in `interventions`;
+validated message-level relations live in `evidence_relations`. Static
+checkpoints do not produce either Adaptive snapshot type.
 
-**Step 7b, role selection (`utils.js`'s `chooseRole()`), Adaptive only.**
-Only reachable when the gate already returned Act. Picks among the
-eligible roles by the fixed priority order (Challenger > Synthesiser >
-Expander), skipping the role used last checkpoint if an alternative is
-available. A "forced synthesiser" nudge can override the priority pick in
-the final `synthesiser.forced_trigger_seconds` of the round, but only if
-Synthesiser is *itself* already eligible this checkpoint and hasn't fired
-yet -- it can never manufacture an intervention where the gate said
-Abstain, and it can never promote a role that never cleared its own bar.
-This is a deliberately conservative reading; section 5 below explains the
-alternative reading that was not adopted.
+## Current role and threshold rules
 
-**Step 8, Policy Compiler (`PolicyCompiler.js`), Adaptive only.** Turns
-the chosen role and its `checkedFactors` into a plan: which message IDs
-the Generator is allowed to cite (`evidenceIds`, always intersected with
-the real set of citable public messages), a plain-language description of
-the detected gap built only from verified spans (never invented), an
-intensity classification (`high`/`medium`, based on how far the score
-cleared its threshold), a fixed two-sentence cap, and a fixed list of
-prohibitions. Static never goes through this module.
+The selectable Specialist roles are `expander`, `challenger`, and
+`synthesiser`. Their deterministic thresholds and the Gate's time/margin rules
+are defined in `utils.js`. These values are research configuration and should
+not be changed as part of UI, persistence, or lifecycle work.
 
-**Step 9, Generator, shared path, mostly unchanged.** Static uses the
-fixed general prompt; Adaptive uses the selected role's prompt. Both now
-receive a `RELEVANT_DISCUSSION_STATE` section in the Dynamic User Prompt
-when a plan is present -- this field existed in
-`prompt_design_specification.Rmd`'s field list from the start but was
-previously always omitted because nothing in the pipeline could fill it
-safely. It is now filled with the Policy Compiler's `gap` text for
-Adaptive checkpoints with a plan, and still omitted for Static and for any
-Adaptive call without one. No role-prompt file (`expander.md`,
-`challenger.md`, `synthesiser.md`, `static.md`, `base.md`) was edited.
+## Generator and validation boundary
 
-**Step 10, Validator, shared path, one addition.** The existing
-deterministic checks (role match, length, markdown, duplicate detection,
-grounding IDs must reference real public messages) are unchanged. One new
-check was added: when a plan is present, the Generator's cited message IDs
-must also be a subset of the plan's own `evidenceIds`, not just of the
-whole public transcript -- this is the Brief's Step 9 "evidenceIds:
-允许引用的message IDs" constraint. Static and any Adaptive call without a
-plan are unaffected (the check is skipped when `allowedGroundingIds` is
-not provided). There is still no semantic Validator LLM call and no
-regenerate-once-then-Abstain loop; a failed check still just logs Silent,
-exactly as before this change. See section 1.
+Static uses the Static prompt bundle. Adaptive uses either the Generalist
+bundle or the Controller-selected Specialist bundle. The participant-facing
+chat receives only a validated message; rationale and detector/controller
+audit data are not published to participants.
 
-## 3. What changed in the role set itself
+The deterministic Generator contract verifies required fields, role fidelity,
+length/format requirements, duplication, and grounding against eligible public
+messages. The semantic Validator may reject or repair generated output through
+the shared generation path; failures resolve safely without blocking the
+experiment lifecycle.
 
-The `facilitator` role (participation-balance / Gini-driven) is gone
-entirely -- not just unused, removed from `ROLES`, `ROLE_PRIORITY`, and
-`THRESHOLDS`. It had no prompt file and no schema entry before this
-change either; the difference is that previously, if the Gini signal won,
-the Controller would still select "facilitator," the prompt loader would
-come back blocked, and the checkpoint would silently burn its intervention
-opportunity as Silent -- even in checkpoints where a real role
-(Expander/Challenger/Synthesiser) also would have cleared its own
-threshold that same turn, because the old code picked one role by priority
-order rather than considering all eligible roles. That silent-loss path no
-longer exists.
+## Lifecycle boundary
+
+Empirica/Tajriba remains authoritative for rooms, rounds, stages, timers,
+reconnects, chat, ready-to-end behaviour, and S1–S4 assignment. Research
+persistence is additive: assignment confirmation is fail-closed for a new
+untracked game, while all non-assignment mirror writes are non-blocking.
 
 The priority order was `["facilitator", "challenger", "expander",
 "synthesiser"]`; besides the removed facilitator slot, Expander was

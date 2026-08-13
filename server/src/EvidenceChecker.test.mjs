@@ -95,7 +95,7 @@ test("checked LLM strength is unchanged when its citation is valid", () => {
 
 // ── Rule 4: self_correction discounts other factors ─────────────────────────
 
-test("Rule 4: self_correction present discounts other present factors proportionally to its own strength", () => {
+test("Rule 3: self_correction present discounts other present factors proportionally to its own strength", () => {
   const raw = {
     ...emptyRaw(),
     breadth_deficiency: present({ strength: 0.8, message_ids: ["m0"], span: "Eldoron is best" }),
@@ -109,7 +109,7 @@ test("Rule 4: self_correction present discounts other present factors proportion
   assert.equal(checked.self_correction.strength, 1.0);
 });
 
-test("Rule 4: absent self_correction leaves other factors untouched", () => {
+test("Rule 3: absent self_correction leaves other factors untouched", () => {
   const raw = { ...emptyRaw(), breadth_deficiency: present({ strength: 0.8, message_ids: ["m0"], span: "Eldoron is best" }) };
   const checked = checkEvidence(raw, { chat: makeChat() });
   assert.equal(checked.breadth_deficiency.strength, 0.8);

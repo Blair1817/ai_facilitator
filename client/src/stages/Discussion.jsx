@@ -100,9 +100,9 @@ export function Discussion() {
 }
 
 // Empirica normally advances a stage through its internal Step transition.
-// This guard only requests the same transition conditions from the server;
-// it never advances the client by itself. The server independently verifies
-// either unanimous readiness or expiry of the server-authored deadline.
+// This guard only recovers a missed deadline transition; it never advances
+// the client by itself. Unanimous readiness remains exclusively on Empirica's
+// native Step transition so two paths cannot race to end the same stage.
 function DiscussionAdvanceGuard() {
   const game = useGame();
   const player = usePlayer();
@@ -128,10 +128,7 @@ function DiscussionAdvanceGuard() {
       });
     };
 
-    if (allReady) {
-      requestAdvance("all_ready");
-      return undefined;
-    }
+    if (allReady) return undefined;
     if (!Number.isFinite(deadline)) return undefined;
 
     const delay = Math.max(0, deadline - Date.now()) + 100;

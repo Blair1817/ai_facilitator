@@ -135,6 +135,8 @@ During data collection, use `./scripts/safe-empirica-start.sh` instead of a bare
 
 Every LLM request made during a game is automatically logged to the game's `llmLog` attribute (accessible in the exported data). Each log entry includes the timestamp, time elapsed/remaining, the model used, the full message payload sent to the LLM, the LLM's response, whether the message was added to the chat, and whether the request was triggered by the interval timer or by a participant tagging the facilitator.
 
+Validated facilitator publications increment `totalInterventions`. A safe clarification shown after a failed participant-requested generation is recorded separately in `totalFallbackMessages` and does not consume the participant-requested publication history. Formal Generator, Assessor, and Validator provider text is retained in the corresponding `llmLog` entry for audit, including failed parse/schema attempts.
+
 ## Limitations
 GRAIL was developed as a research and experimental platform, not as a production-ready system. It has not been validated for use in commercial or real-world decision-making contexts, and additional testing, engineering, and oversight would be required before considering such applications.
 

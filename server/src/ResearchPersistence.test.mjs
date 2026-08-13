@@ -11,21 +11,30 @@ const serverPackage = JSON.parse(readFileSync(path.join(dirname, "../package.jso
 const callbacksSource = readFileSync(path.join(dirname, "callbacks.js"), "utf8");
 const viteConfigSource = readFileSync(path.join(clientRoot, "../vite.config.js"), "utf8");
 
-const roundForms = [
+const clientFinalizedRoundForms = [
   ["stages/InitialDecision.jsx", "initialDecision"],
-  ["stages/FinalDecision.jsx", "finalDecision"],
   ["intro-exit/TLX.jsx", "tlxSurvey"],
   ["intro-exit/SubjectiveSurvey.jsx", "subjectiveSurvey"],
 ];
 
-test("every round research form restores a browser-local draft and stores a timestamped final record", () => {
-  for (const [relativePath, recordKey] of roundForms) {
+test("client-finalized round research forms restore a browser-local draft and store a timestamped final record", () => {
+  for (const [relativePath, recordKey] of clientFinalizedRoundForms) {
     const source = read(relativePath);
     assert.match(source, /usePersistentDraft/);
     assert.match(source, new RegExp(`player\\.round\\.set\\("${recordKey}"`));
     assert.match(source, /submittedAt: Date\.now\(\)/);
     assert.match(source, /clearDraftKeys/);
   }
+});
+
+test("FinalDecision restores private local drafts but only the server writes its finalized timestamped record", () => {
+  const source = read("stages/FinalDecision.jsx");
+  assert.match(source, /usePersistentDraft/);
+  assert.match(source, /finalDecisionDraftRequest/);
+  assert.match(source, /finalDecisionConfirmRequest/);
+  assert.doesNotMatch(source, /player\.round\.set\("finalDecision"/);
+  assert.match(callbacksSource, /participant\.round\.set\("finalDecision", \{/);
+  assert.match(callbacksSource, /submittedAt: now/);
 });
 
 test("global exit forms wait for their exact stored submission before advancing", () => {
