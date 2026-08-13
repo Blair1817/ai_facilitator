@@ -172,19 +172,101 @@ export function computeValidatorVerdict(booleans) {
 }
 
 /**
- * Validator-only provider-envelope parser. The live provider sometimes puts
- * one valid fenced JSON object first and then appends an explanation despite
- * the prompt forbidding prose. Generator output remains strict; only this
- * internal, schema-validated audit response may ignore text after the first
- * complete fence.
+ * Extracts the first balanced JSON object from a text that may contain prose
+ * before or after the object. The depth counter skips braces inside JSON
+ * string literals (tracking the `\` escape) so values like `"a}value"` do
+ * not desync the counter. Bails out (returns null) on non-string input or
+ * text larger than 64 KB, which is a defensive upper bound for a Validator
+ * audit response.
+ *
+ * This is intentionally permissive: the live provider is observed to emit
+ * audit responses with a wide variety of envelopes, and the Validator LLM is
+ * the only component of the live pipeline that is allowed to be tolerant of
+ * provider-side prose.
+ */
+function extractFirstBalancedJsonObject(text) {
+  if (typeof text !== "string") return null;
+  const MAX_LEN = 64 * 1024;
+  if (text.length > MAX_LEN) return null;
+
+  // Find the first `{` that is not inside a string literal.
+  let start = -1;
+  let inString = false;
+  let escape = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (escape) { escape = false; continue; }
+    if (c === "\\") { escape = true; continue; }
+    if (c === "\"") { inString = !inString; continue; }
+    if (!inString && c === "{") { start = i; break; }
+  }
+  if (start === -1) return null;
+
+  // Walk forward and find the matching `}`.
+  let depth = 0;
+  inString = false;
+  escape = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (escape) { escape = false; continue; }
+    if (c === "\\") { escape = true; continue; }
+    if (c === "\"") { inString = !inString; continue; }
+    if (inString) continue;
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+/**
+ * Validator-only provider-envelope parser. The live provider puts a wide
+ * variety of envelopes around the audit JSON object, despite the prompt
+ * forbidding prose:
+ *   1. Plain JSON object, no fence.
+ *   2. Leading ` ```json ... ``` ` fence, sometimes followed by provider
+ *      prose (handled by the leading-fence regex).
+ *   3. JSON object followed by a trailing ` ``` ` fence (no leading fence)
+ *      -- the actual pattern that broke the 2026-08-13 mention-pilot.
+ *   4. JSON object followed by trailing provider prose (no fence at all).
+ *   5. A single untagged ` ``` ... ``` ` fence (no `json` language tag).
+ *
+ * Generator output remains strict; only this internal, schema-validated
+ * audit response may ignore text after the first complete JSON object.
  */
 export function parseValidatorResponse(rawText) {
+  if (typeof rawText !== "string") {
+    return { ok: false, code: "PARSE_FAILURE", error: "response is not a string" };
+  }
+
+  // 1. Happy path: raw string is already a valid JSON object.
   const strict = strictParseJsonObject(rawText);
   if (strict.ok) return strict;
-  if (typeof rawText !== "string") return strict;
-  const leadingFence = rawText.match(/^\s*```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/i);
-  if (!leadingFence) return strict;
-  return strictParseJsonObject(leadingFence[1]);
+
+  // 2. Trailing-fence strip: the live provider sometimes emits
+  //    `{...}\n``` `. Strip the trailing ``` (optionally tagged `json`)
+  //    and retry.
+  if (/```(?:json)?\s*$/i.test(rawText)) {
+    const stripped = rawText.replace(/\n?\s*```(?:json)?\s*$/i, "");
+    const retry = strictParseJsonObject(stripped);
+    if (retry.ok) return retry;
+  }
+
+  // 3. First-balanced-object extraction: defensive fallback for "JSON
+  //    followed by trailing prose" responses. Picks the first `{` to its
+  //    matching `}` while skipping braces inside string literals, then
+  //    tries strict parse on the extracted slice.
+  const extracted = extractFirstBalancedJsonObject(rawText);
+  if (extracted !== null) {
+    const retry = strictParseJsonObject(extracted);
+    if (retry.ok) return retry;
+  }
+
+  // 4. All attempts failed -- return the original strict-parse error so
+  //    the caller sees the same failure code as before this fix.
+  return strict;
 }
 
 /**

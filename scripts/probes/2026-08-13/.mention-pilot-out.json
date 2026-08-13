@@ -1,0 +1,211 @@
+{
+  "model": "MiniMax-Text-01",
+  "results": [
+    {
+      "id": "expander_broad_silence",
+      "stage": "complete",
+      "purpose": "5-person group, only 1 person (Alex) has spoken — broad participation imbalance, Expander should @ everyone else or use a group-level nudge.",
+      "expectedRole": "expander",
+      "chosenRole": "expander",
+      "roleMatched": true,
+      "preferredMentionMode": "multi-@ nudge naming every silent participant",
+      "useGeneralistFallback": false,
+      "gateDecision": "specialist",
+      "gateReason": "Eligible from LLM detector: expander (selected: expander @ 0.800)",
+      "topScores": {
+        "expander": 0.8
+      },
+      "candidate": {
+        "role": "INFORMATION_EXPANDER",
+        "message": "@[Sam] @[Pat] @[Jordan] @[Kai], Alex has shared about Eldoron's rail station. What other task-relevant facts from your reports can you add?",
+        "messageLengthChars": 139,
+        "groundingMessageIds": [
+          "m0",
+          "m1",
+          "m2"
+        ],
+        "mentionsFound": [
+          "Sam",
+          "Pat",
+          "Jordan",
+          "Kai"
+        ]
+      },
+      "checks": {
+        "schema": true,
+        "deterministic": true,
+        "deterministicFailures": [],
+        "validatorAvailable": false,
+        "validatorPassed": false,
+        "validatorFailures": [
+          "invalid JSON: Unexpected non-whitespace character after JSON at position 399 (line 17 column 1)"
+        ]
+      },
+      "passed": false,
+      "stageLatencyMs": {
+        "detector": 20515,
+        "generator": 2844,
+        "validator": 12278
+      },
+      "rawGeneration": "```json\n{\n  \"role\": \"INFORMATION_EXPANDER\",\n  \"message\": \"@[Sam] @[Pat] @[Jordan] @[Kai], Alex has shared about Eldoron's rail station. What other task-relevant facts from your reports can you add?\",\n  \"groundingMessageIds\": [\"m0\", \"m1\", \"m2\"]\n}\n```",
+      "elapsedMs": 35652,
+      "repetition": 1,
+      "wallMs": 35652
+    },
+    {
+      "id": "expander_single_silent",
+      "stage": "complete",
+      "purpose": "5-person group, 4 have spoken, only Kai is silent. Expander should invite Kai (or use a group invitation) — NOT a roll call.",
+      "expectedRole": "expander",
+      "chosenRole": "expander",
+      "roleMatched": true,
+      "preferredMentionMode": "single @[Name] for the one clearly-silent person, OR a group-level invitation",
+      "useGeneralistFallback": false,
+      "gateDecision": "specialist",
+      "gateReason": "Eligible from LLM detector: expander, synthesiser (selected: expander @ 0.800)",
+      "topScores": {
+        "expander": 0.8,
+        "synthesiser": 0.7
+      },
+      "candidate": {
+        "role": "INFORMATION_EXPANDER",
+        "message": "What additional task-relevant facts or criteria should the group consider before making a decision?",
+        "messageLengthChars": 99,
+        "groundingMessageIds": [
+          "m4"
+        ],
+        "mentionsFound": []
+      },
+      "checks": {
+        "schema": true,
+        "deterministic": true,
+        "deterministicFailures": [],
+        "validatorAvailable": false,
+        "validatorPassed": false,
+        "validatorFailures": [
+          "invalid JSON: Unexpected non-whitespace character after JSON at position 399 (line 17 column 1)"
+        ]
+      },
+      "passed": false,
+      "stageLatencyMs": {
+        "detector": 19895,
+        "generator": 2193,
+        "validator": 12715
+      },
+      "rawGeneration": "```json\n{\n  \"role\": \"INFORMATION_EXPANDER\",\n  \"message\": \"What additional task-relevant facts or criteria should the group consider before making a decision?\",\n  \"groundingMessageIds\": [\"m4\"]\n}\n```",
+      "elapsedMs": 34808,
+      "repetition": 1,
+      "wallMs": 34808
+    },
+    {
+      "id": "synthesiser_two_source_comparison",
+      "stage": "complete",
+      "purpose": "Two participants gave opposite numbers for delivery time. Synthesiser should compare the two and may @ both sources.",
+      "expectedRole": "synthesiser",
+      "chosenRole": "synthesiser",
+      "roleMatched": true,
+      "preferredMentionMode": "@[Name] for both sources of the two-sided comparison (Sam and Pat)",
+      "useGeneralistFallback": false,
+      "gateDecision": "specialist",
+      "gateReason": "Eligible from LLM detector: synthesiser (selected: synthesiser @ 0.700)",
+      "topScores": {
+        "synthesiser": 0.7
+      },
+      "candidate": {
+        "role": "INFORMATION_SYNTHESISER",
+        "message": "How do Eldoron, Myloria, and Cragnio compare on accessibility? @[Pat], could you clarify which city you think has better accessibility based on the information you mentioned?",
+        "messageLengthChars": 174,
+        "groundingMessageIds": [
+          "m5"
+        ],
+        "mentionsFound": [
+          "Pat"
+        ]
+      },
+      "checks": {
+        "schema": true,
+        "deterministic": true,
+        "deterministicFailures": [],
+        "validatorAvailable": false,
+        "validatorPassed": false,
+        "validatorFailures": [
+          "invalid JSON: Unexpected non-whitespace character after JSON at position 398 (line 17 column 1)"
+        ]
+      },
+      "passed": false,
+      "stageLatencyMs": {
+        "detector": 21948,
+        "generator": 3645,
+        "validator": 12767
+      },
+      "rawGeneration": "```json\n{\n  \"role\": \"INFORMATION_SYNTHESISER\",\n  \"message\": \"How do Eldoron, Myloria, and Cragnio compare on accessibility? @[Pat], could you clarify which city you think has better accessibility based on the information you mentioned?\",\n  \"groundingMessageIds\": [\"m5\"]\n}\n```",
+      "elapsedMs": 38363,
+      "repetition": 1,
+      "wallMs": 38363
+    },
+    {
+      "id": "challenger_single_source_preference",
+      "stage": "complete",
+      "purpose": "One person (Sam) states a preference for Option B with a reason; nobody else has supplied a supporting task fact. Challenger may @ Sam.",
+      "expectedRole": "challenger",
+      "chosenRole": "synthesiser",
+      "roleMatched": false,
+      "preferredMentionMode": "@[Name] for the participant whose grounded claim is the target of the clarification",
+      "useGeneralistFallback": false,
+      "gateDecision": "specialist",
+      "gateReason": "Eligible from LLM detector: expander, synthesiser (selected: synthesiser @ 0.800)",
+      "topScores": {
+        "expander": 0.6,
+        "synthesiser": 0.8
+      },
+      "candidate": {
+        "role": "INFORMATION_SYNTHESISER",
+        "message": "How do Options A and B compare on cost? @[Alex], you mentioned that we haven't compared them yet, and @[Sam] and @[Pat] have both expressed support for B based on cost. Is there more information to share on this comparison?",
+        "messageLengthChars": 223,
+        "groundingMessageIds": [
+          "m3",
+          "m1",
+          "m4",
+          "m5"
+        ],
+        "mentionsFound": [
+          "Alex",
+          "Sam",
+          "Pat"
+        ]
+      },
+      "checks": {
+        "schema": true,
+        "deterministic": true,
+        "deterministicFailures": [],
+        "validatorAvailable": false,
+        "validatorPassed": false,
+        "validatorFailures": [
+          "invalid JSON: Unexpected non-whitespace character after JSON at position 399 (line 17 column 1)"
+        ]
+      },
+      "passed": false,
+      "stageLatencyMs": {
+        "detector": 20766,
+        "generator": 4253,
+        "validator": 16163
+      },
+      "rawGeneration": "```json\n{\n  \"role\": \"INFORMATION_SYNTHESISER\",\n  \"message\": \"How do Options A and B compare on cost? @[Alex], you mentioned that we haven't compared them yet, and @[Sam] and @[Pat] have both expressed support for B based on cost. Is there more information to share on this comparison?\",\n  \"groundingMessageIds\": [\"m3\", \"m1\", \"m4\", \"m5\"]\n}\n```",
+      "elapsedMs": 41188,
+      "repetition": 1,
+      "wallMs": 41188
+    },
+    {
+      "id": "control_no_mention_needed",
+      "stage": "detector",
+      "passed": false,
+      "error": "[{\"instancePath\":\"/unresolved_counterevidence\",\"schemaPath\":\"#/definitions/factor/required\",\"keyword\":\"required\",\"params\":{\"missingProperty\":\"message_ids\"},\"message\":\"must have required property 'message_ids'\"},{\"instancePath\":\"/unresolved_counterevidence\",\"schemaPath\":\"#/definitions/factor/required\",\"keyword\":\"required\",\"params\":{\"missingProperty\":\"span\"},\"message\":\"must have required property 'span'\"},{\"instancePath\":\"/self_correction\",\"schemaPath\":\"#/definitions/factor/required\",\"keyword\":\"required\",\"params\":{\"missingProperty\":\"message_ids\"},\"message\":\"must have required property 'message_ids'\"},{\"instancePath\":\"/self_correction\",\"schemaPath\":\"#/definitions/factor/required\",\"keyword\":\"required\",\"params\":{\"missingProperty\":\"span\"},\"message\":\"must have required property 'span'\"},{\"instancePath\":\"/reasoning_uptake\",\"schemaPath\":\"#/definitions/factor/required\",\"keyword\":\"required\",\"params\":{\"missingProperty\":\"message_ids\"},\"message\":\"must have required property 'message_ids'\"},{\"instancePath\":\"/reasoning_uptake\",\"schemaPath\":\"#/definitions/factor/required\",\"keyword\":\"required\",\"params\":{\"missingProperty\":\"span\"},\"message\":\"must have required property 'span'\"}]",
+      "stageLatencyMs": {
+        "detector": 18830
+      },
+      "elapsedMs": 18830,
+      "repetition": 1,
+      "wallMs": 18830
+    }
+  ]
+}

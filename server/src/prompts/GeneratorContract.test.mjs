@@ -236,6 +236,45 @@ test("deterministic validation: flags UNEXPECTED_FIELD when an extra field is pr
   assert.ok(result.failedCriteria.includes("UNEXPECTED_FIELD"));
 });
 
+// ── 2026-08-13 mention-pilot regression cases ────────────────────────────────
+//
+// The 2026-08-13 16:05 / 21:33 mention-pilot exposed a strict-plan-evidence
+// over-constraint. The plan's `evidenceIds` is the LLM's snapshot of which
+// public messages support the detected gap; the Generator must ground only
+// in that set. In practice the plan is too narrow: the Generator legitimately
+// wants to cite adjacent messages for context, and the LLM-built plan
+// frequently misses the very message the Generator ended up grounding in
+// (e.g. an `expander_broad_silence` plan that forgot to include the
+// single-spoken message in evidenceIds). The current strict subset check
+// then fails the candidate on GROUNDING_ID_OUTSIDE_PLAN_EVIDENCE even though
+// the grounding ID is a legitimate public participant message.
+//
+// The principled fix: the plan's evidenceIds is a *hint* (helps the Generator
+// focus), not a hard *constraint*. The hard constraint is "grounding ID must
+// be a public participant message that isn't a recent AI message". When
+// the Generator goes outside the plan but stays inside the public transcript,
+// the plan was probably too narrow -- the Generator's choice is at least as
+// defensible as the plan's. The two tests below pin the corrected behaviour.
+
+test("deterministic validation: a grounding ID in eligibleMessageIds but not in allowedGroundingIds is accepted (the plan is a hint, not a hard constraint)", () => {
+  const ctx = { ...DETERMINISTIC_CONTEXT, allowedGroundingIds: ["m0"] };  // plan only authorises m0
+  const result = runDeterministicValidation(
+    { role: "INFORMATION_EXPANDER", message: "x", groundingMessageIds: ["m2"] },  // Generator grounded in m2
+    ctx,
+  );
+  assert.equal(result.passed, true, `unexpected failed criteria: ${result.failedCriteria.join(", ")}`);
+  assert.equal(result.failedCriteria.includes("GROUNDING_ID_OUTSIDE_PLAN_EVIDENCE"), false);
+});
+
+test("deterministic validation: a grounding ID outside both allowedGroundingIds and eligibleMessageIds is still rejected (the public-transcript check is the real constraint)", () => {
+  const ctx = { ...DETERMINISTIC_CONTEXT, allowedGroundingIds: ["m0"] };
+  const result = runDeterministicValidation(
+    { role: "INFORMATION_EXPANDER", message: "x", groundingMessageIds: ["m999"] },
+    ctx,
+  );
+  assert.ok(result.failedCriteria.includes("UNKNOWN_GROUNDING_ID"));
+});
+
 test("deterministic validation: does not mutate, repair, or replace the candidate", () => {
   const candidate = { role: "EVIDENCE_CHALLENGER", message: "```bad```", groundingMessageIds: ["m999"] };
   const before = JSON.stringify(candidate);
@@ -248,4 +287,83 @@ test("deterministic validation: multiple simultaneous failures are all reported,
   assert.ok(result.failedCriteria.includes("ROLE_MISMATCH"));
   assert.ok(result.failedCriteria.includes("EMPTY_MESSAGE"));
   assert.ok(result.failedCriteria.includes("UNKNOWN_GROUNDING_ID"));
+});
+
+// ── deterministic @-mention hygiene (2026-08-13) ────────────────────────
+
+const MENTION_CONTEXT = {
+  ...DETERMINISTIC_CONTEXT,
+  activeParticipantNames: ["Alex", "Sam", "Pat", "Jordan"],
+};
+
+test("deterministic @-mention: a single valid @[Name] against a known participant passes", () => {
+  const result = runDeterministicValidation({ role: "INFORMATION_EXPANDER", message: "@[Alex], anything to add?", groundingMessageIds: [] }, MENTION_CONTEXT);
+  assert.equal(result.passed, true, `unexpected failed criteria: ${result.failedCriteria.join(", ")}`);
+});
+
+test("deterministic @-mention: a no-mention message still passes (tagging is optional)", () => {
+  const result = runDeterministicValidation({ role: "INFORMATION_EXPANDER", message: "Has anyone else got something to share?", groundingMessageIds: [] }, MENTION_CONTEXT);
+  assert.equal(result.passed, true);
+});
+
+test("deterministic @-mention: multiple @[Name] tokens against known participants are allowed (no per-message count cap, matches Alsobay et al. and normal group-member behaviour)", () => {
+  const result = runDeterministicValidation({ role: "INFORMATION_EXPANDER", message: "@[Alex] @[Sam] @[Pat], anything to add?", groundingMessageIds: [] }, MENTION_CONTEXT);
+  assert.equal(result.passed, true, `unexpected failed criteria: ${result.failedCriteria.join(", ")}`);
+});
+
+test("deterministic @-mention: a broad participation-imbalance nudge naming everyone silent is allowed", () => {
+  const result = runDeterministicValidation({ role: "INFORMATION_EXPANDER", message: "@[Alex] @[Sam] @[Pat] @[Jordan], I haven't heard from any of you yet — anything from your reports you think the group is missing?", groundingMessageIds: [] }, MENTION_CONTEXT);
+  assert.equal(result.passed, true, `unexpected failed criteria: ${result.failedCriteria.join(", ")}`);
+});
+
+test("deterministic @-mention: a Synthesiser naming two sources of a two-sided comparison is allowed", () => {
+  const synthContext = { ...MENTION_CONTEXT, selectedRole: "INFORMATION_SYNTHESISER" };
+  const result = runDeterministicValidation({ role: "INFORMATION_SYNTHESISER", message: "For delivery time, @[Sam] gave Option A as 12 days and @[Pat]'s report gave Option B as 18 days. Is anything about this comparison still unclear?", groundingMessageIds: [] }, synthContext);
+  assert.equal(result.passed, true, `unexpected failed criteria: ${result.failedCriteria.join(", ")}`);
+});
+
+test("deterministic @-mention: flags UNKNOWN_MENTION_TARGET for a name not in the roster", () => {
+  const result = runDeterministicValidation({ role: "INFORMATION_EXPANDER", message: "@[Nina], what's your view?", groundingMessageIds: [] }, MENTION_CONTEXT);
+  assert.ok(result.failedCriteria.includes("UNKNOWN_MENTION_TARGET"));
+});
+
+test("deterministic @-mention: flags UNKNOWN_MENTION_TARGET even when one valid name and one unknown name are tagged together", () => {
+  const result = runDeterministicValidation({ role: "INFORMATION_EXPANDER", message: "@[Alex] @[Nina], please share.", groundingMessageIds: [] }, MENTION_CONTEXT);
+  assert.ok(result.failedCriteria.includes("UNKNOWN_MENTION_TARGET"));
+});
+
+test("deterministic @-mention: flags FACILITATOR_SELF_MENTION", () => {
+  const result = runDeterministicValidation({ role: "INFORMATION_EXPANDER", message: "@[Facilitator], can you decide for us?", groundingMessageIds: [] }, MENTION_CONTEXT);
+  assert.ok(result.failedCriteria.includes("FACILITATOR_SELF_MENTION"));
+});
+
+test("deterministic @-mention: FACILITATOR_SELF_MENTION is reported once even if the Facilitator is tagged multiple times in the same message (single offence, not N offences)", () => {
+  const result = runDeterministicValidation({ role: "INFORMATION_EXPANDER", message: "@[Facilitator] @[facilitator] what do we do?", groundingMessageIds: [] }, MENTION_CONTEXT);
+  const count = result.failedCriteria.filter((c) => c === "FACILITATOR_SELF_MENTION").length;
+  assert.equal(count, 1);
+});
+
+test("deterministic @-mention: case-insensitive name match (matches the client UI's case-insensitive mention rendering)", () => {
+  const result = runDeterministicValidation({ role: "INFORMATION_EXPANDER", message: "@[ALEX], please share.", groundingMessageIds: [] }, MENTION_CONTEXT);
+  assert.equal(result.passed, true);
+});
+
+test("deterministic @-mention: FACILITATOR_SELF_MENTION check is also case-insensitive", () => {
+  const result = runDeterministicValidation({ role: "INFORMATION_EXPANDER", message: "@[facilitator], what should we do?", groundingMessageIds: [] }, MENTION_CONTEXT);
+  assert.ok(result.failedCriteria.includes("FACILITATOR_SELF_MENTION"));
+});
+
+test("deterministic @-mention: bare @Alex (no square brackets) is NOT a mention and does not flag any @-criteria", () => {
+  const result = runDeterministicValidation({ role: "INFORMATION_EXPANDER", message: "Hey @Alex, how about it?", groundingMessageIds: [] }, MENTION_CONTEXT);
+  assert.equal(result.failedCriteria.includes("UNKNOWN_MENTION_TARGET"), false);
+});
+
+test("deterministic @-mention: check is disabled when activeParticipantNames is omitted (only intended in tests of the check itself)", () => {
+  const result = runDeterministicValidation({ role: "INFORMATION_EXPANDER", message: "@[Anyone], please share.", groundingMessageIds: [] }, DETERMINISTIC_CONTEXT);
+  assert.equal(result.passed, true, "@-check must be a no-op when no roster is supplied; the Validator LLM still catches misuse semantically");
+});
+
+test("deterministic @-mention: check is disabled when activeParticipantNames is an empty array (no participants known yet)", () => {
+  const result = runDeterministicValidation({ role: "INFORMATION_EXPANDER", message: "@[Anyone], please share.", groundingMessageIds: [] }, { ...DETERMINISTIC_CONTEXT, activeParticipantNames: [] });
+  assert.equal(result.passed, true);
 });

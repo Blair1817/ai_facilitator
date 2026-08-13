@@ -380,6 +380,7 @@ export function assembleDynamicUserContext({
   requiredReasoningAct,
   answerableQuestionTemplate,
   allowedGroundingMessageIds,
+  activeParticipantNames,
 }) {
   const sections = [
     [`[CHECKPOINT]`, checkpoint ?? "(not provided)"],
@@ -416,6 +417,16 @@ export function assembleDynamicUserContext({
       `[ALLOWED_GROUNDING_MESSAGE_IDS]`,
       allowedGroundingMessageIds.length ? allowedGroundingMessageIds.join(", ") : "(none)",
     ]);
+  }
+  // 2026-08-13: emit the participant `@[Name]` mention-target list for
+  // every checkpoint that has at least one known participant name.
+  // Omitted only when callers cannot supply one yet (e.g. the very
+  // first message of a round before anyone has spoken and the caller
+  // does not have a player roster to draw from). Cheap (a single
+  // short line) and lets the Specialist / Generalist / Static prompt
+  // resolve `@[Name]` without ever inventing a name.
+  if (activeParticipantNames) {
+    sections.push([`[ACTIVE_PARTICIPANT_NAMES]`, activeParticipantNames]);
   }
   sections.push(
     [`[CUMULATIVE_PUBLIC_CONTEXT]`, cumulativePublicContext || "(no messages yet)"],

@@ -7,7 +7,7 @@
  * Static generator request.
  */
 
-import { withMessageIds } from "./DynamicContext.mjs";
+import { withMessageIds, formatActiveParticipantNames } from "./DynamicContext.mjs";
 
 function formatDuration(durationMs) {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
@@ -49,7 +49,7 @@ export function buildStaticSharedTaskOverview({ generalInfo, decisionOptions }) 
   return [overviewOnly || "Shared task objective and requirements were not provided.", alternatives].join("\n\n");
 }
 
-export function buildStaticUserContext({ chat, remainingTimeMs, elapsedTimeMs }) {
+export function buildStaticUserContext({ chat, remainingTimeMs, elapsedTimeMs, activeParticipantNames = null }) {
   const chatWithIds = withMessageIds(Array.isArray(chat) ? chat : []);
   const transcript = chatWithIds.length
     ? chatWithIds
@@ -60,15 +60,30 @@ export function buildStaticUserContext({ chat, remainingTimeMs, elapsedTimeMs })
   const nonHumanMessages = chatWithIds.filter((message) => !isHumanMessage(message));
   const priorFacilitatorMessages = chatWithIds.filter(isFacilitatorMessage);
 
+  // 2026-08-13: also list the unique participant display names so
+  // the Static prompt can resolve any `@[Name]` it wants to use
+  // without inventing one. Mirrors the Adaptive
+  // [ACTIVE_PARTICIPANT_NAMES] section (DynamicContext.mjs +
+  // promptLoader.js).
+  const activeNames = activeParticipantNames
+    ? (Array.isArray(activeParticipantNames) ? activeParticipantNames.filter((n) => typeof n === "string" && n.trim()).map((n) => n.trim()).join(", ") : String(activeParticipantNames))
+    : formatActiveParticipantNames(chatWithIds);
+
+  const sections = [
+    "[SELECTED_ROLE]\nSTATIC",
+    `[DISCUSSION_TIME]\nTime remaining: ${formatDuration(remainingTimeMs)}\nElapsed discussion time: ${formatDuration(elapsedTimeMs)}`,
+  ];
+  if (activeNames) {
+    sections.push(`[ACTIVE_PARTICIPANT_NAMES]\n${activeNames}`);
+  }
+  sections.push(`[PUBLIC_TRANSCRIPT]\n${transcript}`);
+
   return {
-    userContent: [
-      "[SELECTED_ROLE]\nSTATIC",
-      `[DISCUSSION_TIME]\nTime remaining: ${formatDuration(remainingTimeMs)}\nElapsed discussion time: ${formatDuration(elapsedTimeMs)}`,
-      `[PUBLIC_TRANSCRIPT]\n${transcript}`,
-    ].join("\n\n"),
+    userContent: sections.join("\n\n"),
     eligibleMessageIds: humanMessages.map((message) => message.messageId),
     aiOrSystemMessageIds: nonHumanMessages.map((message) => message.messageId),
     recentAiMessageTexts: priorFacilitatorMessages.slice(-3).map((message) => message.content ?? message.text ?? ""),
     allowedGroundingIds: null,
+    activeParticipantNames: activeNames ? activeNames.split(",").map((n) => n.trim()).filter(Boolean) : [],
   };
 }

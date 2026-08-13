@@ -33,12 +33,27 @@ may be present.
    information to evaluate or compare the named options on the task's public
    criteria. Sparse facts count only when the transcript shows a substantive
    coverage gap; message count or discussion length alone is never enough.
+   `breadth_deficiency` ALSO applies when a known roster member has not
+   yet spoken at all on a relevant task topic (broad participation
+   imbalance) -- citing that silent member's name in the span is acceptable.
 2. `group_preference`: at least two distinct participants lean toward the same
    option or conclusion. One person's strong view is insufficient.
-3. `justification_deficiency`: a stated preference or claim lacks public
-   reasoning, evidence, or traceable comparison.
-4. `integration_deficiency`: relevant evidence is fragmented across messages
-   and now needs organising, comparison, or connection.
+3. `justification_deficiency`: a stated preference or claim currently lacks
+   public reasoning, evidence, or traceable comparison. This is the
+   correct factor when exactly one participant has taken a position and
+   no other participant has yet supplied supporting or counter reasoning;
+   the facilitator should be the one to request justification. Do NOT
+   mark `justification_deficiency` weak just because the claim MIGHT be
+   explainable by the participant's hidden profile -- the public transcript
+   is the only evidence here.
+4. `integration_deficiency`: relevant evidence is fragmented across at
+   least three messages from two or more distinct participants, and the
+   message-level content has not yet been connected or compared. A single
+   unsupported claim is NOT an integration gap. A preference stated by
+   one person with no response from anyone else is NOT an integration
+   gap. Mark `integration_deficiency` absent or weak in those cases --
+   the right factor is `justification_deficiency` (need for support) or
+   `breadth_deficiency` (need for more input from silent members).
 5. `unresolved_counterevidence`: a relevant contradiction or counterargument
    has been raised but not answered or incorporated.
 6. `claim_evidence_linkage`: claims, evidence, options, or criteria are not

@@ -258,6 +258,13 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
       chat,
       remainingTimeMs: remainingTime,
       elapsedTimeMs: timeElapsed,
+      // 2026-08-13: prefer the live game roster over names derived
+      // from chat (which only sees speakers so far) so the Static
+      // prompt can @ a participant who has not yet spoken (e.g.
+      // when a participant has been silent for the whole round).
+      // StaticContext.mjs falls back to chat-derived names if this
+      // is null.
+      activeParticipantNames: players.map((p) => p.get("name")).filter((n) => typeof n === "string" && n.trim()),
     });
     return {
       blocked: false,
@@ -279,6 +286,11 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
     selectedRoleForDisplay: promptResult.metadata.generationRole,
     generalInfo: publicTaskOverview,
     plan,
+    // 2026-08-13: same live-roster pass-through as Static above.
+    // Adaptive @ mentions can target any participant, including
+    // those who have not yet spoken (the expander's "silence"
+    // case), so the roster must come from `players`, not chat.
+    activeParticipantNames: players.map((p) => p.get("name")).filter((n) => typeof n === "string" && n.trim()),
   });
 
   return {
@@ -291,6 +303,7 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
     aiOrSystemMessageIds: dynamicContext.aiOrSystemMessageIds,
     recentAiMessageTexts: dynamicContext.recentAiMessageTexts,
     allowedGroundingIds: dynamicContext.allowedGroundingIds,
+    activeParticipantNames: dynamicContext.activeParticipantNames,
   };
 }
 
@@ -395,6 +408,13 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       aiOrSystemMessageIds: built.aiOrSystemMessageIds,
       recentAiMessageTexts: built.recentAiMessageTexts,
       allowedGroundingIds: built.allowedGroundingIds,
+      // 2026-08-13: pipe the per-checkpoint participant roster into
+      // the deterministic `@[Name]` mention check (GeneratorContract).
+      // StaticContext.mjs / DynamicContext.mjs always populate this;
+      // a missing/empty value disables the check (and is otherwise
+      // harmless because the Validator LLM still catches the same
+      // misuse semantically).
+      activeParticipantNames: built.activeParticipantNames ?? null,
     });
     logEntry.deterministic = deterministicResult;
     if (!deterministicResult.passed) {

@@ -17,6 +17,72 @@ prompt path, its own role enum entry, and its own runtime identity; they
 must not be confused or have their prompt files mixed. See the v2 entries
 in the table below and `audit-phase1.md` §0, §2 contract 4, §3.1, §3.2.
 
+**v2.1 addendum (Phase 6 pilot, 2026-08-13) — participant `@[Name]`
+mentions across every Generator role**: the Static and Adaptive
+Generalist prompts already permitted a single `@[Name]` mention
+(static.md line 29, generalist.md lines 98-100). 2026-08-13 extends
+that capability to every Specialist role (`expander`,
+`challenger`, `synthesiser`) and to the
+`requested_generalist`/`@Facilitator` reply path, with the
+following constraints (the same in every role's prompt, restated in
+each so the role-self-contained bundle is unchanged in shape):
+
+- `@[Name]` is OPTIONAL. A group-level message with no mention
+  remains the default and is always valid.
+- There is **NO per-message count cap** on `@[Name]` tokens.
+  The original Alsobay et al. prompt has no such cap either (it
+  says only "You may tag a specific participant by using @
+  followed by their name in square brackets"), and a normal group
+  member will routinely name both sources of a two-sided
+  comparison, or every visibly silent participant when
+  participation is broadly unbalanced. The Expander's
+  "broad participation-imbalance nudge, naming every
+  under-contributor" is an explicit expected use case.
+- `@[Name]` must name a participant in the
+  `[ACTIVE_PARTICIPANT_NAMES]` section the assembled user turn now
+  always emits (`UNKNOWN_MENTION_TARGET` in the deterministic
+  check; case-insensitive, matching the client UI's
+  react-mentions behaviour).
+- Never tag the Facilitator (`FACILITATOR_SELF_MENTION`).
+- Expander: a `@[Name]` (or a multi-`@` broad nudge) to visibly
+  under-contributing participants is the explicit use case (a
+  normal group member's catch-up move); the role's previous
+  "do not select, tag, rotate, or single out a participant" /
+  "do not diagnose participation balance" boundaries are
+  narrowed to forbid only judgement, motive attribution,
+  Facilitator-tagging, and the (Validator-LLM-checked) "roll
+  call" anti-pattern of tagging nearly the whole group.
+- Challenger / Synthesiser: a `@[Name]` is allowed when that
+  participant's public statement is the natural anchor of the
+  clarification / source for the comparison or inconsistency; a
+  two-source comparison legitimately names both. Existing role
+  boundaries (no personal attack, no new criterion, no
+  trade-off construction, no pros/cons creation, no ranking, no
+  recommendation) are unchanged.
+- The semantic Validator's `roleMisaligned` and
+  `requiredReasoningActMissing` criteria (validator.md) are
+  updated to whitelist the new tag form and only flag misuse
+  (judgement / motive / unknown target / Facilitator-tagging /
+  new criterion / role-violation / "roll call" naming nearly
+  every group member).
+
+This is a presentation-layer change, not a research-design
+change: the same intervention cap, the same checkpoint gate, the
+same Static-vs-Adaptive separation, the same repair loop, the same
+deterministic schema enforcement, and the same Generator /
+Validator pipeline are all unchanged. The added
+`[ACTIVE_PARTICIPANT_NAMES]` section in
+`StaticContext.mjs`/`DynamicContext.mjs` is a one-line addition
+that every existing live call site already populates from the
+`players` array (callbacks.js's `buildGeneratorContext`); tests
+verify the new section is present, omits only when no roster is
+available yet, and is compatible with the existing
+`formatMessagesWithIds` transcript format. 16 new unit tests
+cover the new deterministic-mention checks, the
+`formatActiveParticipantNames` helper, the
+`assembleDynamicUserContext` field, and the "no count cap"
+behaviour; all 407 server tests still pass.
+
 ## File-by-file status
 
 **Correction**: an earlier version of this document used "Complete" to

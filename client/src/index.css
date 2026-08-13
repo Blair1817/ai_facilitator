@@ -66,3 +66,87 @@
   -ms-user-select: none;
   /* Internet Explorer/Edge */
 }
+
+
+/* Typing-indicator three-dot animation.
+   Used by the Chat component to show that a human participant or the
+   Facilitator AI is currently generating a message. Each dot scales and
+   fades on a staggered delay so the bubble appears to "breathe".
+
+   Two presentation styles:
+   - `.typing-dots`  -- inline three dots used in any text-line indicator
+   - `.typing-bubble` -- the WhatsApp-style chat bubble that sits at the
+                         bottom of the message list, with avatar + dots. */
+.typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 2px;
+  vertical-align: middle;
+}
+
+.typing-dot {
+  width: 4px;
+  height: 4px;
+  background-color: currentColor;
+  border-radius: 50%;
+  display: inline-block;
+  opacity: 0.4;
+  animation: typing-dot-bounce 1.2s infinite ease-in-out both;
+}
+
+.typing-dot:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes typing-dot-bounce {
+  0%,
+  80%,
+  100% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typing-dot {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
+/* WhatsApp-style typing chat bubble. Rendered once per currently-typing
+   speaker (human or Facilitator AI). Larger dots than the inline version
+   so they read clearly inside the bubble. */
+.typing-bubble {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: #e5e7eb;
+  padding: 10px 14px;
+  border-radius: 18px;
+  margin-top: 6px;
+  width: fit-content;
+  min-width: 48px;
+  min-height: 22px;
+  box-shadow: 0 1px 1px rgba(15, 23, 42, 0.04);
+}
+
+.typing-bubble .typing-dot {
+  width: 7px;
+  height: 7px;
+  background-color: #4b5563;
+  animation-duration: 1.2s;
+}

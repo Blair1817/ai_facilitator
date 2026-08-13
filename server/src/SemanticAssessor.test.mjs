@@ -71,6 +71,61 @@ test("validateAgainstAssessorSchema: rejects an unexpected extra top-level key",
   assert.equal(validateAgainstAssessorSchema(bad).ok, false);
 });
 
+// ── 2026-08-13 mention-pilot regression cases ────────────────────────────────
+//
+// The 2026-08-13 16:05 mention-pilot exposed a regression in the Assessor
+// schema: the schema unconditionally required `message_ids` and `span` on
+// every factor, but the live LLM (`MiniMax-Text-01`) is observed to omit
+// them for `status: "absent"` and `status: "uncertain"` factors because the
+// field descriptions only say "absent 时必须为空数组 / 空字符串" -- they are
+// prose, not schema constraints. The LLM correctly interprets the prose as
+// "I don't need to fill them in when status is not present" and the schema
+// then rejects the response.
+//
+// The correct fix is to make `message_ids` and `span` required only when
+// `status === "present"`. Each test below pins one of the failure modes the
+// mention-pilot surfaced.
+
+test("validateAgainstAssessorSchema: accepts a factor with status='absent' and no message_ids / span (LLM omits them for non-present factors)", () => {
+  // This is the EXACT shape the live LLM emits for absent factors. The
+  // previous schema required message_ids and span on every factor and
+  // rejected this response with
+  // `must have required property 'message_ids' / 'span'`.
+  const llmLike = {
+    ...VALID_FACTORS,
+    unresolved_counterevidence: { status: "absent", strength: 0 },
+    self_correction: { status: "absent", strength: 0 },
+    reasoning_uptake: { status: "absent", strength: 0 },
+  };
+  assert.equal(validateAgainstAssessorSchema(llmLike).ok, true);
+});
+
+test("validateAgainstAssessorSchema: accepts a factor with status='uncertain' and no message_ids / span", () => {
+  const llmLike = {
+    ...VALID_FACTORS,
+    unresolved_counterevidence: { status: "uncertain", strength: 0 },
+    self_correction: { status: "uncertain", strength: 0 },
+    reasoning_uptake: { status: "uncertain", strength: 0 },
+  };
+  assert.equal(validateAgainstAssessorSchema(llmLike).ok, true);
+});
+
+test("validateAgainstAssessorSchema: still REQUIRES message_ids and span when status='present' (the LLM is not allowed to skip them on present factors)", () => {
+  // The schema must not over-relax: a present factor still needs the
+  // citation metadata. EvidenceChecker.js relies on message_ids/span
+  // being present for every present factor to do the citation check.
+  const presentWithoutEvidence = {
+    ...VALID_FACTORS,
+    group_preference: { status: "present", strength: 0.7 },  // no message_ids, no span
+  };
+  const result = validateAgainstAssessorSchema(presentWithoutEvidence);
+  assert.equal(result.ok, false);
+  // The error should mention the missing fields explicitly.
+  const errStr = JSON.stringify(result.errors || []);
+  assert.ok(errStr.includes("message_ids") || errStr.includes("span"),
+    `Expected error to mention missing message_ids or span, got: ${errStr}`);
+});
+
 // ── user context assembly ────────────────────────────────────────────────────
 
 test("buildAssessorUserContext: sends all public context without a feature candidate pre-filter", () => {

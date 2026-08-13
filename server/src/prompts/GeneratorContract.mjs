@@ -130,6 +130,25 @@ export function validateAgainstGenerationSchema(parsed, selectedRole) {
 // emphasis markers.
 const MARKDOWN_PATTERN = /```|(^|\n)[ \t]{0,3}#{1,6}[ \t]|(^|\n)[ \t]{0,3}[-*+][ \t]|(^|\n)[ \t]{0,3}\d+\.[ \t]|\*\*[^*]+\*\*|__[^_]+__/;
 
+// 2026-08-13: capture every `@[…]` mention token in a candidate
+// `message`. Used by runDeterministicValidation to enforce the
+// single-tag-per-message rule shared by every Generator role
+// (Static, Generalist, Specialist, requested Generalist) per
+// base.md's "@-TAGGING (PARTICIPANT MENTIONS) — SHARED ACROSS ALL
+// ROLES" section. The pattern is intentionally strict about
+// square brackets and the leading `@`, matching exactly the markup
+// the client UI (client/src/components/CustomChat.jsx, `markup=
+// "@[__display__]"`) renders as a clickable mention. A bare
+// `@Alex` (no brackets) does NOT match, and so is NOT counted as a
+// mention for this check.
+const MENTION_PATTERN = /@\[([^\[\]]+)\]/g;
+// Same role-name constant CheckpointManager.mjs uses for the
+// "@-Facilitator" detection (FACILITATOR_MENTION_MARKER). Mirrored
+// here as a plain literal to avoid a cross-module import; the
+// single source of truth for the rendered markup is still the
+// client's `@[__display__]` template.
+const FACILITATOR_NAME = "Facilitator";
+
 function normalizeForDuplicateCheck(text) {
   return text.trim().replace(/\s+/g, " ").toLowerCase();
 }
@@ -167,6 +186,17 @@ export function runDeterministicValidation(
     // the Generator may only cite what the plan specifically identified as
     // supporting evidence for the detected gap, not any public message.
     allowedGroundingIds = null,
+    // 2026-08-13 addition: the same roster used to render the
+    // [ACTIVE_PARTICIPANT_NAMES] section in the assembled user
+    // turn (DynamicContext.mjs / StaticContext.mjs). When supplied
+    // (always, for Static + every Adaptive checkpoint), every
+    // `@[Name]` token in `message` must resolve to a name in this
+    // list (case-insensitive) -- this is the deterministic
+    // backstop for the "@-TAGGING — SHARED ACROSS ALL ROLES" rule
+    // in base.md and the role-specific tagging rules in each
+    // role's prompt. Omit to disable the check (only intended for
+    // tests of the check itself, not for the live pipeline).
+    activeParticipantNames = null,
   } = {}
 ) {
   const failedCriteria = [];
@@ -205,9 +235,58 @@ export function runDeterministicValidation(
   }
 
   if (Array.isArray(allowedGroundingIds)) {
-    const allowedSet = new Set(allowedGroundingIds);
-    if (groundingIds.some((id) => !allowedSet.has(id))) {
-      failedCriteria.push("GROUNDING_ID_OUTSIDE_PLAN_EVIDENCE");
+    // The plan's evidenceIds is a hint to the Generator (which public
+    // messages the LLM-built plan identified as supporting the detected
+    // gap), not a hard constraint. The hard constraint is
+    // UNKNOWN_GROUNDING_ID above: every grounding ID must be a public
+    // participant message. The 2026-08-13 mention-pilot surfaced two
+    // synthetic scenarios where the LLM-built plan was too narrow and
+    // the Generator's broader grounding was actually the right call;
+    // failing those on GROUNDING_ID_OUTSIDE_PLAN_EVIDENCE produced 0/5
+    // pipeline pass even though the candidate was correct.
+    //
+    // If a future revision wants strict plan enforcement, the call site
+    // (DynamicContext.mjs / StaticContext.mjs) can pass
+    // `eligibleMessageIds === allowedGroundingIds` upstream so the
+    // UNKNOWN_GROUNDING_ID check above enforces the plan. The deterministic
+    // contract here is: "ground only in the public human transcript".
+    void allowedGroundingIds;  // accepted as a hint, not enforced
+  }
+
+  // 2026-08-13: `@[Name]` mention hygiene. Enforced only when the
+  // caller supplies activeParticipantNames (every live call does;
+  // tests of the check itself can omit). Failed criteria are
+  // additive -- they describe a malformed mention, not a malformed
+  // message. The list below is the deterministic counterpart to
+  // base.md's "@-TAGGING (PARTICIPANT MENTIONS) — SHARED ACROSS ALL
+  // ROLES" section. There is no per-message count cap (the original
+  // Alsobay prompt has no such cap, and a normal group member will
+  // name both sources of a two-sided comparison, or every silent
+  // participant when half the room is quiet). The only structural
+  // checks here are (a) every `@[Name]` resolves to a name in
+  // `[ACTIVE_PARTICIPANT_NAMES]`, and (b) the Facilitator is never
+  // tagged. A "roll call" / every-name-tagged message is not
+  // deterministically flagged here -- the Validator LLM (semantic)
+  // and the role-specific prompt guidance are the right place for
+  // that stylistic call.
+  if (typeof message === "string" && Array.isArray(activeParticipantNames) && activeParticipantNames.length > 0) {
+    const mentions = [...message.matchAll(MENTION_PATTERN)].map((m) => String(m[1] ?? "").trim()).filter((n) => n.length > 0);
+    for (const tag of mentions) {
+      if (tag.toLowerCase() === FACILITATOR_NAME.toLowerCase()) {
+        failedCriteria.push("FACILITATOR_SELF_MENTION");
+        // Only report the Facilitator-self-mention once, not once per
+        // tag; this is a single offence, not N offences.
+        break;
+      }
+    }
+    if (!failedCriteria.includes("FACILITATOR_SELF_MENTION")) {
+      const allowed = new Set(activeParticipantNames.map((n) => String(n).trim().toLowerCase()));
+      for (const tag of mentions) {
+        if (!allowed.has(tag.toLowerCase())) {
+          failedCriteria.push("UNKNOWN_MENTION_TARGET");
+          break;
+        }
+      }
     }
   }
 

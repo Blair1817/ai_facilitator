@@ -1,0 +1,233 @@
+{
+  "model": "MiniMax-Text-01",
+  "results": [
+    {
+      "id": "expander_broad_silence",
+      "stage": "complete",
+      "purpose": "5-person group, only 1 person (Alex) has spoken — broad participation imbalance, Expander should @ everyone else or use a group-level nudge.",
+      "expectedRole": "expander",
+      "chosenRole": "expander",
+      "roleMatched": true,
+      "preferredMentionMode": "multi-@ nudge naming every silent participant",
+      "useGeneralistFallback": false,
+      "gateDecision": "specialist",
+      "gateReason": "Eligible from LLM detector: expander (selected: expander @ 0.800)",
+      "topScores": {
+        "expander": 0.8
+      },
+      "candidate": {
+        "role": "INFORMATION_EXPANDER",
+        "message": "@[Sam] @[Pat] @[Jordan] @[Kai], Alex has shared about Eldoron's rail station. What other task-relevant facts or details from your reports can you add?",
+        "messageLengthChars": 150,
+        "groundingMessageIds": [
+          "m0",
+          "m1",
+          "m2"
+        ],
+        "mentionsFound": [
+          "Sam",
+          "Pat",
+          "Jordan",
+          "Kai"
+        ]
+      },
+      "checks": {
+        "schema": true,
+        "deterministic": true,
+        "deterministicFailures": [],
+        "validatorAvailable": true,
+        "validatorPassed": true,
+        "validatorFailures": []
+      },
+      "passed": true,
+      "stageLatencyMs": {
+        "detector": 13119,
+        "generator": 4125,
+        "validator": 10654
+      },
+      "rawGeneration": "```json\n{\n  \"role\": \"INFORMATION_EXPANDER\",\n  \"message\": \"@[Sam] @[Pat] @[Jordan] @[Kai], Alex has shared about Eldoron's rail station. What other task-relevant facts or details from your reports can you add?\",\n  \"groundingMessageIds\": [\"m0\", \"m1\", \"m2\"]\n}\n```",
+      "elapsedMs": 27912,
+      "repetition": 1,
+      "wallMs": 27912
+    },
+    {
+      "id": "expander_single_silent",
+      "stage": "complete",
+      "purpose": "5-person group, 4 have spoken, only Kai is silent. Expander should invite Kai (or use a group invitation) — NOT a roll call.",
+      "expectedRole": "expander",
+      "chosenRole": "synthesiser",
+      "roleMatched": false,
+      "preferredMentionMode": "single @[Name] for the one clearly-silent person, OR a group-level invitation",
+      "useGeneralistFallback": false,
+      "gateDecision": "specialist",
+      "gateReason": "Eligible from LLM detector: expander, synthesiser (selected: synthesiser @ 0.700)",
+      "topScores": {
+        "expander": 0.8,
+        "synthesiser": 0.7
+      },
+      "candidate": {
+        "role": "INFORMATION_SYNTHESISER",
+        "message": "How do Eldoron and Myloria compare on transport capacity? Eldoron has a large rail station, while Myloria's accessibility support is strong. Is there anything else we should consider for this comparison?",
+        "messageLengthChars": 203,
+        "groundingMessageIds": [
+          "m0",
+          "m3"
+        ],
+        "mentionsFound": []
+      },
+      "checks": {
+        "schema": true,
+        "deterministic": true,
+        "deterministicFailures": [],
+        "validatorAvailable": true,
+        "validatorPassed": true,
+        "validatorFailures": []
+      },
+      "passed": false,
+      "stageLatencyMs": {
+        "detector": 27126,
+        "generator": 3534,
+        "validator": 13382
+      },
+      "rawGeneration": "```json\n{\n  \"role\": \"INFORMATION_SYNTHESISER\",\n  \"message\": \"How do Eldoron and Myloria compare on transport capacity? Eldoron has a large rail station, while Myloria's accessibility support is strong. Is there anything else we should consider for this comparison?\",\n  \"groundingMessageIds\": [\"m0\", \"m3\"]\n}\n```",
+      "elapsedMs": 44047,
+      "repetition": 1,
+      "wallMs": 44047
+    },
+    {
+      "id": "synthesiser_two_source_comparison",
+      "stage": "complete",
+      "purpose": "Two participants gave opposite numbers for delivery time. Synthesiser should compare the two and may @ both sources.",
+      "expectedRole": "synthesiser",
+      "chosenRole": "synthesiser",
+      "roleMatched": true,
+      "preferredMentionMode": "@[Name] for both sources of the two-sided comparison (Sam and Pat)",
+      "useGeneralistFallback": false,
+      "gateDecision": "specialist",
+      "gateReason": "Eligible from LLM detector: synthesiser (selected: synthesiser @ 0.700)",
+      "topScores": {
+        "synthesiser": 0.7
+      },
+      "candidate": {
+        "role": "INFORMATION_SYNTHESISER",
+        "message": "How do Eldoron, Myloria, and Cragnio compare on accessibility? @[Pat], could you clarify what specific accessibility factors matter for attendees?",
+        "messageLengthChars": 146,
+        "groundingMessageIds": [
+          "m5"
+        ],
+        "mentionsFound": [
+          "Pat"
+        ]
+      },
+      "checks": {
+        "schema": true,
+        "deterministic": true,
+        "deterministicFailures": [],
+        "validatorAvailable": true,
+        "validatorPassed": true,
+        "validatorFailures": []
+      },
+      "passed": true,
+      "stageLatencyMs": {
+        "detector": 23049,
+        "generator": 3468,
+        "validator": 13860
+      },
+      "rawGeneration": "```json\n{\n  \"role\": \"INFORMATION_SYNTHESISER\",\n  \"message\": \"How do Eldoron, Myloria, and Cragnio compare on accessibility? @[Pat], could you clarify what specific accessibility factors matter for attendees?\",\n  \"groundingMessageIds\": [\"m5\"]\n}\n```",
+      "elapsedMs": 40381,
+      "repetition": 1,
+      "wallMs": 40381
+    },
+    {
+      "id": "challenger_single_source_preference",
+      "stage": "complete",
+      "purpose": "One person (Sam) states a preference for Option B with a reason; nobody else has supplied a supporting task fact. Challenger may @ Sam.",
+      "expectedRole": "challenger",
+      "chosenRole": "synthesiser",
+      "roleMatched": false,
+      "preferredMentionMode": "@[Name] for the participant whose grounded claim is the target of the clarification",
+      "useGeneralistFallback": false,
+      "gateDecision": "specialist",
+      "gateReason": "Eligible from LLM detector: expander, synthesiser (selected: synthesiser @ 0.800)",
+      "topScores": {
+        "expander": 0.6,
+        "synthesiser": 0.8
+      },
+      "candidate": {
+        "role": "INFORMATION_SYNTHESISER",
+        "message": "How do Options A and B compare on cost? @[Alex] mentioned that this comparison hasn't been made yet.",
+        "messageLengthChars": 100,
+        "groundingMessageIds": [
+          "m3"
+        ],
+        "mentionsFound": [
+          "Alex"
+        ]
+      },
+      "checks": {
+        "schema": true,
+        "deterministic": true,
+        "deterministicFailures": [],
+        "validatorAvailable": true,
+        "validatorPassed": false,
+        "validatorFailures": [
+          "roleMisaligned",
+          "requiredReasoningActMissing"
+        ]
+      },
+      "passed": false,
+      "stageLatencyMs": {
+        "detector": 19898,
+        "generator": 1927,
+        "validator": 15430
+      },
+      "rawGeneration": "```json\n{\n  \"role\": \"INFORMATION_SYNTHESISER\",\n  \"message\": \"How do Options A and B compare on cost? @[Alex] mentioned that this comparison hasn't been made yet.\",\n  \"groundingMessageIds\": [\"m3\"]\n}\n```",
+      "elapsedMs": 37260,
+      "repetition": 1,
+      "wallMs": 37260
+    },
+    {
+      "id": "control_no_mention_needed",
+      "stage": "complete",
+      "purpose": "3-person group with a healthy discussion. A Generalist prompt is expected; no @ needed.",
+      "expectedRole": "generalist",
+      "chosenRole": "synthesiser",
+      "roleMatched": false,
+      "preferredMentionMode": "no @ at all (group-level invitation, or pure facilitator prompt)",
+      "useGeneralistFallback": false,
+      "gateDecision": "specialist",
+      "gateReason": "Eligible from LLM detector: expander, synthesiser (selected: synthesiser @ 0.800)",
+      "topScores": {
+        "expander": 0.6,
+        "synthesiser": 0.8
+      },
+      "candidate": {
+        "role": "INFORMATION_SYNTHESISER",
+        "message": "Alex has raised the question of comparing cost and transport capacity. How do Eldoron, Myloria, and Cragnio compare on these two criteria?",
+        "messageLengthChars": 138,
+        "groundingMessageIds": [
+          "m3"
+        ],
+        "mentionsFound": []
+      },
+      "checks": {
+        "schema": true,
+        "deterministic": true,
+        "deterministicFailures": [],
+        "validatorAvailable": true,
+        "validatorPassed": true,
+        "validatorFailures": []
+      },
+      "passed": false,
+      "stageLatencyMs": {
+        "detector": 20042,
+        "generator": 3342,
+        "validator": 14617
+      },
+      "rawGeneration": "```json\n{\n  \"role\": \"INFORMATION_SYNTHESISER\",\n  \"message\": \"Alex has raised the question of comparing cost and transport capacity. How do Eldoron, Myloria, and Cragnio compare on these two criteria?\",\n  \"groundingMessageIds\": [\"m3\"]\n}\n```",
+      "elapsedMs": 38002,
+      "repetition": 1,
+      "wallMs": 38002
+    }
+  ]
+}

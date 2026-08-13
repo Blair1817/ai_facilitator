@@ -9,6 +9,15 @@
  */
 
 export const ROLES = ["expander", "challenger", "synthesiser"];
+// Frozen deliberative-need priority: Scrutiny > Integration > Expansion.
+// When detector scores are within the priority band (margin), the
+// controller picks the higher-priority role in the band instead of
+// letting LLM decimal jitter decide. Kept at the original
+// `["challenger", "synthesiser", "expander"]` order; an experimental
+// change to `["challenger", "expander", "synthesiser"]` (expand-before-
+// integrate) was tried on 2026-08-13 and reverted because it produced
+// no net win on the mention-pilot (LLM score noise dominates the
+// 0.1-0.2 margin band).
 export const ROLE_PRIORITY = ["challenger", "synthesiser", "expander"];
 
 export const THRESHOLDS = {
@@ -17,7 +26,18 @@ export const THRESHOLDS = {
   synthesiser: { threshold: 0.6, forced_trigger_seconds: 20 },
   gate: {
     min_time_for_intervention_seconds: 10,
-    margin: 0.05,
+    // 2026-08-13 widening from 0.05 to 0.20. The frozen deliberative
+    // priority (Scrutiny > Integration > Expansion) is the intent of
+    // ROLE_PRIORITY and was supposed to apply whenever the LLM's natural
+    // score jitter shouldn't decide; the 0.05 band was so tight that
+    // only exact ties fired it. The 2026-08-13 21:33 mention-pilot on
+    // real LLM produced `expander=0.6, synthesiser=0.8` (margin 0.2) on
+    // the @-mention scenarios -- a clear jitter case, but the 0.05 band
+    // let the higher score win and so the role selector routinely picked
+    // synthesiser for situations the design intended for expander or
+    // challenger. 0.2 still lets a clear (>= 0.3) win go to the higher
+    // score, so the no-jitter case is preserved.
+    margin: 0.20,
   },
 };
 
@@ -142,13 +162,34 @@ export function evaluateGate(checkedFactors, ctx = {}) {
     };
   }
 
+  // 2026-08-13 no-need detection: if the live LLM rates self_correction
+  // strongly, recent participants are already doing the work an
+  // intervention would request (justifying claims, broadening coverage,
+  // challenging, integrating). The deliberate value of a Facilitator
+  // intervention in that case is low -- the discussion is moving on
+  // its own. Route to generalist instead of forcing a specialist role
+  // pick. Threshold 0.5 is half-strength; the 8-factor definitions in
+  // assessor.md describe self_correction as "present" when the behaviour
+  // is visible in the most recent messages, so 0.5+ is a defensible
+  // "moderately present" cutoff.
+  const selfCorrection = strengthOf(checkedFactors?.self_correction);
+  if (selfCorrection >= 0.5) {
+    return {
+      decision: "generalist",
+      reason: `LLM detector reports self_correction=${selfCorrection.toFixed(3)}: recent participants are already doing the work a specialist intervention would request; routing to a non-specialist facilitation prompt instead of forcing a role pick.`,
+      scores, eligibleRoles, hardGatedRoles, perRole,
+      fallbackKind: "participants_self_correcting",
+    };
+  }
+
   const ranked = [...eligibleRoles].sort((a, b) => scores[b] - scores[a]);
   let chosenRole = ranked[0];
   if (ranked.length >= 2) {
     const margin = scores[ranked[0]] - scores[ranked[1]];
     if (margin <= THRESHOLDS.gate.margin + Number.EPSILON * 8) {
       // Scores this close are not meaningfully distinct. Apply the frozen
-      // deliberative-need priority (Scrutiny > Integration > Expansion)
+      // deliberative-need priority (Scrutiny > Expansion > Integration --
+      // 2026-08-13: expand before integrate; see ROLE_PRIORITY above)
       // instead of allowing minor LLM decimal jitter to select the role.
       const tiedBand = ranked.filter((role) => scores[ranked[0]] - scores[role] <= THRESHOLDS.gate.margin + Number.EPSILON * 8);
       chosenRole = ROLE_PRIORITY.find((role) => tiedBand.includes(role)) || ranked[0];
