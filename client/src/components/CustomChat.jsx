@@ -134,10 +134,11 @@ function Messages(props) {
 
     return (
         <div className="h-full overflow-auto pl-2 pr-4 pb-2" ref={scroller}>
-            
+
             {msgs.map((msg) => (
                 <MessageComp key={msg.id} attribute={msg} />
             ))}
+            <TypingBubbles scrollerRef={scroller} />
         </div>
     );
 }
@@ -317,9 +318,6 @@ function Input({ onNewMessage, requestResult }) {
                         markup="@[__display__]"
                     />
                 </MentionsInput>
-                <div style={{ height: "1rem" }}>
-                    <TypingIndicator />
-                </div>
                 {requestError && <p className="text-sm text-red-600" role="alert">{requestError}</p>}
             </div>
 
@@ -360,25 +358,131 @@ function relTime(date) {
     }
 }
 
-export function TypingIndicator() {
+export function TypingBubbles({ scrollerRef }) {
     const players = usePlayers();
-    const typingPlayers = players.filter(player => player.get("isTyping"));
+    const player = usePlayer();
+    const game = useGame();
+    const round = useRound();
+    const stage = useStage();
+    const stageName = stage?.get("name");
 
-    if (typingPlayers.length === 0) {
+    // Human participants: only show OTHER players currently typing -- the
+    // local user should not see their own "is typing" bubble.
+    const typingHumans = players.filter(
+        (p) => p.id !== player?.id && p.get("isTyping")
+    );
+
+    // Facilitator typing detection. The discussion / Task stages track the
+    // in-flight LLM request on `game.llmInFlight` (see server/src/callbacks.js
+    // `beginInFlight`). The icebreaker (Introduction) stage uses its own
+    // `icebreakerFacilitatorHandledMessageIds` ledger with `status:
+    // "pending"` while the LLM is generating a reply. Both must be honoured
+    // so the dots appear during every chat that the Facilitator can post in.
+    const llmInFlight = game.get("llmInFlight") || {};
+    const facilitatorTypingInFlight = Object.values(llmInFlight).some(
+        (entry) => (
+            entry?.outcome === "PENDING"
+            && entry?.originatingRoundId === round?.id
+            && entry?.originatingStageId === stage?.id
+        )
+    );
+
+    const icebreakerHandled = game.get("icebreakerFacilitatorHandledMessageIds") || {};
+    const facilitatorTypingInIcebreaker = stageName === "Introduction"
+        && Object.values(icebreakerHandled).some((entry) => entry?.status === "pending");
+
+    const facilitatorTyping = facilitatorTypingInFlight || facilitatorTypingInIcebreaker;
+
+    // All hooks must run on every render -- declare effects BEFORE any
+    // early-return so React's hook order stays stable.
+    // Auto-scroll the message list to the bottom so the freshly appearing
+    // bubble is visible (only when the user is already near the bottom --
+    // never yank them away from old messages they are reading). Re-runs
+    // whenever the count of typing speakers changes, which is exactly when
+    // the bubble set above/below the fold changes.
+    const typingCount = typingHumans.length + (facilitatorTyping ? 1 : 0);
+    useEffect(() => {
+        const el = scrollerRef?.current;
+        if (!el || typingCount === 0) return;
+        const { scrollTop, scrollHeight, clientHeight } = el;
+        const nearBottom = scrollHeight - scrollTop - clientHeight < 200;
+        if (nearBottom) {
+            el.scrollTop = el.scrollHeight;
+        }
+    }, [typingCount, scrollerRef]);
+
+    if (typingCount === 0) {
         return null;
     }
 
-    const typingNames = typingPlayers.map(player => player.get("name"));
+    // Build a normalized speaker list. For humans, derive the dicebear avatar
+    // from the player's hexCode (server's source of truth -- see
+    // server/src/callbacks.js:1236 for the same URL pattern used on messages).
+    // The Facilitator uses the same avatar URL the server bakes into its
+    // outgoing messages.
+    const speakers = [
+        ...typingHumans.map((p) => ({
+            id: p.id,
+            name: p.get("name") || "Participant",
+            hexCode: p.get("hexCode") || "4B5563",
+            avatar: `https://api.dicebear.com/8.x/identicon/svg?rowColor=${p.get("hexCode") || "4B5563"}`,
+        })),
+        ...(facilitatorTyping ? [{
+            id: "ai",
+            name: "Facilitator",
+            hexCode: "4B5563",
+            avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F",
+        }] : []),
+    ];
 
-    let message = '';
-    if (typingNames.length === 1) {
-        message = `${typingNames[0]} is typing...`;
-    } else if (typingNames.length === 2) {
-        message = `${typingNames[0]} and ${typingNames[1]} are typing...`;
+    return (
+        <>
+            {speakers.map((speaker) => (
+                <TypingBubble key={speaker.id} speaker={speaker} />
+            ))}
+        </>
+    );
+}
+
+function TypingBubble({ speaker }) {
+    const avatar = speaker.avatar;
+    let avatarImage;
+    if (avatar && avatar.startsWith("http")) {
+        avatarImage = (
+            <img
+                className="inline-block h-9 w-9 rounded"
+                src={avatar}
+                alt={speaker.name}
+            />
+        );
     } else {
-        const lastTypingName = typingNames.pop();
-        message = `${typingNames.join(', ')}, and ${lastTypingName} are typing...`;
+        avatarImage = (
+            <div className="inline-block h-9 w-9 rounded">{avatar}</div>
+        );
     }
 
-    return <p style={{ fontStyle: "italic", color: "#888", fontSize: "0.75rem" }}>{message}</p>;
+    return (
+        <div
+            className="flex items-end my-5 ml-4"
+            role="status"
+            aria-live="polite"
+        >
+            <div className="flex-shrink-0">{avatarImage}</div>
+            <div className="ml-3 text-sm">
+                <p>
+                    <span
+                        className="font-bold"
+                        style={{ color: "#" + speaker.hexCode }}
+                    >
+                        {speaker.name}
+                    </span>
+                </p>
+                <div className="typing-bubble" aria-hidden="true">
+                    <span className="typing-dot" />
+                    <span className="typing-dot" />
+                    <span className="typing-dot" />
+                </div>
+            </div>
+        </div>
+    );
 }
