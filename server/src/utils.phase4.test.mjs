@@ -99,6 +99,42 @@ test("specialist is the clear highest LLM detector score", () => {
   assert.equal(result.scores.synthesiser, 0.9);
 });
 
+// ── 2026-08-13 mention-pilot regression: deliberative priority band ──────────
+//
+// The 2026-08-13 21:33 mention-pilot on real LLM produced cases like
+// `expander=0.6, synthesiser=0.8` -- a 0.2 margin. With the previous
+// 0.05 margin band, the frozen deliberative priority
+// (Scrutiny > Integration > Expansion, ROLE_PRIORITY) only fired for
+// near-ties (margin <= 0.05) and so did not catch the LLM's natural
+// score jitter on the @-mention scenarios. Widening the band lets the
+// priority fire more often, so an LLM that rates `integration_deficiency`
+// 0.8 and `breadth_deficiency` 0.6 -- where the LLM is treating the
+// situation as "I should integrate what's been said" rather than
+// "I should broaden to silent participants" -- still loses to the
+// scrutiny-first priority if a scrutinisable claim is present. The two
+// tests below pin the new behaviour at 0.2.
+
+test("deliberative priority band: 0.2 margin -- challenger wins when scores are close enough that LLM jitter shouldn't decide", () => {
+  const result = evaluateGate(factors({
+    breadth_deficiency: present(0.6),
+    group_preference: present(0.6),
+    justification_deficiency: present(0.6),
+    integration_deficiency: present(0.8),
+  }), { remainingTime: 600_000 });
+  assert.equal(result.chosenRole, "challenger",
+    `expected challenger (scrutiny-first priority), got ${result.chosenRole}`);
+});
+
+test("deliberative priority band: 0.2 margin -- clear wins (>= 0.3) still go to the higher score", () => {
+  // synthesiser 0.9 vs expander 0.6 -> margin 0.3, still clear synthesiser.
+  // This guards against over-relaxing the band.
+  const result = evaluateGate(factors({
+    breadth_deficiency: present(0.6),
+    integration_deficiency: present(0.9),
+  }), { remainingTime: 600_000 });
+  assert.equal(result.chosenRole, "synthesiser");
+});
+
 test("per-role audit record is complete", () => {
   const result = evaluateGate(factors({ breadth_deficiency: present(0.8) }), { remainingTime: 600_000 });
   for (const role of ROLES) {

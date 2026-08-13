@@ -417,11 +417,17 @@ test("integration: uncertain detector evidence leaves Adaptive at ABSTAIN before
 });
 
 test("routing regression: LLM detector classification thresholds are explicit", () => {
+  // 2026-08-13: gate.margin was widened from 0.05 to 0.20 so the frozen
+  // deliberative priority (Scrutiny > Integration > Expansion) applies
+  // whenever the LLM's natural score jitter shouldn't decide (e.g. the
+  // 0.2 margin cases the 2026-08-13 mention-pilot surfaced). 0.2 still
+  // lets a clear (>= 0.3) win go to the higher score, so this only
+  // affects the cases the design intended.
   assert.deepEqual(THRESHOLDS, {
     expander: { threshold: 0.35 },
     challenger: { threshold: 0.6 },
     synthesiser: { threshold: 0.6, forced_trigger_seconds: 20 },
-    gate: { min_time_for_intervention_seconds: 10, margin: 0.05 },
+    gate: { min_time_for_intervention_seconds: 10, margin: 0.20 },
   });
 });
 

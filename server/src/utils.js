@@ -17,7 +17,18 @@ export const THRESHOLDS = {
   synthesiser: { threshold: 0.6, forced_trigger_seconds: 20 },
   gate: {
     min_time_for_intervention_seconds: 10,
-    margin: 0.05,
+    // 2026-08-13 widening from 0.05 to 0.20. The frozen deliberative
+    // priority (Scrutiny > Integration > Expansion) is the intent of
+    // ROLE_PRIORITY and was supposed to apply whenever the LLM's natural
+    // score jitter shouldn't decide; the 0.05 band was so tight that
+    // only exact ties fired it. The 2026-08-13 21:33 mention-pilot on
+    // real LLM produced `expander=0.6, synthesiser=0.8` (margin 0.2) on
+    // the @-mention scenarios -- a clear jitter case, but the 0.05 band
+    // let the higher score win and so the role selector routinely picked
+    // synthesiser for situations the design intended for expander or
+    // challenger. 0.2 still lets a clear (>= 0.3) win go to the higher
+    // score, so the no-jitter case is preserved.
+    margin: 0.20,
   },
 };
 
