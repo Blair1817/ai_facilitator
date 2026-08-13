@@ -53,6 +53,97 @@ test("parseValidatorResponse accepts one leading fenced JSON audit followed by p
   assert.deepEqual(result.parsed, CANDIDATE_PASSED);
 });
 
+// ── parseValidatorResponse envelope patterns ───────────────────────────────────
+//
+// The 2026-08-13 mention-pilot surfaced a 0/5 pipeline-pass result where every
+// Validator LLM response was rejected with
+// `invalid JSON: Unexpected non-whitespace character after JSON at position N`.
+// The current leading-fence regex only matches when the JSON is wrapped in a
+// leading ``` fence. The live provider also returns:
+//   * plain JSON with no fence (happy path; already covered by strictParseJsonObject)
+//   * JSON followed by a trailing ``` fence (no leading fence)
+//   * JSON followed by trailing provider prose (no fence at all)
+//   * JSON wrapped in a single ``` fence with neither leading nor trailing
+//     fence markers (raw ```...``` with no `json` language tag)
+//
+// Each of the tests below pins one of these cases so that any future regression
+// of the envelope parser is caught immediately.
+
+test("parseValidatorResponse accepts plain JSON with no fence", () => {
+  const raw = JSON.stringify(CANDIDATE_PASSED);
+  const result = parseValidatorResponse(raw);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.parsed, CANDIDATE_PASSED);
+});
+
+test("parseValidatorResponse accepts JSON followed by a trailing ``` fence (no leading fence)", () => {
+  // The exact pattern that broke the 2026-08-13 mention-pilot: the LLM emits a
+  // valid JSON object first, then a single ``` closing fence. The current
+  // leading-fence regex does not match this and strictParseJsonObject fails
+  // with "non-whitespace character after JSON at position <end of object>".
+  const raw = `${JSON.stringify(CANDIDATE_PASSED, null, 2)}\n\`\`\``;
+  const result = parseValidatorResponse(raw);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.parsed, CANDIDATE_PASSED);
+});
+
+test("parseValidatorResponse accepts JSON followed by trailing provider prose (no fence at all)", () => {
+  // A real LLM response where the model emits a JSON object then continues
+  // with explanatory prose. The Validator prompt forbids prose, but the live
+  // provider sometimes adds it anyway.
+  const raw = `${JSON.stringify(CANDIDATE_PASSED, null, 2)}\n\nI have no concerns; the candidate is grounded and neutral.`;
+  const result = parseValidatorResponse(raw);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.parsed, CANDIDATE_PASSED);
+});
+
+test("parseValidatorResponse accepts a single untagged ``` fence around the JSON (no language tag)", () => {
+  const raw = `\`\`\`\n${JSON.stringify(CANDIDATE_PASSED)}\n\`\`\``;
+  const result = parseValidatorResponse(raw);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.parsed, CANDIDATE_PASSED);
+});
+
+test("parseValidatorResponse accepts a nested JSON object followed by a trailing fence", () => {
+  // The depth counter must correctly skip the inner {} of the `notGrounded`
+  // value (which is `false`, a primitive, but other criteria carry object
+  // values in real Validator responses). The candidate here is a fresh
+  // ground-truth shape with one nested object value to exercise the counter.
+  const nested = {
+    notGrounded: false,
+    nonNeutral: false,
+    roleMisaligned: false,
+    inventedInformation: { message_id: "m0", span: "m0" },
+    recommendationDetected: false,
+    unsupportedInformationDetected: false,
+    unsupportedConsensusClaim: false,
+    optionSteering: false,
+    requiredReasoningActMissing: false,
+    unanswerable: false,
+    hiddenInformationInference: false,
+    repetition: false,
+    length: false,
+  };
+  const raw = `${JSON.stringify(nested, null, 2)}\n\`\`\``;
+  const result = parseValidatorResponse(raw);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.parsed, nested);
+});
+
+test("parseValidatorResponse rejects a fence-only payload with no JSON inside", () => {
+  const raw = `\`\`\`json\n\n\`\`\``;
+  const result = parseValidatorResponse(raw);
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "PARSE_FAILURE");
+});
+
+test("parseValidatorResponse rejects random text that contains no JSON", () => {
+  const raw = "I cannot audit this candidate because the prompt is unclear.";
+  const result = parseValidatorResponse(raw);
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "PARSE_FAILURE");
+});
+
 // ── VALIDATOR_CRITERIA constant ────────────────────────────────────────────────
 
 test("VALIDATOR_CRITERIA: exactly the 13 criteria, in schema order", () => {
