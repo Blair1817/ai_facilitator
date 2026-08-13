@@ -8,7 +8,7 @@ import test from "node:test";
 // exercised here, and neither touches the filesystem (no [[ base.md /
 // role.md ]] reads happen in this module) -- so unlike promptLoader.test.mjs
 // there is no need to fake process.argv[1] before importing.
-const { withMessageIds, formatMessagesWithIds, buildDynamicUserContext, assembleDynamicUserContext } =
+const { withMessageIds, formatMessagesWithIds, buildDynamicUserContext, assembleDynamicUserContext, formatActiveParticipantNames } =
   await import("./DynamicContext.mjs");
 
 function humanMsg(name, text, ts) {
@@ -155,4 +155,76 @@ test("assembleDynamicUserContext never asks the Generator to calculate features,
   for (const forbidden of ["threshold", "feature score", "select a role", "provide your reasoning", "confirm the controller"]) {
     assert.equal(content.toLowerCase().includes(forbidden), false, `must not instruct the Generator to ${forbidden}`);
   }
+});
+
+// ── ACTIVE_PARTICIPANT_NAMES (2026-08-13) ─────────────────────────────────
+
+test("formatActiveParticipantNames: returns unique, ordered human names, excluding AI / system / Facilitator speakers", () => {
+  const chat = [
+    humanMsg("Alice", "hi", 1),
+    aiMsg("welcome", 2),
+    humanMsg("Bob", "hey", 3),
+    humanMsg("Alice", "more", 4),
+    humanMsg("Charlie", "hi", 5),
+  ];
+  assert.equal(formatActiveParticipantNames(chat), "Alice, Bob, Charlie");
+});
+
+test("formatActiveParticipantNames: empty / missing chat returns an empty string (not 'undefined')", () => {
+  assert.equal(formatActiveParticipantNames([]), "");
+  assert.equal(formatActiveParticipantNames(null), "");
+  assert.equal(formatActiveParticipantNames(undefined), "");
+});
+
+test("formatActiveParticipantNames: skips entries with empty / whitespace-only sender names", () => {
+  const chat = [
+    { text: "x", ts: 1, sender: { id: "human-1", name: "  ", avatar: "x" } },
+    humanMsg("Alice", "hi", 2),
+    { text: "y", ts: 3, sender: { id: "human-2" } },
+  ];
+  assert.equal(formatActiveParticipantNames(chat), "Alice");
+});
+
+test("buildDynamicUserContext: emits a [ACTIVE_PARTICIPANT_NAMES] section with the participants derived from chat when no roster is supplied", () => {
+  const chat = [humanMsg("Alice", "hi", 1), humanMsg("Bob", "hey", 2)];
+  const result = buildDynamicUserContext({ chat, checkpointDescriptor: "cp", selectedRoleForDisplay: "INFORMATION_EXPANDER", generalInfo: "task" });
+  assert.match(result.userContent, /\[ACTIVE_PARTICIPANT_NAMES\]\nAlice, Bob/);
+  assert.deepEqual(result.activeParticipantNames, ["Alice", "Bob"]);
+});
+
+test("buildDynamicUserContext: prefers an explicit activeParticipantNames roster over chat-derived names", () => {
+  // The chat only has Alice, but the live roster (callers that know
+  // every player) also has Bob and Carol -- Bob is silent, Carol has
+  // not joined yet. The roster must win so the Expander can
+  // @-mention a silent participant.
+  const chat = [humanMsg("Alice", "hi", 1)];
+  const result = buildDynamicUserContext({
+    chat,
+    checkpointDescriptor: "cp",
+    selectedRoleForDisplay: "INFORMATION_EXPANDER",
+    generalInfo: "task",
+    activeParticipantNames: ["Alice", "Bob", "Carol"],
+  });
+  assert.match(result.userContent, /\[ACTIVE_PARTICIPANT_NAMES\]\nAlice, Bob, Carol/);
+});
+
+test("buildDynamicUserContext: omits [ACTIVE_PARTICIPANT_NAMES] only when no roster is available yet (e.g. before anyone has spoken and the caller has no player list)", () => {
+  const chat = [];
+  const result = buildDynamicUserContext({ chat, checkpointDescriptor: "cp", selectedRoleForDisplay: "INFORMATION_EXPANDER", generalInfo: "task" });
+  assert.equal(result.userContent.includes("ACTIVE_PARTICIPANT_NAMES"), false);
+  assert.deepEqual(result.activeParticipantNames, []);
+});
+
+test("assembleDynamicUserContext: includes [ACTIVE_PARTICIPANT_NAMES] section when activeParticipantNames is supplied", () => {
+  const content = assembleDynamicUserContext({ ...FULL_INPUT, activeParticipantNames: "Alex, Sam, Pat" });
+  assert.match(content, /\[ACTIVE_PARTICIPANT_NAMES\]\nAlex, Sam, Pat/);
+});
+
+test("assembleDynamicUserContext: omits [ACTIVE_PARTICIPANT_NAMES] section when activeParticipantNames is undefined / empty", () => {
+  const a = assembleDynamicUserContext({ ...FULL_INPUT });
+  const b = assembleDynamicUserContext({ ...FULL_INPUT, activeParticipantNames: "" });
+  const c = assembleDynamicUserContext({ ...FULL_INPUT, activeParticipantNames: undefined });
+  assert.equal(a.includes("ACTIVE_PARTICIPANT_NAMES"), false);
+  assert.equal(b.includes("ACTIVE_PARTICIPANT_NAMES"), false);
+  assert.equal(c.includes("ACTIVE_PARTICIPANT_NAMES"), false);
 });
