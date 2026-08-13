@@ -46,8 +46,13 @@ move.
 ## How to re-run
 
 ```sh
-# From the repo root, with server/.env present (OPENAI_API_KEY required).
-node scripts/probes/2026-08-13/mention-pilot.mjs
+# Temporarily copy mention-pilot.mjs into server/ (its imports use
+# server-relative paths). After it writes .mention-pilot-out.json in
+# server/, move that file to this directory and delete the temp copy.
+cp scripts/probes/2026-08-13/mention-pilot.mjs server/_mention-pilot-temp.mjs
+(cd server && node _mention-pilot-temp.mjs)
+mv server/.mention-pilot-out.json scripts/probes/2026-08-13/mention-pilot-out-$(date +%Y-%m-%d-%H%M).json
+rm server/_mention-pilot-temp.mjs
 ```
 
 The other probes follow the same pattern. They are not part of `npm test`.
@@ -58,3 +63,19 @@ The mention-pilot failure is the canonical evidence for the Validator
 envelope parser fix that landed in
 `server/src/SemanticValidator.js` on 2026-08-13. If that fix is ever
 reverted, this directory is the easiest way to reproduce the failure.
+
+### Pre-fix vs post-fix runs
+
+- **Pre-fix 2026-08-13 16:05 CST** (`.mention-pilot-out.json`): 0/5
+  pipeline pass, 0/5 Validator pass, **4/5 Validator parse failures**
+  (`invalid JSON: Unexpected non-whitespace character after JSON at
+  position 399`).
+- **Post-fix 2026-08-13 21:33 CST**
+  (`mention-pilot-out-2026-08-13-21-33-postfix.json`): 0/5 pipeline
+  pass (different bugs in detector + deterministic), 2/5 Validator
+  pass, **0/5 Validator parse failures**. p50 total latency improved
+  from 35.7 s to 24.8 s. The Validator envelope parser bug is no
+  longer the bottleneck; remaining failures are detector role
+  misclassification, deterministic grounding validation, and a
+  detector schema gap (the same three issues the 16:05 run
+  surfaced).
