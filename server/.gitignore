@@ -2,3 +2,10 @@ trigger
 node_modules
 modd.conf
 dist
+
+# Diagnostic / probe scripts: live diagnostic only, not shipped.
+# One-off latency and model probes belong in scripts/probes/<date>/.
+# Anything matching this pattern in server/ is treated as a transient
+# scratch file and excluded from the deployable tree.
+probe-*.mjs
+.mention-pilot-out.json
