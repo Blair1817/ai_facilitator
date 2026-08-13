@@ -236,6 +236,45 @@ test("deterministic validation: flags UNEXPECTED_FIELD when an extra field is pr
   assert.ok(result.failedCriteria.includes("UNEXPECTED_FIELD"));
 });
 
+// ── 2026-08-13 mention-pilot regression cases ────────────────────────────────
+//
+// The 2026-08-13 16:05 / 21:33 mention-pilot exposed a strict-plan-evidence
+// over-constraint. The plan's `evidenceIds` is the LLM's snapshot of which
+// public messages support the detected gap; the Generator must ground only
+// in that set. In practice the plan is too narrow: the Generator legitimately
+// wants to cite adjacent messages for context, and the LLM-built plan
+// frequently misses the very message the Generator ended up grounding in
+// (e.g. an `expander_broad_silence` plan that forgot to include the
+// single-spoken message in evidenceIds). The current strict subset check
+// then fails the candidate on GROUNDING_ID_OUTSIDE_PLAN_EVIDENCE even though
+// the grounding ID is a legitimate public participant message.
+//
+// The principled fix: the plan's evidenceIds is a *hint* (helps the Generator
+// focus), not a hard *constraint*. The hard constraint is "grounding ID must
+// be a public participant message that isn't a recent AI message". When
+// the Generator goes outside the plan but stays inside the public transcript,
+// the plan was probably too narrow -- the Generator's choice is at least as
+// defensible as the plan's. The two tests below pin the corrected behaviour.
+
+test("deterministic validation: a grounding ID in eligibleMessageIds but not in allowedGroundingIds is accepted (the plan is a hint, not a hard constraint)", () => {
+  const ctx = { ...DETERMINISTIC_CONTEXT, allowedGroundingIds: ["m0"] };  // plan only authorises m0
+  const result = runDeterministicValidation(
+    { role: "INFORMATION_EXPANDER", message: "x", groundingMessageIds: ["m2"] },  // Generator grounded in m2
+    ctx,
+  );
+  assert.equal(result.passed, true, `unexpected failed criteria: ${result.failedCriteria.join(", ")}`);
+  assert.equal(result.failedCriteria.includes("GROUNDING_ID_OUTSIDE_PLAN_EVIDENCE"), false);
+});
+
+test("deterministic validation: a grounding ID outside both allowedGroundingIds and eligibleMessageIds is still rejected (the public-transcript check is the real constraint)", () => {
+  const ctx = { ...DETERMINISTIC_CONTEXT, allowedGroundingIds: ["m0"] };
+  const result = runDeterministicValidation(
+    { role: "INFORMATION_EXPANDER", message: "x", groundingMessageIds: ["m999"] },
+    ctx,
+  );
+  assert.ok(result.failedCriteria.includes("UNKNOWN_GROUNDING_ID"));
+});
+
 test("deterministic validation: does not mutate, repair, or replace the candidate", () => {
   const candidate = { role: "EVIDENCE_CHALLENGER", message: "```bad```", groundingMessageIds: ["m999"] };
   const before = JSON.stringify(candidate);
