@@ -51,15 +51,24 @@
           "type": "array",
           "items": { "type": "string" },
           "uniqueItems": true,
-          "description": "支撑该判断的消息ID列表；status='absent'时必须为空数组。"
+          "description": "支撑该判断的消息ID列表；仅在status='present'时必填。"
         },
         "span": {
           "type": "string",
-          "description": "支撑该判断的原文引用（逐字，不得改写或概括）；status='absent'时必须为空字符串。EvidenceChecker.js会核验这段文字是否真的出现在transcript中。"
+          "description": "支撑该判断的原文引用（逐字，不得改写或概括）；仅在status='present'时必填。EvidenceChecker.js会核验这段文字是否真的出现在transcript中。"
         }
       },
-      "required": ["status", "strength", "message_ids", "span"],
-      "additionalProperties": false
+      "required": ["status", "strength"],
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "status": { "const": "present" }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["status", "strength", "message_ids", "span"]
+      }
     },
     "evidenceRelation": {
       "type": "object",
