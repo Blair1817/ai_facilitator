@@ -93,20 +93,49 @@ async function sendChat(page, text) {
 }
 
 async function readLlmLog() {
+  // Since the per-entry Attribute refactor (see AppendOnlyAttribute.mjs),
+  // each llmLog entry is a separate Attribute keyed `llmLog.<id>` and
+  // the ordered list is recovered from the `llmLogIndex` Attribute on
+  // the same Scope. We group per-Scope and walk the index when present.
   const path = "/private/tmp/delibra-run.u6U3NG/.empirica/local/tajriba.json";
   if (!fs.existsSync(path)) return [];
   const content = fs.readFileSync(path, "utf8");
   const lines = content.split("\n").filter(Boolean);
-  const out = [];
+  const perScope = new Map();
+  function getScope(scopeKey) {
+    let s = perScope.get(scopeKey);
+    if (!s) {
+      s = { ids: new Set(), entries: new Map(), index: null };
+      perScope.set(scopeKey, s);
+    }
+    return s;
+  }
   for (const line of lines) {
     let d;
     try { d = JSON.parse(line); } catch { continue; }
-    if (d?.kind === "Attribute" && d?.obj?.key === "llmLog" && d.obj.val) {
-      try {
-        const entries = JSON.parse(d.obj.val);
-        out.push({ scopeId: d.obj.scopeId || d.scopeId, entries });
-      } catch {}
+    if (d?.kind !== "Attribute" || !d?.obj?.key) continue;
+    const key = d.obj.key;
+    const scopeKey = d.obj.scopeId || d.scopeId || d.obj.id || "(unknown)";
+    if (key === "llmLogIndex") {
+      try { getScope(scopeKey).index = JSON.parse(d.obj.val); } catch {}
+      continue;
     }
+    if (key.startsWith("llmLog.")) {
+      const id = key.slice("llmLog.".length);
+      const scope = getScope(scopeKey);
+      scope.ids.add(id);
+      try { scope.entries.set(id, JSON.parse(d.obj.val)); } catch {}
+    }
+  }
+  const out = [];
+  for (const [scopeKey, scope] of perScope.entries()) {
+    if (scope.ids.size === 0 && !scope.index) continue;
+    const orderedIds = Array.isArray(scope.index) ? scope.index : Array.from(scope.ids);
+    const entries = orderedIds
+      .map((id) => scope.entries.get(id))
+      .filter((e) => e && typeof e === "object");
+    if (entries.length === 0) continue;
+    out.push({ scopeId: scopeKey, entries });
   }
   return out;
 }

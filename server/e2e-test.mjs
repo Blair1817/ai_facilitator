@@ -43,7 +43,13 @@ function makeMockGame(opts = {}) {
     interventionHistory: [],
     postInterventionUptake: 0,
     unresolvedNeed: null,
-    llmLog: [],
+    // `llmLog` and `operationalEvents` are no longer stored as a single
+    // growing array Attribute. They use per-entry Attributes plus a
+    // small index (see AppendOnlyAttribute.mjs / InFlightAudit.mjs).
+    // The mock initialises the index to an empty list so the bounded
+    // pattern is exercised end-to-end.
+    llmLogIndex: [],
+    operationalEventsIndex: [],
     systemInfo: null,
     sequenceId: opts.sequenceId ?? "S1",
     totalInterventions: 0,

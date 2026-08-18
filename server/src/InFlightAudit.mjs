@@ -1,7 +1,43 @@
+import {
+  appendToAttribute,
+  readAppendOnlyAttribute,
+  ensureAppendOnlyAttribute,
+} from "./AppendOnlyAttribute.mjs";
+
 export const IN_FLIGHT_KEY = "llmInFlight";
+export const LLM_LOG_INDEX_KEY = "llmLogIndex";
+export const LLM_LOG_NAMESPACE = "llmLog";
+
+/**
+ * Read the ordered llmLog entries for `store` (a game).
+ *
+ * Replaces the previous `store.get("llmLog")` read API. Callers that
+ * only need a count or the latest entry should use the explicit helpers
+ * in this module (`getLlmLogCount`, `getLatestLlmLogEntry`) to avoid
+ * materialising the full list.
+ */
+export function getLlmLog(store) {
+  return readAppendOnlyAttribute(store, LLM_LOG_NAMESPACE);
+}
+
+export function getLlmLogCount(store) {
+  const index = store.get(LLM_LOG_INDEX_KEY);
+  return Array.isArray(index) ? index.length : 0;
+}
+
+export function getLatestLlmLogEntry(store) {
+  const all = getLlmLog(store);
+  return all.length > 0 ? all[all.length - 1] : null;
+}
 
 function appendLog(store, entry) {
-  store.set("llmLog", [...(store.get("llmLog") || []), entry]);
+  // The previous implementation stored the full growing array under a
+  // single `llmLog` Attribute, which caused `tajriba.json` to accumulate
+  // O(N^2) bytes in a single line and eventually exceed Tajriba's Go
+  // `bufio.Scanner` token limit on reload. The bounded per-entry +
+  // index pattern in AppendOnlyAttribute keeps each line sized to one
+  // entry instead of the cumulative log.
+  appendToAttribute(store, LLM_LOG_NAMESPACE, { id: entry.auditRequestId, ...entry });
 }
 
 export function beginInFlight(store, entry) {
@@ -59,4 +95,13 @@ export function recoverInterruptedInFlight(store, currentServerInstanceId, now =
     store.set(IN_FLIGHT_KEY, keep);
   }
   return recovered;
+}
+
+/**
+ * Idempotently initialise the llmLog index on a game. Called from
+ * onGameStart so a fresh game starts on the bounded-storage path even
+ * if no log entries are written immediately.
+ */
+export function ensureLlmLogIndex(store) {
+  ensureAppendOnlyAttribute(store, LLM_LOG_NAMESPACE);
 }

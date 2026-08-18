@@ -32,7 +32,8 @@ import { buildAgentState } from "./AgentState.mjs";
 import { validateCandidate } from "./SemanticValidator.js";
 import { claimSequenceForStudy, RANDOMIZATION_LEDGER_KEY } from "./RandomizationLedger.mjs";
 import { randomUUID } from "node:crypto";
-import { beginInFlight, finalizeAuditLog as finalizeAuditLogBase, recoverInterruptedInFlight } from "./InFlightAudit.mjs";
+import { beginInFlight, finalizeAuditLog as finalizeAuditLogBase, recoverInterruptedInFlight, ensureLlmLogIndex } from "./InFlightAudit.mjs";
+import { appendToAttribute, ensureAppendOnlyAttribute } from "./AppendOnlyAttribute.mjs";
 import {
   canConfirmBreak,
   allFinalDecisionConfirmationsMatch,
@@ -54,6 +55,7 @@ import {
   researchParticipantId,
   researchPersistence,
 } from "./SupabasePersistence.mjs";
+import { countLobbyReadyPlayers } from "./LobbyReadiness.mjs";
 
 dotenv.config();
 
@@ -85,6 +87,18 @@ function finalizeAuditLog(store, entry) {
     }));
   });
 }
+
+// The participant client does not reliably receive ParticipantChange events
+// before a Classic game starts, so usePlayers() can remain undefined for the
+// entire lobby. Keep the lobby count on the authoritative server instead.
+// This listener is serialized with Empirica's other attribute listeners and
+// avoids the previous read/append/write race between participant browsers.
+Empirica.on("player", "introDone", (_ctx, { player }) => {
+  const game = player.currentGame;
+  if (!game || game.hasStarted) return;
+
+  game.set("lobbyReadyCount", countLobbyReadyPlayers(game.players));
+});
 
 // Phase 6.3 (model-version freeze): the default was previously the
 // "gpt-4o" alias, which silently picks the latest snapshot on every
@@ -217,9 +231,24 @@ function buildLocalContext(humanMessages, n = 6) {
   return humanMessages.slice(-n);
 }
 
+// ── operationalEvents (bounded Tajriba storage) ──────────────────────────────
+//
+// `operationalEvents` used to be stored as a single Tajriba Attribute
+// whose value was the entire growing array, mirroring the `llmLog`
+// pattern that caused `bufio.Scanner: token too long` on reload. We now
+// store each event as its own per-entry Attribute plus a small index,
+// reusing the helper from AppendOnlyAttribute.mjs.
+const OPERATIONAL_EVENTS_NAMESPACE = "operationalEvents";
+
+let operationalEventCounter = 0;
+
 function recordOperationalEvent(game, event) {
-  const entry = { timestamp: Date.now(), serverInstanceId: CALLBACKS_INSTANCE_ID, ...event };
-  game.set("operationalEvents", [...(game.get("operationalEvents") || []), entry]);
+  const timestamp = Date.now();
+  // Sequence id is unique within a single process and the timestamp
+  // disambiguates across restarts. Stays well under 64 bytes.
+  const id = `${timestamp}-${(++operationalEventCounter).toString(36)}`;
+  const entry = { id, timestamp, serverInstanceId: CALLBACKS_INSTANCE_ID, ...event };
+  appendToAttribute(game, OPERATIONAL_EVENTS_NAMESPACE, entry);
   return entry;
 // ── Feature extraction (calls Python sidecar) ─────────────────────────────────
 }
@@ -622,7 +651,7 @@ Empirica.before("game", "start", async (ctx, { game, start }) => {
   });
 
   try {
-    await persistAssignmentOrBlock(researchPersistence(), {
+    const persisted = await persistAssignmentOrBlock(researchPersistence(), {
       game_id: game.id,
       sequence_id: claim.sequenceId,
       allocation_number: claim.allocationNumber,
@@ -634,7 +663,15 @@ Empirica.before("game", "start", async (ctx, { game, start }) => {
       assignment_status: "confirmed",
       updated_at: new Date().toISOString(),
     });
-    game.set("assignmentPersistenceStatus", "confirmed");
+    // persistAssignmentOrBlock returns null only when Supabase is
+    // intentionally not configured (pilot-only fail-open). Tajriba still
+    // holds the assignment through its own durable claim, so we mark
+    // the game as "tajriba-only" rather than blocking onGameStart.
+    // Re-attach Supabase before formal data collection.
+    game.set(
+      "assignmentPersistenceStatus",
+      persisted?.persistenceMode === "tajriba-only" ? "tajriba-only" : "confirmed",
+    );
   } catch (error) {
     game.set("assignmentPersistenceStatus", "blocked");
     game.set("assignmentPersistenceError", error.message);
@@ -645,7 +682,11 @@ Empirica.before("game", "start", async (ctx, { game, start }) => {
 // ── onGameStart ───────────────────────────────────────────────────────────────
 
 Empirica.onGameStart(({ game }) => {
-  if (game.get("assignmentPersistenceStatus") !== "confirmed") {
+  const persistenceStatus = game.get("assignmentPersistenceStatus");
+  // Accept both "confirmed" (Supabase mirror written) and "tajriba-only"
+  // (Supabase intentionally not configured for pilot). Only "blocked"
+  // or missing status fails the game start.
+  if (persistenceStatus !== "confirmed" && persistenceStatus !== "tajriba-only") {
     game.end("failed", game.get("assignmentPersistenceError") || "Research assignment persistence failed before this session could begin.");
     return;
   }
@@ -666,11 +707,17 @@ Empirica.onGameStart(({ game }) => {
   }
 
   // Initialize game-level state
-  if (!Array.isArray(game.get("llmLog"))) game.set("llmLog", []);
+  // `llmLog` and `operationalEvents` use the bounded per-entry storage
+  // pattern (see AppendOnlyAttribute.mjs + InFlightAudit.mjs). Each
+  // event becomes its own Tajriba Attribute; the index here is the
+  // ordered list of ids. We never write a single large `llmLog` array
+  // attribute, which is what previously caused `tajriba.json` to grow
+  // a single line to >1 MB and trip `bufio.Scanner: token too long`.
+  ensureLlmLogIndex(game);
+  ensureAppendOnlyAttribute(game, "operationalEvents");
   if (!Number.isFinite(game.get("totalInterventions"))) game.set("totalInterventions", 0);
   if (!Number.isFinite(game.get("totalFallbackMessages"))) game.set("totalFallbackMessages", 0);
   if (!game.get("llmInFlight")) game.set("llmInFlight", {});
-  if (!Array.isArray(game.get("operationalEvents"))) game.set("operationalEvents", []);
   game.set("activeCallbacksInstanceId", CALLBACKS_INSTANCE_ID);
   if (!game.get("systemInfo")) {
     game.set("systemInfo", {
