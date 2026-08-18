@@ -137,6 +137,16 @@ async function route(req, res, ctx) {
     await handleBundleZip(req, res, ctx, bundleZip[1], redact, auditFields);
     return;
   }
+  // TEMP debug: /__debug/realListBatches actually calls listBatches and returns the raw rows
+  if (path === "/__debug/realListBatches") {
+    try {
+      const items = await ctx.service.listBatches({});
+      await sendJson(res, 200, { count: items.length, items: items.slice(0, 3) });
+    } catch (e) {
+      await sendJson(res, 500, { error: e.message, stack: e.stack });
+    }
+    return;
+  }
   // TEMP debug: /__debug/listBatches shows the in-memory map keys vs scope ids
   if (path === "/__debug/listBatches") {
     try {
