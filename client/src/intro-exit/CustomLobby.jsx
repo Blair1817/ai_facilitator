@@ -1,34 +1,49 @@
-import React, { useEffect } from "react";
-import { Loading } from "@empirica/core/player/react";
-import { usePlayer, usePlayers, useGame } from "@empirica/core/player/classic/react";
+import React from "react";
+import { usePlayer, useGame } from "@empirica/core/player/classic/react";
+import { ConnectionRecovery } from "./ConnectionRecovery";
 
 export function CustomLobby() {
     const player = usePlayer();
-    const treatment = player.get("treatment");
     const game = useGame();
 
-    useEffect(() => {
-
-        let connectedPlayers = game.get("connectedPlayers");
-        if (connectedPlayers){
-            game.set("connectedPlayers", [...connectedPlayers, player.id])
-        }
-        else{
-            game.set("connectedPlayers", [player.id])
-        }
-
-        
-      }, []);
-
-    if (!player) {
-        return <Loading />;
+    if (!player || !game) {
+        return <ConnectionRecovery />;
     }
 
+    const treatment = player.get("treatment");
     if (!treatment || !treatment.playerCount) {
-        warn("lobby: no treatment found on player");
-
-        return <Loading />;
+        console.warn("lobby: no treatment found on player");
+        return (
+            <div className="flex h-full items-center justify-center px-6">
+                <div className="max-w-xl text-center">
+                    <h3 className="text-2xl font-medium text-gray-900">
+                        Session information is still loading
+                    </h3>
+                    <p className="mt-3 text-lg text-gray-600">
+                        Please wait a moment. If this message remains, use the
+                        reconnect button below.
+                    </p>
+                    <button
+                        type="button"
+                        className="mt-5 rounded bg-empirica-600 px-5 py-3 text-white"
+                        onClick={() => window.location.reload()}
+                    >
+                        Reconnect
+                    </button>
+                </div>
+            </div>
+        );
     }
+
+    // Empirica does not reliably publish ParticipantChange events before a
+    // Classic game starts, so usePlayers() can stay undefined throughout the
+    // lobby. The server updates this count whenever a participant completes
+    // the intro. Fall back to one only during the brief propagation window for
+    // the current participant's own introDone write.
+    const readyCount = Number(game.get("lobbyReadyCount"));
+    const assignedPlayerCount = Number.isInteger(readyCount) && readyCount > 0
+        ? Math.min(readyCount, treatment.playerCount)
+        : 1;
 
     return (
         <div className="flex h-full items-center justify-center">
@@ -45,7 +60,7 @@ export function CustomLobby() {
                 </svg>
                 <h3 className="mt-2 text-5xl font-medium text-gray-900">
                     {treatment.playerCount > 1
-                        ? `${new Set(game.get("connectedPlayers")).size}/${treatment.playerCount} players connected — waiting for other players to join...`
+                        ? `${assignedPlayerCount}/${treatment.playerCount} players connected — waiting for other players to join...`
                         : "Game loading"}
                 </h3>
                 <br/>

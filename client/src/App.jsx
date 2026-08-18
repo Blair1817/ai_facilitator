@@ -4,6 +4,7 @@ import { EmpiricaMenu, EmpiricaParticipant } from "@empirica/core/player/react";
 import React from "react";
 import { Game } from "./Game";
 import { GamesFull } from "./intro-exit/GamesFull";
+import { GameFailedFallback } from "./intro-exit/GameFailedFallback";
 import { NoGames } from "./intro-exit/NoGames";
 import { OverallInstructions } from "./intro-exit/OverallInstructions";
 import { PlayerCreate } from "./intro-exit/PlayerCreate"
@@ -13,6 +14,7 @@ import { Debriefing } from "./intro-exit/Debriefing";
 import { ExpFeedback } from "./intro-exit/ExpFeedback";
 import { FinalQuestions } from "./intro-exit/FinalQuestions";
 import { CustomLobby } from "./intro-exit/CustomLobby";
+import { ConnectionRecovery } from "./intro-exit/ConnectionRecovery";
 import { getRecruitmentMode } from "./prolific";
 
 export default function App() {
@@ -50,9 +52,15 @@ export default function App() {
       // cross-round questions to a participant who did not complete both rounds.
       return [ExpFeedback, Debriefing];
     }
-    else{
-      return [GamesFull];
+    if (player.get("ended") == "game failed") {
+      // The game.start callback threw on the server (e.g. Supabase research-
+      // assignment write did not complete). Show a clear "contact research
+      // team" message instead of the misleading "All games have filled up!"
+      // page. This used to fall through to GamesFull, which is a separate
+      // code path reserved for "no slots left" states.
+      return [GameFailedFallback];
     }
+    return [GamesFull];
   }
 
   return (
@@ -65,6 +73,8 @@ export default function App() {
           exitSteps={exitSteps}
           noGames={NoGames}
           disableConsent
+          loading={ConnectionRecovery}
+          connecting={ConnectionRecovery}
           playerCreate={recruitmentMode === "prolific" ? ProlificPlayerCreate : PlayerCreate}
           lobby={CustomLobby}>
             <Game />
