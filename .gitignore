@@ -14,3 +14,8 @@ TODO.md
 .empirica/empirica.toml
 .empirica/backups/
 client/vite.config.js.timestamp-*.mjs
+
+# Diagnostic / stress-test output (2026-08-16 D-012 recovery artifacts).
+# Reproducible on demand via `playwright` / `npx playwright-cli`; never commit.
+output/
+.playwright-cli/

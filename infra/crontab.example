@@ -1,25 +1,8 @@
-# Daily Backblaze B2 backup of the Tajriba JSON database.
-#
-# Install on the NAS host:
-#   sudo cp infra/crontab.example /etc/cron.d/delibra-backup
-#   sudo systemctl restart cron    # or `crontab /etc/cron.d/delibra-backup`
-#
-# Verify it loaded:
-#   cat /etc/cron.d/delibra-backup
-#   systemctl list-timers | grep -i delibra   # if a systemd timer was added
-#                                             # instead; this file is for cron
-#
-# Source-of-truth: project-knowledge/deployment-analysis-2026-08-13.html
-#                  line 767-778 (step 6: B2 + cron acceptance)
+# Encrypted Tajriba backup every four hours. Install only after a manual backup
+# and restore drill have both passed. This invokes the script inside the
+# running, version-pinned Delibra container.
 
-# At 03:00 every day, run the B2 backup script as root. The env_file
-# directive loads the same .env that docker compose uses, so the script
-# can read B2_APPLICATION_KEY_ID / B2_APPLICATION_KEY / B2_BUCKET_NAME.
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-DELIBRA_REPO=/opt/delibra
-B2_APPLICATION_KEY_ID=__REGENERATE__
-B2_APPLICATION_KEY=__REGENERATE__
-B2_BUCKET_NAME=__REGENERATE__
 
-0 3 * * * root /opt/delibra/infra/scripts/backup-tajriba-b2.sh >> /var/log/delibra-backup.log 2>&1
+17 */4 * * * root cd /volume1/delibra/infra && /usr/local/bin/docker compose --env-file .env exec -T empirica /opt/delibra/backup-local-encrypted.sh >> /volume1/delibra/logs/backup.log 2>&1

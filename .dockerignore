@@ -1,0 +1,16 @@
+.git
+.DS_Store
+**/.DS_Store
+**/.env
+**/*.env
+**/node_modules
+**/dist
+.empirica/local
+.empirica/backups
+.empirica/empirica.toml
+reversible_baselines
+scripts/probes
+infra/runtime
+infra/bundle/*
+!infra/bundle/delibra.tar.zst
+!infra/bundle/manifest.txt

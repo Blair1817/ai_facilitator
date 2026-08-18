@@ -1,114 +1,173 @@
-# NAS Deployment Artefacts (D-008)
+# Formal-study NAS deployment
 
-This directory contains the **template** deployment artefacts for the
-formal-study run on the user's home NAS (绿联 DXP4600 Pro, UGOS, 8 GB,
-Docker). Nothing here is deployed yet — see `project-knowledge/open-gates.md`
-for the items that must be resolved before first container start.
+This directory prepares Delibra for the user's x86_64 绿联 DXP4600 Pro NAS.
+It is a formal-study target, but it is **not yet deployed**. Passing the local
+checks or starting the container does not authorize participant recruitment;
+all gates in `project-knowledge/open-gates.md` still apply.
 
-> **Do not commit real secrets to this directory.** Every secret value is
-> written as `__REGENERATE__` and must be replaced locally before
-> `docker compose up`. The `__REGENERATE__` strings are intended to fail
-> loudly if a `docker compose` command reads them.
+## Architecture
 
-## D-008 step → file mapping
+- One Empirica process serves Tajriba, callbacks, participant UI, admin UI,
+  and the same-origin `/query` endpoint on port 3000.
+- Tajriba data is a bind-mounted host file, independent of the container.
+- Real credentials are mounted read-only at runtime and never enter the bundle
+  or image.
+- Every four hours, an in-container script creates AES-256 encrypted snapshots,
+  checks them with SHA-256, and writes matching copies to internal NAS storage
+  and a separately mounted disk.
+- Remote ingress and a true off-site backup remain deferred integrations. Both
+  are mandatory before remote formal recruitment, even though neither is part
+  of the initial LAN bring-up.
 
-| D-008 step | Owner | File(s) in this directory |
-| --- | --- | --- |
-| 1. NAS prep (ssh, Container Manager, `docker run hello-world`) | user | not in repo (physical device) |
-| 2. Cloudflare account + domain | user | not in repo (account) |
-| 3. `docker-compose.yml` + `.env` | Chloe | `docker-compose.yml`, `.env.example` |
-| 4. Supabase new project + `research` migration | user | not in repo (account) |
-| 5. Cloudflare Tunnel + Access policy | Chloe | `cloudflared/config.yml` |
-| 6. Backblaze B2 + daily backup cron | Chloe | `scripts/backup-tajriba-b2.sh`, `crontab.example` |
-| 7. 3-person rehearsal + SOP | joint | not in repo (operational) |
+The old four-container Cloudflare/B2 templates are retained only as historical
+material (`cloudflared/` and `scripts/backup-tajriba-b2.sh`) and are not used by
+the current Compose file.
 
-D-008 source-of-truth: `project-knowledge/deployment-analysis-2026-08-13.html`.
+## Why the bundle is built through the script
 
-## File index
+Running `empirica bundle` directly in the repository includes files under
+`.empirica/backups/` and the local admin configuration. For a formal deployment
+that is unacceptable. `scripts/build-nas-bundle.sh` constructs a temporary,
+sanitised worktree and rejects a bundle containing local databases, backups,
+credentials, `.env`, OS metadata, or stale feature-server files.
+
+## 1. Build and verify on the development Mac
+
+From the repository root:
+
+```sh
+chmod +x infra/scripts/*.sh
+infra/scripts/build-nas-bundle.sh
+cd server && node --test --test-reporter=dot src/**/*.test.mjs
+cd ../client && npm run build
+```
+
+The generated bundle and manifest are intentionally Git-ignored. Transfer the
+repository plus `infra/bundle/delibra.tar.zst` and `manifest.txt` to the NAS over
+the trusted LAN; do not email or upload a bundle containing research code.
+
+## 2. Prepare the NAS
+
+Requirements:
+
+- wired Ethernet and a DHCP-reserved/static LAN address;
+- current UGOS and Container Manager/Docker Compose;
+- UPS covering the NAS and router, with automatic shutdown/start tested;
+- one internal data directory and one independently mounted USB/storage disk;
+- no router port-forward for port 3000;
+- an operator account whose UID/GID owns all deployment directories.
+
+Old UGOS releases may provide Docker Engine without the Compose plugin. For
+those systems, use `scripts/build-image-legacy-ugos.sh` and
+`scripts/run-legacy-ugos.sh`; these preserve the same image, mounts, limits,
+health check, and least-privilege settings as the Compose definition.
+`scripts/prepare-legacy-ugos.sh` performs the one-time directory and secret
+setup without creating a persistent host login account or overwriting existing
+runtime configuration.
+
+Example layout (adapt volume names to the actual NAS):
+
+```text
+/volume1/delibra/
+  infra/
+  data/
+  backups/
+  logs/
+  secrets/
+/volume2/delibra-backups/
+```
+
+Create `infra/.env` from `.env.example`, fill every placeholder locally, and
+set mode 600. Copy `empirica.toml.template` to the path named by
+`DELIBRA_CONFIG_FILE`, replace both placeholders with independent outputs from
+`openssl rand -hex 32`, and set mode 600.
+
+Create a backup passphrase with at least 32 random bytes, write it only to the
+file named by `DELIBRA_BACKUP_KEY_FILE`, and set mode 600. Keep a second offline
+copy of that passphrase in the researcher's approved password manager or sealed
+recovery record; backups are unrecoverable without it.
+
+## 3. Preflight and LAN bring-up
+
+On the NAS, from `infra/`:
+
+```sh
+scripts/preflight-nas.sh
+docker compose --env-file .env build --pull
+docker compose --env-file .env up -d
+docker compose --env-file .env ps
+docker compose --env-file .env logs --tail 100 empirica
+```
+
+Legacy UGOS equivalent:
+
+```sh
+scripts/preflight-nas.sh
+scripts/build-image-legacy-ugos.sh
+scripts/run-legacy-ugos.sh
+docker ps --filter name=delibra-empirica
+docker logs --tail 100 delibra-empirica
+```
+
+`scripts/run-legacy-ugos.sh --lan-staging` is permitted only for LAN health/UI
+validation before the external disk and Supabase persistence are available.
+It deliberately mounts the pending external-backup path read-only, so the
+backup script fails closed. A staging start is not formal-study readiness.
+
+Acceptance for this stage:
+
+- the container is `healthy` and remains healthy after a NAS reboot;
+- `http://<NAS_LAN_IP>:3000/` loads from another LAN device;
+- `/admin` requires the new strong credentials;
+- the image manifest identifies the intended commit and bundle checksum;
+- no production port is forwarded by the router.
+
+## 4. Backup and restore drill
+
+Run a manual backup before installing cron:
+
+```sh
+docker compose --env-file .env exec -T empirica /opt/delibra/backup-local-encrypted.sh
+```
+
+Select the new archive from the internal backup directory and run a non-
+destructive restore drill:
+
+```sh
+docker compose --env-file .env exec -T empirica \
+  /opt/delibra/restore-backup-for-review.sh \
+  /backups/internal/delibra-tajriba-YYYYMMDDTHHMMSSZ.tar.enc
+```
+
+The restore is written under `/data/restore-review/`; the active database is
+never replaced. Confirm the restored file and metadata exist, then install
+`crontab.example`. Also run a manual backup immediately after every completed
+formal session instead of relying only on the four-hour schedule.
+
+## Formal recruitment gates
+
+Do not recruit formal participants until all of these have evidence:
+
+1. ethics/data-hosting approval for the NAS and every external processor;
+2. UPS shutdown, reboot, container auto-recovery, and disk-health monitoring;
+3. manual backup plus restore drill from both storage devices;
+4. approved remote HTTPS ingress with the admin route access-controlled;
+5. encrypted off-site backup with a tested restore;
+6. one callbacks instance only;
+7. three-person remote rehearsal covering assignment, reconnect, full workflow,
+   LLM latency/context drift, Supabase mirror, Tajriba persistence, and backup;
+8. a written operator stop/recovery SOP and recruitment-day health checklist.
+
+## Files
 
 | File | Purpose |
 | --- | --- |
-| `.env.example` | Every env var the 4 containers need, with `__REGENERATE__` placeholders for secrets |
-| `docker-compose.yml` | 4-service compose (tajriba, callbacks, client, cloudflared) with health checks and `${VAR:?msg}` fail-fast |
-| `cloudflared/config.yml` | Tunnel + 3 ingress rules (`tajriba.*`, `game.*`, `api.*`) |
-| `empirica.toml.template` | Tajriba admin / service credentials template; `openssl rand -hex 32` for every secret |
-| `scripts/backup-tajriba-b2.sh` | Extends the local `scripts/backup-tajriba.sh` with rclone push to Backblaze B2 + SHA256 verify |
-| `crontab.example` | `/etc/cron.d/delibra-backup` for daily 03:00 backup |
-| `README.md` | This file |
-
-## Bring-up checklist (Chloe-side)
-
-```sh
-# 0. From the repo root on the NAS, after `git clone` / `git pull`.
-cd /opt/delibra/infra
-
-# 1. Generate the env file from the template. Edit values as you go.
-cp .env.example .env
-$EDITOR .env   # fill in every __REGENERATE__ value; see below for the source of each
-
-# 2. Generate Tajriba admin credentials. Mount the result into the tajriba container.
-cp empirica.toml.template empirica.toml
-# Replace every __REGENERATE_*__ placeholder with the output of `openssl rand -hex 32`.
-chmod 600 empirica.toml   # Tajriba refuses to start if this is world-readable
-
-# 3. Cloudflare tunnel. After creating the tunnel in the Cloudflare Zero Trust dashboard
-#    (https://one.dash.cloudflare.com), download the tunnel credentials JSON to
-#    /etc/cloudflared/<tunnel-uuid>.json and put the token in .env as CLOUDFLARE_TUNNEL_TOKEN.
-#    Then copy the rendered config:
-cp cloudflared/config.yml /etc/cloudflared/config.yml   # adjust the credentials-file path
-
-# 4. Bring up. The compose file will fail loudly if any required env is missing.
-docker compose --env-file .env up -d
-
-# 5. Verify all 4 services are healthy.
-docker compose ps   # all 4 must show "healthy" after ~30 s
-curl localhost:3000   # tajriba admin (or via Cloudflare Access)
-curl localhost:8080   # callbacks health endpoint
-curl localhost:5173   # client dev server (production build will be a different port)
-
-# 6. Install the backup cron.
-sudo cp crontab.example /etc/cron.d/delibra-backup
-sudo systemctl restart cron   # or `crontab /etc/cron.d/delibra-backup` on some distros
-
-# 7. Hand off to the user + user runs the 3-person rehearsal (D-008 step 7).
-```
-
-## Secret rotation rule
-
-Every secret in this directory is intended to be rotated before the formal
-study starts. The rotation procedure is the same as the initial generation:
-
-```sh
-openssl rand -hex 32
-```
-
-The 32-byte (64 hex char) output is a CSPRNG-quality random string. Use it
-verbatim; do not edit it; do not share it in chat, screenshots, or commit
-messages.
-
-## What this directory does NOT do
-
-- It does not create the Cloudflare account, the B2 bucket, the Supabase
-  project, or the NAS itself. Those are user-owned (see D-008).
-- It does not run the 3-person rehearsal. That is gate 2 in
-  `open-gates.md`.
-- It does not file IRB paperwork. That is gate 1 in `open-gates.md`.
-- It does not push to any registry. The 4 services are built from
-  `Codes/ai_facilitator-main/{server,client}` on the NAS itself; if the
-  user prefers pre-built images, the compose file's `build:` lines can be
-  replaced with `image:` references.
-
-## Updating this directory
-
-When a deployment artefact changes:
-
-1. Edit the template under `infra/`. Real secrets never go in this
-   directory.
-2. Commit the template change with a message that names the D-008 step
-   and the change (e.g. `infra(docker-compose): add 5-pt healthcheck
-   timeout for callbacks`).
-3. Update the corresponding section of
-   `project-knowledge/deployment-analysis-2026-08-13.html` if the
-   D-008 plan itself changed.
-4. Do not change the NAS-side `.env` or `empirica.toml` from a git
-   operation — those live on the NAS, not in the repo.
+| `Dockerfile` | pinned Empirica Linux image with least-privilege runtime |
+| `docker-compose.yml` | single-process, same-origin NAS deployment |
+| `.env.example` | non-secret runtime and host-path template |
+| `empirica.toml.template` | public placeholder admin configuration |
+| `scripts/build-nas-bundle.sh` | sanitised bundle builder and provenance manifest |
+| `scripts/preflight-nas.sh` | fail-closed NAS configuration checks |
+| `scripts/backup-local-encrypted.sh` | encrypted dual-destination snapshot and rotation |
+| `scripts/restore-backup-for-review.sh` | non-destructive integrity/restore drill |
+| `crontab.example` | four-hour backup schedule |
