@@ -746,18 +746,21 @@ function collectRoundMessages(round, bundle, game) {
 }
 
 function scopeAttributes(scope) {
-  // In production, an admin scope is {id, kind, attributes: [{key, value, ...}]}
+  // In production, an admin scope is {id, kind, attributes: [{key, val, ...}]}
   // plus a per-scope attribute map. In tests the scope is pre-shaped.
-  // Tajriba v1.12 always stores `value` as a string; the consumer parses
-  // JSON-looking values. We mirror that here so production data and test
-  // fixtures go through the same code path.
+  // Tajriba v1.12 always stores `val` as a string (the GraphQL field is
+  // named `val`, not `value`); the consumer parses JSON-looking values.
+  // We accept both `val` and `value` here so the production admin path
+  // and the test fixture path go through the same code. We mirror the
+  // production behaviour so that what the renderer sees is identical.
   if (scope && scope.__attrs && typeof scope.__attrs === "object") return scope.__attrs;
   if (scope && Array.isArray(scope.attributes)) {
     const out = {};
     for (const a of scope.attributes) {
       if (a && typeof a.key === "string") {
-        if (a.index === undefined || a.index === null) out[a.key] = parseValue(a.value);
-        else out[`${a.key}:${a.index}`] = parseValue(a.value);
+        const raw = a.val !== undefined ? a.val : a.value;
+        if (a.index === undefined || a.index === null) out[a.key] = parseValue(raw);
+        else out[`${a.key}:${a.index}`] = parseValue(raw);
       }
     }
     return out;
