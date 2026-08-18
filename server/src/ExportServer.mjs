@@ -147,20 +147,35 @@ async function route(req, res, ctx) {
     if (filter.length > 0) args.filter = filter;
     try {
       const r = await ctx.service.admin.scopes(args);
+      // Make robust against any shape; admin returns either {edges:[...], pageInfo}
+      // or sometimes a different structure
+      const edges = r?.edges || (Array.isArray(r) ? r.map((n) => ({ node: n })) : []);
+      const first3 = edges.slice(0, 3).map((e) => {
+        const node = e?.node || e;
+        return {
+          id: node?.id,
+          kind: node?.kind,
+          name: node?.name,
+          attrCount: node?.attributes?.length || 0,
+          firstAttrs: (node?.attributes || []).slice(0, 5).map((a) => ({
+            key: a?.key,
+            val: typeof a?.val === "string" ? a.val.slice(0, 80) : a?.val,
+            hasValue: a?.value !== undefined,
+            aKeys: a ? Object.keys(a) : null,
+          })),
+        };
+      });
       await sendJson(res, 200, {
         argsSent: args,
-        edgeCount: r?.edges?.length || 0,
+        rawType: Array.isArray(r) ? "array" : typeof r,
+        rawKeys: r ? Object.keys(r) : null,
+        rawSample0: edges[0] ? Object.keys(edges[0]) : null,
+        edgeCount: edges.length,
         pageInfo: r?.pageInfo || null,
-        sample: (r?.edges || []).slice(0, 3).map((e) => ({
-          id: e.node?.id,
-          kind: e.node?.kind,
-          name: e.node?.name,
-          attrCount: e.node?.attributes?.length || 0,
-          firstAttrs: (e.node?.attributes || []).slice(0, 5).map((a) => ({ key: a.key, val: typeof a.val === "string" ? a.val.slice(0, 60) : a.val, hasValue: a.value !== undefined })),
-        })),
+        sample: first3,
       });
     } catch (e) {
-      await sendJson(res, 500, { error: e.message });
+      await sendJson(res, 500, { error: e.message, stack: e.stack });
     }
     return;
   }
