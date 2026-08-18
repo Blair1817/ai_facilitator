@@ -2,6 +2,7 @@ FROM node:20.12.2-bookworm-slim
 
 ARG EMPIRICA_URL="https://install.empirica.dev/proxy/linux/amd64/latest/empirica"
 ARG EMPIRICA_SHA256="3beb8adde5a1d29d72db1b8f3530f537168ae276615c570d4f81961f40a33018"
+ARG VOLTA_VERSION="2.0.2"
 ARG DELIBRA_UID=10001
 ARG DELIBRA_GID=10001
 
@@ -10,6 +11,16 @@ RUN apt-get update \
     && curl -fsS "$EMPIRICA_URL" -o /usr/local/bin/empirica \
     && echo "$EMPIRICA_SHA256  /usr/local/bin/empirica" | sha256sum -c - \
     && chmod 0755 /usr/local/bin/empirica \
+    # Pre-bake Volta so the Empirica runtime does not need outbound HTTPS
+    # to github.com at every container start (the NAS has no public
+    # internet; only Tailscale). Empirica's `serve` re-runs `npm run
+    # build` per start, which on a fresh image would otherwise
+    # install Volta from github.com and time out.
+    && curl -fsSL "https://github.com/volta-cli/volta/releases/download/v${VOLTA_VERSION}/volta-${VOLTA_VERSION}-linux.tar.gz" \
+         -o /tmp/volta.tar.gz \
+    && tar -xzf /tmp/volta.tar.gz -C /opt/ \
+    && ln -sf "/opt/volta-${VOLTA_VERSION}/volta" /usr/local/bin/volta \
+    && rm -f /tmp/volta.tar.gz \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --gid "$DELIBRA_GID" delibra \
