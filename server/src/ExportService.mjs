@@ -95,6 +95,21 @@ export class ExportService {
    */
   async listBatches(filter = {}) {
     const scopes = await this.allScopes({ kinds: ["batch"] });
+    // Pull every game scope once and group by `attrs.batchID` in memory.
+    // Tajriba v1.12's admin `scopes(filter: {kvs})` does not match the
+    // store's JSON-encoded attribute values (D-014 deploy 2026-08-18
+    // empirical inspection of the live NAS store), so the kvs form was
+    // returning all game scopes regardless of batchID. Filtering
+    // in-memory against the same `parseValue` semantics used by the
+    // renderer keeps the two paths consistent.
+    const allGames = await this.allScopes({ kinds: ["game"] });
+    const gamesByBatch = new Map();
+    for (const g of allGames) {
+      const bid = scopeAttributes(g).batchID;
+      if (bid == null) continue;
+      if (!gamesByBatch.has(bid)) gamesByBatch.set(bid, []);
+      gamesByBatch.get(bid).push(g);
+    }
     const result = [];
     for (const scope of scopes) {
       const attrs = scopeAttributes(scope);
@@ -107,10 +122,7 @@ export class ExportService {
       // Players are not directly linked to batches; we walk through
       // `game -> player` to count the unique participants. This is the
       // same shape Tajriba exposes in the admin UI.
-      const games = await this.allScopes([
-        { kinds: ["game"] },
-        { kvs: [{ key: "batchID", val: JSON.stringify(scope.id) }] },
-      ]);
+      const games = gamesByBatch.get(scope.id) || [];
       const playerSet = new Set();
       for (const g of games) {
         const players = await this.gamePlayerIDs(g.id);
@@ -146,11 +158,12 @@ export class ExportService {
    */
   async listGames(batchId, filter = {}) {
     if (!batchId) throw new Error("listGames: batchId is required");
-    const kvs = [{ key: "batchID", val: JSON.stringify(batchId) }];
-    const all = await this.allScopes([
-      { kinds: ["game"] },
-      { kvs },
-    ]);
+    // Pull all game scopes once and filter by `attrs.batchID` in memory.
+    // See listBatches for why the admin `kvs` filter is unreliable.
+    const allGames = await this.allScopes({ kinds: ["game"] });
+    const all = allGames.filter(
+      (g) => scopeAttributes(g).batchID === batchId,
+    );
     const items = [];
     for (const scope of all) {
       const attrs = scopeAttributes(scope);
@@ -470,22 +483,22 @@ export class ExportService {
 
   async gamePlayerIDs(gameId) {
     // The Tajriba store attributes a player scope with `gameID` (a bare
-    // string), not `currentGameID`. Using the wrong key returns zero
-    // scopes and downstream renderers would silently emit an empty
-    // player list. The empirical inspection of a live store on the NAS
-    // (D-014 deploy 2026-08-18) confirmed the key is `gameID`.
-    const playerScopes = await this.allScopes([
-      { kinds: ["player"] },
-      { kvs: [{ key: "gameID", val: JSON.stringify(gameId) }] },
-    ]);
-    return playerScopes.map((s) => s.id);
+    // string), not `currentGameID`. The admin `scopes({kvs})` filter
+    // also does not match the store's JSON-encoded attribute values
+    // (see listBatches), so we pull all player scopes and filter by
+    // `attrs.gameID` in memory.
+    const all = await this.allScopes({ kinds: ["player"] });
+    return all
+      .filter((s) => scopeAttributes(s).gameID === gameId)
+      .map((s) => s.id);
   }
 
   async gameRoundIDs(gameId) {
-    const roundScopes = await this.allScopes([
-      { kinds: ["round"] },
-      { kvs: [{ key: "gameID", val: JSON.stringify(gameId) }] },
-    ]);
+    // Pull all round scopes once and filter by `attrs.gameID` in memory.
+    // See listBatches for why the admin `kvs` filter is unreliable.
+    const roundScopes = (
+      await this.allScopes({ kinds: ["round"] })
+    ).filter((s) => scopeAttributes(s).gameID === gameId);
     roundScopes.sort((a, b) => {
       const ai = numberOrZero(scopeAttributes(a).index);
       const bi = numberOrZero(scopeAttributes(b).index);
