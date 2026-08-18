@@ -6,9 +6,14 @@ import {
   Lobby,
 } from "@empirica/core/admin/classic";
 import { info, setLogLevel } from "@empirica/core/console";
+import fs from "node:fs";
 import minimist from "minimist";
 import process from "process";
+import { Tajriba } from "@empirica/tajriba";
 import { Empirica } from "./callbacks";
+import { ExportService } from "./ExportService.mjs";
+import { createExportServer } from "./ExportServer.mjs";
+import { recordExportEvent } from "./ExportAudit.mjs";
 import { runStartupSelfCheck } from "./prompts/promptLoader.js";
 
 const argv = minimist(process.argv.slice(2), { string: ["token"] });
@@ -64,6 +69,58 @@ if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "your-key-here
       info("server: started");
     });
   });
+
+  // D-014: start the research-data export server alongside Empirica.
+  // The server is bundled into the same `callbacks/index.js` archive
+  // (esbuild's --bundle pulls it in via the import at the top of this
+  // file), so a single `empirica bundle` produces both the callbacks
+  // process and the export surface. The export service binds to the
+  // loopback interface only; cloudflared forwards the public
+  // `exports.<domain>` route to it.
+  //
+  // Disable with DELIBRA_DISABLE_EXPORT_SERVER=1 (e.g. during incident
+  // response or if the audit file is on a read-only mount).
+  if (process.env.DELIBRA_DISABLE_EXPORT_SERVER !== "1") {
+    try {
+      const exportPort = Number(process.env.EXPORT_PORT || 3001);
+      const auditFile = process.env.EXPORT_AUDIT_FILE || "/data/export-audit.jsonl";
+      const tajUrl = process.env.TAJRIBA_URL || "http://127.0.0.1:3000/query";
+      const srtokenPath = process.env.TAJRIBA_CONFIG || "/run/secrets/empirica.toml";
+
+      let srtoken = process.env.TAJRIBA_SRTOKEN;
+      if (!srtoken) {
+        const configText = fs.readFileSync(srtokenPath, "utf8");
+        const m = configText.match(/^srtoken\s*=\s*"([^"]+)"$/m);
+        if (!m) throw new Error(`srtoken field missing in ${srtokenPath}`);
+        srtoken = m[1];
+      }
+
+      const taj = await Tajriba.createAndAwait(tajUrl);
+      taj.useHTTP = true;
+      const sessionToken = await taj.registerService("export-server", srtoken);
+      const admin = await taj.sessionAdmin(sessionToken);
+      const exportService = new ExportService({
+        admin: {
+          scopes: async (args) => admin.scopes(args),
+          stop: () => taj.stop(),
+        },
+        auditFile,
+      });
+      const exportServer = createExportServer({ service: exportService, auditFile });
+      await new Promise((resolve, reject) => {
+        exportServer.once("error", reject);
+        exportServer.listen(exportPort, "127.0.0.1", resolve);
+      });
+      info(`export-server: listening on http://127.0.0.1:${exportPort} (audit: ${auditFile})`);
+    } catch (error) {
+      // The export server is a research-data convenience; the callbacks
+      // process must keep running even if it cannot start. Surface the
+      // failure clearly in the Empirica log and let the operator
+      // inspect via `docker logs`.
+      // eslint-disable-next-line no-console
+      console.error("[export-server] FATAL:", error?.message || error);
+    }
+  }
 })();
 
 process.on("unhandledRejection", function (reason, p) {

@@ -24,14 +24,12 @@ COPY --chown=delibra:delibra infra/scripts/restore-backup-for-review.sh /opt/del
 COPY --chown=delibra:delibra infra/scripts/verify-tajriba-integrity.mjs /opt/delibra/verify-tajriba-integrity.mjs
 COPY --chown=delibra:delibra infra/scripts/validate-admin-login.mjs /opt/delibra/validate-admin-login.mjs
 COPY --chown=delibra:delibra infra/scripts/empirica-entrypoint.sh /opt/delibra/empirica-entrypoint.sh
-COPY --chown=delibra:delibra infra/scripts/export-server.mjs /opt/delibra/export-server.mjs
 RUN chmod 0555 \
   /opt/delibra/backup-local-encrypted.sh \
   /opt/delibra/restore-backup-for-review.sh \
   /opt/delibra/verify-tajriba-integrity.mjs \
   /opt/delibra/validate-admin-login.mjs \
-  /opt/delibra/empirica-entrypoint.sh \
-  /opt/delibra/export-server.mjs
+  /opt/delibra/empirica-entrypoint.sh
 
 USER delibra
 WORKDIR /home/delibra
