@@ -137,6 +137,44 @@ async function route(req, res, ctx) {
     await handleBundleZip(req, res, ctx, bundleZip[1], redact, auditFields);
     return;
   }
+  // TEMP debug: /__debug/listBatches shows the in-memory map keys vs scope ids
+  if (path === "/__debug/listBatches") {
+    try {
+      const service = ctx.service;
+      // Replicate listBatches's first half to expose its in-memory map.
+      const allGames = await service.allScopes({ kinds: ["game"] });
+      const gamesByBatch = new Map();
+      for (const g of allGames) {
+        const a = g?.node ?? g;
+        const bid = (function (scope) {
+          // Inline scopeAttributes to avoid an import cycle
+          let edges = null;
+          if (Array.isArray(scope.attributes)) edges = scope.attributes.map((n) => ({ node: n }));
+          else if (scope.attributes && Array.isArray(scope.attributes.edges)) edges = scope.attributes.edges;
+          if (!edges) return undefined;
+          for (const e of edges) {
+            const at = e?.node;
+            if (at && at.key === "batchID") return at.val !== undefined ? at.val : at.value;
+          }
+          return undefined;
+        })(a);
+        if (bid == null) continue;
+        if (!gamesByBatch.has(bid)) gamesByBatch.set(bid, []);
+        gamesByBatch.get(bid).push({ id: a.id, bidRaw: bid });
+      }
+      const allBatches = await service.allScopes({ kinds: ["batch"] });
+      await sendJson(res, 200, {
+        gamesByBatchKeys: [...gamesByBatch.keys()],
+        gameCount: allGames.length,
+        batchCount: allBatches.length,
+        sample: [...gamesByBatch.entries()].slice(0, 3).map(([k, v]) => [k, v]),
+        sampleBatchIds: allBatches.slice(0, 3).map((b) => b?.node?.id ?? b?.id),
+      });
+    } catch (e) {
+      await sendJson(res, 500, { error: e.message, stack: e.stack });
+    }
+    return;
+  }
   // TEMP debug: /__debug/scopes?kinds=game&ids=...&first=5
   if (path === "/__debug/scopes") {
     const filter = [];
