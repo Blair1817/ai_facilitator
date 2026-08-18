@@ -51,7 +51,13 @@ services:
       - --tajriba.log.level
       - warn
     ports:
+      # Empirica Tajriba + participant client (single origin, all routes)
       - "${NAS_BIND_IP:?set the NAS static LAN IP}:3000:3000"
+      # D-014: research-data export server (PII-redact by default,
+      # audit log per download). Loopback-only inside container; the
+      # LAN bind here is for direct researcher access + cloudflared
+      # `exports.*` ingress from the public tunnel.
+      - "${NAS_BIND_IP:?set the NAS static LAN IP}:3001:3001"
     volumes:
       - type: bind
         source: ${DELIBRA_DATA_DIR:?set DELIBRA_DATA_DIR}

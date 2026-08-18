@@ -45,6 +45,24 @@ docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
   "$ACTIVE_CONTAINER" > "$DELIBRA_RUNTIME_ENV_TMP"
 chmod 600 "$DELIBRA_RUNTIME_ENV_TMP"
 
+# D-014: merge research-data export server env vars from the current
+# infra/.env. The pre-D-014 active container was launched without
+# EXPORT_PORT etc.; the new container must have them so the export
+# server (started in-process by server/src/index.js) can bind.
+ENV_FILE="$BASE_DIR/deploy/infra/.env"
+if [[ -s "$ENV_FILE" ]]; then
+  for v in EXPORT_PORT EXPORT_AUDIT_FILE DELIBRA_DISABLE_EXPORT_SERVER; do
+    val="$(grep -E "^${v}=" "$ENV_FILE" | head -1 | cut -d= -f2-)"
+    if [[ -n "$val" ]]; then
+      # Strip surrounding double quotes defensively.
+      val="${val%\"}"; val="${val#\"}"
+      sed -i "/^${v}=/d" "$DELIBRA_RUNTIME_ENV_TMP"
+      echo "${v}=${val}" >> "$DELIBRA_RUNTIME_ENV_TMP"
+      echo "  merged ${v} from current infra/.env"
+    fi
+  done
+fi
+
 echo "Stopping the active container for a consistent Tajriba snapshot..."
 docker stop "$ACTIVE_CONTAINER" >/dev/null
 
@@ -76,6 +94,7 @@ docker run --detach \
   --stop-timeout 45 \
   --env-file "$DELIBRA_RUNTIME_ENV_TMP" \
   --publish 192.168.0.109:3000:3000 \
+  --publish 192.168.0.109:3001:3001 \
   --mount type=bind,src="$BASE_DIR/data",dst=/data \
   --mount type=bind,src="$BASE_DIR/backups",dst=/backups/internal \
   --mount type=bind,src="$BASE_DIR/external-backup-pending",dst=/backups/external,readonly \
