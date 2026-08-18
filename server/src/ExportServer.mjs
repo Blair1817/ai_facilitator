@@ -141,34 +141,51 @@ async function route(req, res, ctx) {
   if (path === "/__debug/listBatches") {
     try {
       const service = ctx.service;
-      // Replicate listBatches's first half to expose its in-memory map.
       const allGames = await service.allScopes({ kinds: ["game"] });
       const gamesByBatch = new Map();
       for (const g of allGames) {
         const a = g?.node ?? g;
         const bid = (function (scope) {
-          // Inline scopeAttributes to avoid an import cycle
           let edges = null;
           if (Array.isArray(scope.attributes)) edges = scope.attributes.map((n) => ({ node: n }));
           else if (scope.attributes && Array.isArray(scope.attributes.edges)) edges = scope.attributes.edges;
-          if (!edges) return undefined;
+          if (!edges) return { raw: undefined, parsed: undefined };
           for (const e of edges) {
             const at = e?.node;
-            if (at && at.key === "batchID") return at.val !== undefined ? at.val : at.value;
+            if (at && at.key === "batchID") {
+              const raw = at.val !== undefined ? at.val : at.value;
+              // Mirror parseValue from ExportService.mjs
+              let parsed = raw;
+              if (typeof raw === "string") {
+                const t = raw.trim();
+                if (t[0] === "{" || t[0] === "[" || t[0] === "\"") {
+                  try { parsed = JSON.parse(t); } catch { parsed = raw; }
+                }
+              }
+              return { raw, parsed, parsedType: typeof parsed };
+            }
           }
-          return undefined;
+          return { raw: undefined, parsed: undefined };
         })(a);
-        if (bid == null) continue;
-        if (!gamesByBatch.has(bid)) gamesByBatch.set(bid, []);
-        gamesByBatch.get(bid).push({ id: a.id, bidRaw: bid });
+        if (bid.parsed == null) continue;
+        if (!gamesByBatch.has(bid.parsed)) gamesByBatch.set(bid.parsed, []);
+        gamesByBatch.get(bid.parsed).push({ id: a.id });
       }
       const allBatches = await service.allScopes({ kinds: ["batch"] });
       await sendJson(res, 200, {
-        gamesByBatchKeys: [...gamesByBatch.keys()],
+        gamesByBatchKeysParsed: [...gamesByBatch.keys()],
         gameCount: allGames.length,
         batchCount: allBatches.length,
-        sample: [...gamesByBatch.entries()].slice(0, 3).map(([k, v]) => [k, v]),
+        sample: [...gamesByBatch.entries()].slice(0, 3).map(([k, v]) => [k, v.length]),
         sampleBatchIds: allBatches.slice(0, 3).map((b) => b?.node?.id ?? b?.id),
+        sampleRawBids: allGames.slice(0, 3).map((g) => {
+          const a = g?.node ?? g;
+          const edges = a?.attributes?.edges;
+          for (const e of edges || []) {
+            if (e?.node?.key === "batchID") return { id: a.id, raw: e.node.val };
+          }
+          return { id: a.id, raw: null };
+        }),
       });
     } catch (e) {
       await sendJson(res, 500, { error: e.message, stack: e.stack });
