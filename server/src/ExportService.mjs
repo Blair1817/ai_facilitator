@@ -107,7 +107,10 @@ export class ExportService {
       // Players are not directly linked to batches; we walk through
       // `game -> player` to count the unique participants. This is the
       // same shape Tajriba exposes in the admin UI.
-      const games = await this.allScopes({ kinds: ["game"], kvs: [{ key: "batchID", val: JSON.stringify(scope.id) }] });
+      const games = await this.allScopes([
+        { kinds: ["game"] },
+        { kvs: [{ key: "batchID", val: JSON.stringify(scope.id) }] },
+      ]);
       const playerSet = new Set();
       for (const g of games) {
         const players = await this.gamePlayerIDs(g.id);
@@ -144,7 +147,10 @@ export class ExportService {
   async listGames(batchId, filter = {}) {
     if (!batchId) throw new Error("listGames: batchId is required");
     const kvs = [{ key: "batchID", val: JSON.stringify(batchId) }];
-    const all = await this.allScopes({ kinds: ["game"], kvs });
+    const all = await this.allScopes([
+      { kinds: ["game"] },
+      { kvs },
+    ]);
     const items = [];
     for (const scope of all) {
       const attrs = scopeAttributes(scope);
@@ -187,7 +193,10 @@ export class ExportService {
    */
   async getGameBundle(gameId) {
     if (!gameId) throw new Error("getGameBundle: gameId is required");
-    const gameScopes = await this.allScopes({ kinds: ["game"], ids: [gameId] });
+    const gameScopes = await this.allScopes([
+      { kinds: ["game"] },
+      { ids: [gameId] },
+    ]);
     if (gameScopes.length === 0) {
       throw new ExportNotFoundError(`game not found: ${gameId}`);
     }
@@ -196,7 +205,10 @@ export class ExportService {
     const playerIDs = await this.gamePlayerIDs(gameId);
     const players = [];
     for (const pid of playerIDs) {
-      const pScopes = await this.allScopes({ kinds: ["player"], ids: [pid] });
+      const pScopes = await this.allScopes([
+        { kinds: ["player"] },
+        { ids: [pid] },
+      ]);
       if (pScopes.length === 0) continue;
       players.push(await this.readPlayer(pScopes[0], gameId));
     }
@@ -205,7 +217,10 @@ export class ExportService {
     const rounds = [];
     for (let idx = 0; idx < (game.rounds || []).length; idx += 1) {
       const roundId = game.rounds[idx];
-      const rScopes = await this.allScopes({ kinds: ["round"], ids: [roundId] });
+      const rScopes = await this.allScopes([
+        { kinds: ["round"] },
+        { ids: [roundId] },
+      ]);
       if (rScopes.length === 0) continue;
       rounds.push(await this.readRound(rScopes[0], players));
     }
@@ -287,10 +302,10 @@ export class ExportService {
   }
 
   async readLlmLog(gameId) {
-    const indexScopes = await this.allScopes({
-      kinds: ["game"],
-      ids: [gameId],
-    });
+    const indexScopes = await this.allScopes([
+      { kinds: ["game"] },
+      { ids: [gameId] },
+    ]);
     if (indexScopes.length === 0) return [];
     const gameAttrs = scopeAttributes(indexScopes[0]);
     const index = gameAttrs.llmLogIndex;
@@ -404,13 +419,26 @@ export class ExportService {
 
   // ── Tajriba admin plumbing ───────────────────────────────────────────
 
-  async allScopes(filter) {
+  async allScopes(filters) {
+    // Tajriba v1.12 expects `filter` as `[ScopedAttributesInput!]` — a list
+    // of single-axis filter objects AND-ed together. Each object may only
+    // use ONE of {kinds, kvs, ids, names, keys}. Accept either:
+    //   - a single ScopedAttributesInput object  (auto-wrapped to length 1)
+    //   - undefined/null                         (no filter)
+    //   - an array of ScopedAttributesInput     (multi-axis AND)
     const out = [];
     const first = SCOPES_PAGE_SIZE;
     let cursor = null;
+    const filterArg =
+      filters == null
+        ? undefined
+        : Array.isArray(filters)
+          ? filters
+          : [filters];
     // eslint-disable-next-line no-constant-condition
     while (true) {
-      const args = { filter, first };
+      const args = { first };
+      if (filterArg !== undefined) args.filter = filterArg;
       if (cursor) args.after = cursor;
       const page = await this.admin.scopes(args);
       for (const edge of page?.edges || []) {
@@ -441,18 +469,18 @@ export class ExportService {
   }
 
   async gamePlayerIDs(gameId) {
-    const playerScopes = await this.allScopes({
-      kinds: ["player"],
-      kvs: [{ key: "currentGameID", val: JSON.stringify(gameId) }],
-    });
+    const playerScopes = await this.allScopes([
+      { kinds: ["player"] },
+      { kvs: [{ key: "currentGameID", val: JSON.stringify(gameId) }] },
+    ]);
     return playerScopes.map((s) => s.id);
   }
 
   async gameRoundIDs(gameId) {
-    const roundScopes = await this.allScopes({
-      kinds: ["round"],
-      kvs: [{ key: "gameID", val: JSON.stringify(gameId) }],
-    });
+    const roundScopes = await this.allScopes([
+      { kinds: ["round"] },
+      { kvs: [{ key: "gameID", val: JSON.stringify(gameId) }] },
+    ]);
     roundScopes.sort((a, b) => {
       const ai = numberOrZero(scopeAttributes(a).index);
       const bi = numberOrZero(scopeAttributes(b).index);

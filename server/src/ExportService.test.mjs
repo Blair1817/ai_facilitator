@@ -23,27 +23,43 @@ import { recordExportEvent } from "./ExportAudit.mjs";
  */
 function makeMockAdmin(scopes) {
   const all = Object.values(scopes);
+  // Apply one ScopedAttributesInput against a scope list. The production
+  // admin rejects a filter object that uses more than one of
+  // {kinds, ids, kvs, names, keys}; the mock mirrors that by matching on
+  // whichever axis is present.
+  function applyOne(scopeList, filter) {
+    if (!filter) return scopeList;
+    let out = scopeList;
+    if (Array.isArray(filter.kinds) && filter.kinds.length > 0) {
+      out = out.filter((s) => filter.kinds.includes(s.kind));
+    }
+    if (Array.isArray(filter.ids) && filter.ids.length > 0) {
+      out = out.filter((s) => filter.ids.includes(s.id));
+    }
+    if (Array.isArray(filter.kvs) && filter.kvs.length > 0) {
+      out = out.filter((s) =>
+        filter.kvs.every(({ key, val }) =>
+          (s.attributes || []).some((a) => {
+            if (a.key !== key) return false;
+            // Tajriba emits `val` as a JSON string; the fixture's `attr`
+            // helper stores scalars as strings and objects as JSON strings.
+            // Compare against the stored raw value as a string.
+            return a.value === val;
+          }),
+        ),
+      );
+    }
+    return out;
+  }
   return {
-    scopes: async ({ filter = {}, first = 100, after = null } = {}) => {
+    scopes: async ({ filter, first = 100, after = null } = {}) => {
+      // Tajriba v1.12 takes `filter` as `[ScopedAttributesInput!]`; the
+      // service normalises the single-object shorthand before calling us.
+      // Each entry is AND-ed.
+      const filterList = Array.isArray(filter) ? filter : filter == null ? [] : [filter];
       let matched = all;
-      if (Array.isArray(filter.kinds) && filter.kinds.length > 0) {
-        matched = matched.filter((s) => filter.kinds.includes(s.kind));
-      }
-      if (Array.isArray(filter.ids) && filter.ids.length > 0) {
-        matched = matched.filter((s) => filter.ids.includes(s.id));
-      }
-      if (Array.isArray(filter.kvs) && filter.kvs.length > 0) {
-        matched = matched.filter((s) =>
-          filter.kvs.every(({ key, val }) =>
-            (s.attributes || []).some((a) => {
-              if (a.key !== key) return false;
-              // Tajriba emits `val` as a JSON string; the fixture's `attr`
-              // helper stores scalars as strings and objects as JSON strings.
-              // Compare against the stored raw value as a string.
-              return a.value === val;
-            }),
-          ),
-        );
+      for (const f of filterList) {
+        matched = applyOne(matched, f);
       }
       const startIdx = after ? matched.findIndex((s) => s.id === after) + 1 : 0;
       const end = startIdx + first;

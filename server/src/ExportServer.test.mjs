@@ -68,21 +68,30 @@ function fixture() {
 
 function makeMockAdmin(scopes) {
   const all = scopes;
+  function applyOne(scopeList, filter) {
+    if (!filter) return scopeList;
+    let out = scopeList;
+    if (Array.isArray(filter.kinds) && filter.kinds.length > 0) {
+      out = out.filter((s) => filter.kinds.includes(s.kind));
+    }
+    if (Array.isArray(filter.ids) && filter.ids.length > 0) {
+      out = out.filter((s) => filter.ids.includes(s.id));
+    }
+    if (Array.isArray(filter.kvs) && filter.kvs.length > 0) {
+      out = out.filter((s) =>
+        filter.kvs.every(({ key, val }) =>
+          (s.attributes || []).some((a) => a.key === key && a.value === val),
+        ),
+      );
+    }
+    return out;
+  }
   return {
-    scopes: async ({ filter = {}, first = 100, after = null } = {}) => {
+    scopes: async ({ filter, first = 100, after = null } = {}) => {
+      const filterList = Array.isArray(filter) ? filter : filter == null ? [] : [filter];
       let matched = all;
-      if (Array.isArray(filter.kinds) && filter.kinds.length > 0) {
-        matched = matched.filter((s) => filter.kinds.includes(s.kind));
-      }
-      if (Array.isArray(filter.ids) && filter.ids.length > 0) {
-        matched = matched.filter((s) => filter.ids.includes(s.id));
-      }
-      if (Array.isArray(filter.kvs) && filter.kvs.length > 0) {
-        matched = matched.filter((s) =>
-          filter.kvs.every(({ key, val }) =>
-            (s.attributes || []).some((a) => a.key === key && a.value === val),
-          ),
-        );
+      for (const f of filterList) {
+        matched = applyOne(matched, f);
       }
       const startIdx = after ? matched.findIndex((s) => s.id === after) + 1 : 0;
       const end = startIdx + first;
