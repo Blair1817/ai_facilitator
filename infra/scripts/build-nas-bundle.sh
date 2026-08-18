@@ -83,39 +83,45 @@ fi
 # the health check times out. Removing `volta` makes the system node
 # 20.12.2 (the image base) the canonical version.
 PATCHED_BUNDLE_TMP="$STAGING_DIR/delibra-patched.tar.zst"
-python3 - "$BUNDLE_TMP" "$PATCHED_BUNDLE_TMP" <<'PY'
-import json, sys, tarfile, io, zstandard as zstd
-src, dst = sys.argv[1], sys.argv[2]
-dctx = zstd.ZstdDecompressor()
-cctx = zstd.ZstdCompressor()
-with tarfile.open(src, "r:zst") as ti, \
-     tarfile.open(dst, "w:zst", compresslevel=3) as to:
-    for m in ti:
-        if m.isfile() and m.name.endswith("package.json"):
-            with ti.extractfile(m) as f:
-                data = f.read()
+python3 - "$BUNDLE_TMP" "$STAGING_DIR/untar" "$STAGING_DIR/repack.tar" <<'PY'
+import json, sys, tarfile, io, os, shutil
+src, staging_dir, dst = sys.argv[1], sys.argv[2], sys.argv[3]
+# Extract to a plain (uncompressed) tar on disk so we can rebuild with the
+# platform \`tar\` command and zstd CLI; this avoids Python 3.14's broken
+# zstd tarfile integration entirely. The intermediate tar is ~50 MB; we
+# delete it after repack.
+with tarfile.open(src, "r:*") as ti:
+    ti.extractall(staging_dir, filter="data")
+# Strip `volta` from every package.json.
+for root, _, files in os.walk(staging_dir):
+    for fn in files:
+        if fn != "package.json":
+            continue
+        p = os.path.join(root, fn)
+        with open(p, "r", encoding="utf-8") as f:
+            data = f.read()
+        try:
+            pkg = json.loads(data)
+        except Exception:
+            continue
+        if isinstance(pkg, dict) and "volta" in pkg:
+            del pkg["volta"]
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(pkg, f, indent=2)
+                f.write("\n")
+# Drop macOS resource forks (._*) and other noise that should never
+# enter the bundle.
+for root, _, files in os.walk(staging_dir):
+    for fn in files:
+        if fn.startswith("._") or fn == ".DS_Store":
             try:
-                pkg = json.loads(data)
-            except Exception:
-                pkg = None
-            if isinstance(pkg, dict) and "volta" in pkg:
-                del pkg["volta"]
-                data = (json.dumps(pkg, indent=2) + "\n").encode("utf-8")
-                buf = io.BytesIO(data)
-                info = tarfile.TarInfo(name=m.name)
-                info.size = len(data)
-                info.mode = 0o644
-                info.mtime = m.mtime
-                to.addfile(info, buf)
-                continue
-        # default: copy the original member as-is
-        if m.isfile():
-            with ti.extractfile(m) as f:
-                data = f.read()
-        else:
-            data = None
-        to.addfile(m) if data is None else to.addfile(m, io.BytesIO(data))
+                os.remove(os.path.join(root, fn))
+            except FileNotFoundError:
+                pass
 PY
+tar --no-mac-metadata -cf "$STAGING_DIR/repack.tar" -C "$STAGING_DIR/untar" .
+zstd -q -19 --threads=0 -o "$PATCHED_BUNDLE_TMP" "$STAGING_DIR/repack.tar" --rm
+rm -rf "$STAGING_DIR/untar" "$STAGING_DIR/repack.tar"
 BUNDLE_TMP="$PATCHED_BUNDLE_TMP"
 
 COMMIT="$(git -C "$REPO_DIR" rev-parse HEAD)"
