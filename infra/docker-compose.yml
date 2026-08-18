@@ -30,6 +30,10 @@ services:
       SUPABASE_URL: ${SUPABASE_URL:?set SUPABASE_URL in infra/.env}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:?set SUPABASE_SERVICE_ROLE_KEY in infra/.env}
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-90}
+      # D-014: research-data export server
+      EXPORT_PORT: ${EXPORT_PORT:-3001}
+      EXPORT_AUDIT_FILE: ${EXPORT_AUDIT_FILE:-/data/export-audit.jsonl}
+      DELIBRA_DISABLE_EXPORT_SERVER: ${DELIBRA_DISABLE_EXPORT_SERVER:-0}
     command:
       - serve
       - /opt/delibra/delibra.tar.zst

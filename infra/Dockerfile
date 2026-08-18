@@ -24,18 +24,23 @@ COPY --chown=delibra:delibra infra/scripts/restore-backup-for-review.sh /opt/del
 COPY --chown=delibra:delibra infra/scripts/verify-tajriba-integrity.mjs /opt/delibra/verify-tajriba-integrity.mjs
 COPY --chown=delibra:delibra infra/scripts/validate-admin-login.mjs /opt/delibra/validate-admin-login.mjs
 COPY --chown=delibra:delibra infra/scripts/empirica-entrypoint.sh /opt/delibra/empirica-entrypoint.sh
+COPY --chown=delibra:delibra infra/scripts/export-server.mjs /opt/delibra/export-server.mjs
 RUN chmod 0555 \
-    /opt/delibra/backup-local-encrypted.sh \
-    /opt/delibra/restore-backup-for-review.sh \
-    /opt/delibra/verify-tajriba-integrity.mjs \
-    /opt/delibra/validate-admin-login.mjs \
-    /opt/delibra/empirica-entrypoint.sh
+  /opt/delibra/backup-local-encrypted.sh \
+  /opt/delibra/restore-backup-for-review.sh \
+  /opt/delibra/verify-tajriba-integrity.mjs \
+  /opt/delibra/validate-admin-login.mjs \
+  /opt/delibra/empirica-entrypoint.sh \
+  /opt/delibra/export-server.mjs
 
 USER delibra
 WORKDIR /home/delibra
 ENV HOME=/home/delibra NODE_ENV=production
 
-EXPOSE 3000
+# D-014: the research-data export server binds here on loopback only.
+# Cloudflared forwards the public `exports.*` route to it. The 3000
+# port is Empirica itself.
+EXPOSE 3000 3001
 
 ENTRYPOINT ["/opt/delibra/empirica-entrypoint.sh"]
 CMD ["serve", "/opt/delibra/delibra.tar.zst", "--config", "/run/secrets/empirica.toml", "--addr", ":3000", "--tajriba.store.file", "/data/tajriba.json", "--log.json", "--log.level", "warn", "--tajriba.log.level", "warn"]

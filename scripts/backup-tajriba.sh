@@ -9,7 +9,7 @@ found=0
 
 mkdir -p "$backup_dir"
 
-for relative_path in ".empirica/local/tajriba.json" ".empirica/tajriba.json"; do
+for relative_path in ".empirica/local/tajriba.json" ".empirica/tajriba.json" ".empirica/local/export-audit.jsonl"; do
   source_path="$project_dir/$relative_path"
   if [[ ! -f "$source_path" ]]; then
     continue

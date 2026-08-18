@@ -48,4 +48,21 @@ if [ "${1:-}" = "serve" ] && [ "${2:-}" = "$SOURCE_BUNDLE" ]; then
   set -- serve "$DELIBRA_RUNTIME_BUNDLE" "$@"
 fi
 
+# D-014: start the research-data export server alongside Empirica. The
+# export server binds to loopback only; cloudflared forwards the public
+# `exports.*` route to it. Both processes share the same Tajriba
+# runtime config (srtoken is read from the mounted file). If the export
+# server fails to start, Empirica still comes up; the operator can
+# restart just the export side.
+if [ -r "$RUNTIME_CONFIG" ] && [ "${DELIBRA_DISABLE_EXPORT_SERVER:-0}" != "1" ]; then
+  EXPORT_PORT="${EXPORT_PORT:-3001}"
+  EXPORT_AUDIT_FILE="${EXPORT_AUDIT_FILE:-/data/export-audit.jsonl}"
+  echo "[export-server] starting on 127.0.0.1:${EXPORT_PORT} (audit: ${EXPORT_AUDIT_FILE})"
+  node /opt/delibra/export-server.mjs &
+  EXPORT_SERVER_PID=$!
+  # Give the export server a moment to bind before Empirica starts so
+  # the first health check on the export route does not race.
+  sleep 1
+fi
+
 exec empirica "$@"

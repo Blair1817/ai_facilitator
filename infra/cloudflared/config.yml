@@ -58,5 +58,14 @@ ingress:
     originRequest:
       noTLSVerify: false
 
-  # 4. Required catch-all. Do not remove.
+  # 4. D-014: research-data export server. Same Access policy as tajriba.*
+  #    (any logged-in admin can download). The export service binds to
+  #    the loopback interface only; cloudflared forwards the public
+  #    `exports.*` route to it.
+  - hostname: exports.*
+    service: http://delibra:3001
+    originRequest:
+      noTLSVerify: false
+
+  # 5. Required catch-all. Do not remove.
   - service: http_status:404
