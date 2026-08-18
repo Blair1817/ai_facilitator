@@ -13,6 +13,28 @@ export function canConfirmBreak(scheduledEndAt, now) {
   return Number.isFinite(scheduledEndAt) && now >= scheduledEndAt - BREAK_READY_WINDOW_MS;
 }
 
+export function canFinalizeBreak(scheduledEndAt, now, allReady) {
+  return Boolean(allReady) && Number.isFinite(scheduledEndAt) && now >= scheduledEndAt;
+}
+
+export function isFreshFinalDecisionDraftRequest(request, lastRequestedAt) {
+  if (!request || typeof request !== "object" || Array.isArray(request)) return false;
+  if (typeof request.requestId !== "string" || !request.requestId || request.requestId.length > 128) return false;
+  const requestedAt = Number(request.requestedAt);
+  if (!Number.isFinite(requestedAt)) return false;
+  if (lastRequestedAt === null || lastRequestedAt === undefined) return true;
+  const previous = Number(lastRequestedAt);
+  return Number.isFinite(previous) && requestedAt > previous;
+}
+
+export function isCurrentFinalDecisionConfirmation(request, agreementRevision) {
+  if (!request || typeof request !== "object" || Array.isArray(request)) return false;
+  const requestedRevision = Number(request.agreementRevision);
+  return Number.isSafeInteger(requestedRevision)
+    && requestedRevision >= 0
+    && requestedRevision === agreementRevision;
+}
+
 export function summarizeFinalDecisionDrafts(drafts, requiredParticipants = 3) {
   const choices = Array.isArray(drafts) ? drafts.map((draft) => draft?.choice || "") : [];
   if (choices.length !== requiredParticipants || choices.some((choice) => !choice)) {

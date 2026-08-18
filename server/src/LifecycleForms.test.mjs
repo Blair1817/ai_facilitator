@@ -32,6 +32,10 @@ const debriefingSource = readFileSync(
   path.join(dirname, "../../client/src/intro-exit/Debriefing.jsx"),
   "utf8",
 );
+const expFeedbackSource = readFileSync(
+  path.join(dirname, "../../client/src/intro-exit/ExpFeedback.jsx"),
+  "utf8",
+);
 const noGamesSource = readFileSync(
   path.join(dirname, "../../client/src/intro-exit/NoGames.jsx"),
   "utf8",
@@ -64,11 +68,15 @@ test("R1-R2: both rounds wrap the IceBreaker in ten-second transition countdowns
   assert.match(reviewQuizSource, /player\.stage\.set\("submit", true\)/);
 });
 
-test("R3-R7/R19: participant pages use normal stage submission, including the validated Break gate", () => {
+test("R3-R7/R19: the Break gate is server-authoritative and reconnect recoverable", () => {
   assert.doesNotMatch(callbacksSource, /Empirica\.on\("TRANSITION_ADD"|heldStagePauseTransition|isServerHeldStage/);
   assert.match(callbacksSource, /updateBreakReadySummary/);
-  assert.match(breakSource, /remaining === 0 && ready && allReady/);
-  assert.match(breakSource, /player\.stage\.set\("submit", true\)/);
+  assert.match(breakSource, /player\.set\("breakAdvanceRequest"/);
+  assert.doesNotMatch(breakSource, /player\.stage\.set\("submit", true\)/);
+  assert.match(callbacksSource, /function finalizeBreak/);
+  assert.match(callbacksSource, /canFinalizeBreak/);
+  assert.match(callbacksSource, /Empirica\.on\("player", "breakAdvanceRequest"/);
+  assert.match(callbacksSource, /participant\.stage\?\.set\("submit", true\)/);
   assert.match(callbacksSource, /name: "TaskInformation",\s+duration: TASK_INFORMATION_DURATION_SECONDS/);
   assert.match(callbacksSource, /name: "Walkthrough",\s+duration: WALKTHROUGH_DURATION_SECONDS/);
   assert.match(callbacksSource, /name: "ReviewQuiz", duration: REVIEW_QUIZ_SAFETY_DURATION_SECONDS/);
@@ -83,15 +91,10 @@ test("R3-R7/R19: participant pages use normal stage submission, including the va
   assert.doesNotMatch(callbacksSource, /reviewQuiz(Attempt|Wrong|Correctness|Retry)/i);
 });
 
-test("SubjectiveSurvey requires every visible response without blocking hidden condition-specific questions", () => {
-  assert.match(surveySource, /const facilitation = round\?\.get\("facilitation"\)/);
+test("SubjectiveSurvey requires the same participant-facing questions in Static and Adaptive rounds", () => {
   assert.match(surveySource, /alwaysVisibleComplete = \[question1, question2, question3, question4, question5, question6\]/);
-  assert.match(surveySource, /playerName != "Facilitator" \|\| String\(question7\)\.trim\(\)/);
-  assert.match(
-    surveySource,
-    /facilitation == "none" \|\|[\s\S]*playerName == "Facilitator" \|\|[\s\S]*\[question8, question9, question10, question11, question12, question13, question14, question15\]/,
-  );
-  assert.doesNotMatch(surveySource, /facilitatorPreference|human facilitator/);
+  assert.match(surveySource, /facilitatorQuestionsComplete = \[question8, question9, question10, question11, question12, question13, question14, question15\]/);
+  assert.doesNotMatch(surveySource, /facilitation == "none"|playerName == "Facilitator"|facilitatorRoleFreetext|human facilitator|facilitatorPreference/);
   assert.match(surveySource, /if \(submitting \|\| !isComplete\)/);
   assert.match(surveySource, /disabled=\{submitting \|\| !isComplete\}/);
   assert.match(surveySource, /Please answer every question shown above before continuing\./);
@@ -110,6 +113,14 @@ test("OverallInstructions is one global introStep before RecruitmentBootstrap an
   assert.doesNotMatch(gameSource, /OverallInstructions/);
 });
 
+test("assignment persistence failures show a specific participant-facing failure page", () => {
+  assert.match(appSource, /player\.get\("ended"\) == "game failed"/);
+  assert.match(appSource, /return \[SessionStartFailed\]/);
+  assert.match(gamesFullSource, /export function SessionStartFailed/);
+  assert.match(gamesFullSource, /Unable to start this session/);
+  assert.match(gamesFullSource, /jingnan\.zhang\.24@ucl\.ac\.uk/);
+});
+
 test("Consent is completed outside Empirica and no Consent response is collected or stored in-app", () => {
   assert.match(appSource, /disableConsent/);
   assert.doesNotMatch(appSource, /import \{ Consent \}|consent=\{Consent\}/);
@@ -122,12 +133,18 @@ test("Debriefing is the final informational exit step and finishes without a cod
   assert.match(appSource, /return \[ExpFeedback, Debriefing\];/);
   assert.doesNotMatch(appSource, /FinishedExitCode|finished=/);
   assert.match(debriefingSource, /Thank you for taking part/);
+  assert.match(debriefingSource, /two versions of the AI facilitator, both shown as &ldquo;Facilitator\.&rdquo;/);
+  assert.match(debriefingSource, /same name and appearance for both versions/);
   assert.match(debriefingSource, /player\?\.id \|\| "Not available"/);
   assert.match(debriefingSource, /jingnan\.zhang\.24@ucl\.ac\.uk/);
   assert.match(debriefingSource, /\[withdrawal deadline\]/);
-  assert.match(debriefingSource, /\[Supervisor name\], \[UCL email\]/);
+  assert.match(debriefingSource, />Academic supervisor</);
+  assert.match(debriefingSource, /Echo Wan/);
+  assert.match(debriefingSource, /href="mailto:e\.wan21@ic\.ac\.uk"/);
   assert.match(debriefingSource, /handleClick=\{handleFinish\}/);
   assert.match(debriefingSource, />\s*Finish study\s*</);
   assert.doesNotMatch(debriefingSource, /completionUrl|VITE_PROLIFIC_COMPLETION_URL|window\.location|Redirecting/);
   assert.doesNotMatch(`${noGamesSource}\n${gamesFullSource}`, /completion code|INSERT CODE HERE/i);
+  assert.match(expFeedbackSource, />Continue to debriefing</);
+  assert.doesNotMatch(expFeedbackSource, /submission code|completion code/i);
 });

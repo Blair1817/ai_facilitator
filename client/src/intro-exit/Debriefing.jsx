@@ -35,7 +35,7 @@ export function Debriefing({ next }) {
             <h2 className="text-xl font-semibold text-gray-900">What was this study about?</h2>
             <p className="mt-2">This study investigates how different forms of AI facilitation may influence discussion and decision-making in small groups.</p>
             <p className="mt-2">During the study, you completed two group decision tasks. Group members received different task-relevant information. This design allows us to examine how groups share, discuss, and integrate information when reaching a joint decision.</p>
-            <p className="mt-2">In different parts of the study, the AI facilitator may have used different fixed or discussion-responsive ways of supporting the conversation. The facilitator did not make decisions for the group. It was designed to encourage discussion and help organise information that had been raised in the group chat.</p>
+            <p className="mt-2">During the two tasks, you interacted with two versions of the AI facilitator, both shown as &ldquo;Facilitator.&rdquo; One version followed the same general facilitation approach throughout the discussion, while the other adjusted its support in response to how the conversation developed. We used the same name and appearance for both versions so that you could focus on the support they provided.</p>
           </section>
 
           <section>
@@ -56,8 +56,18 @@ export function Debriefing({ next }) {
           <section>
             <h2 className="text-xl font-semibold text-gray-900">Questions or concerns</h2>
             <p className="mt-2">For questions about this study or to request withdrawal of your data, please contact:</p>
-            <p className="mt-2"><strong>Jingnan Zhang</strong>, <a className="break-all text-blue-700 underline sm:break-normal" href="mailto:jingnan.zhang.24@ucl.ac.uk">jingnan.zhang.24@ucl.ac.uk</a></p>
-            <p className="mt-2"><strong>Academic supervisor:</strong><br />[Supervisor name], [UCL email]</p>
+            <div className="mt-3 space-y-4">
+              <div>
+                <p className="font-semibold text-gray-900">Contact for this study</p>
+                <p className="mt-1">Jingnan Zhang</p>
+                <p><a className="break-all text-blue-700 underline sm:break-normal" href="mailto:jingnan.zhang.24@ucl.ac.uk">jingnan.zhang.24@ucl.ac.uk</a></p>
+              </div>
+              <div>
+                <p className="font-semibold text-gray-900">Academic supervisor</p>
+                <p className="mt-1">Echo Wan</p>
+                <p><a className="break-all text-blue-700 underline sm:break-normal" href="mailto:e.wan21@ic.ac.uk">e.wan21@ic.ac.uk</a></p>
+              </div>
+            </div>
             <p className="mt-4">Please do not discuss the specific task materials or AI conditions with people who may take part in this study later.</p>
           </section>
         </article>

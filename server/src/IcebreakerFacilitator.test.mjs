@@ -22,13 +22,13 @@ test("icebreaker context includes only public IceBreaker human/facilitator chat"
   const messages = buildIcebreakerLLMMessages([
     { stage: "IceBreaker", speakerType: "ice_breaking_facilitator", content: "Welcome", sender: { id: "ai", name: "Facilitator" } },
     { stage: "IceBreaker", speakerType: "human", content: "@[Facilitator] help?", sender: { id: "p1", name: "Red" } },
-    { stage: "IceBreaker", speakerType: "timer_reminder", content: "Thirty seconds", sender: { id: "timer", name: "Timer" } },
+    { stage: "IceBreaker", speakerType: "timer_reminder", content: "30 seconds", sender: { id: "timer", name: "Timer" } },
     { stage: "Discussion", speakerType: "human", content: "SECRET TASK MATERIAL", sender: { id: "p1", name: "Red" } },
   ]);
   const serialized = JSON.stringify(messages);
   assert.match(serialized, /Welcome/);
   assert.match(serialized, /help\?/);
-  assert.doesNotMatch(serialized, /Thirty seconds|SECRET TASK MATERIAL/);
+  assert.doesNotMatch(serialized, /30 seconds|SECRET TASK MATERIAL/);
   assert.doesNotMatch(serialized, /TASK_GENERAL_CONTEXT|HPTConfig|decisionOptions/);
 });
 

@@ -11,12 +11,9 @@ export function SubjectiveSurvey() {
         "appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-empirica-500 focus:border-empirica-500 sm:text-sm";
     const player = usePlayer();
     const round = useRound();
-    const facilitation = round?.get("facilitation");
-    const playerName = player.get("name");
-
     const existing = player.round.get("subjectiveSurvey") ?? {};
     const keyFor = (field) => draftKey({ playerId: player.id, roundId: round?.id, form: "subjectiveSurvey", field });
-    const fields = ["groupFreeText", "groupContribution", "groupInfluence", "groupProductive", "groupStructured", "groupCohesion", "facilitatorRoleFreetext", "facilitatorGroupFreetext", "facilitatorSharing", "facilitatorDistracting", "facilitatorSynthesis", "facilitatorFocus", "facilitatorNeedFit", "facilitatorTimingAppropriateness", "facilitatorOptionPush"];
+    const fields = ["groupFreeText", "groupContribution", "groupInfluence", "groupProductive", "groupStructured", "groupCohesion", "facilitatorGroupFreetext", "facilitatorSharing", "facilitatorDistracting", "facilitatorSynthesis", "facilitatorFocus", "facilitatorNeedFit", "facilitatorTimingAppropriateness", "facilitatorOptionPush"];
     const draftKeys = fields.map(keyFor);
     const [question1, setQuestion1] = usePersistentDraft(draftKeys[0], existing.groupFreeText ?? "");
     const [question2, setQuestion2] = usePersistentDraft(draftKeys[1], existing.groupContribution ?? "");
@@ -24,28 +21,22 @@ export function SubjectiveSurvey() {
     const [question4, setQuestion4] = usePersistentDraft(draftKeys[3], existing.groupProductive ?? "");
     const [question5, setQuestion5] = usePersistentDraft(draftKeys[4], existing.groupStructured ?? "");
     const [question6, setQuestion6] = usePersistentDraft(draftKeys[5], existing.groupCohesion ?? "");
-    const [question7, setQuestion7] = usePersistentDraft(draftKeys[6], existing.facilitatorRoleFreetext ?? "");
-    const [question8, setQuestion8] = usePersistentDraft(draftKeys[7], existing.facilitatorGroupFreetext ?? "");
-    const [question9, setQuestion9] = usePersistentDraft(draftKeys[8], existing.facilitatorSharing ?? "");
-    const [question10, setQuestion10] = usePersistentDraft(draftKeys[9], existing.facilitatorDistracting ?? "");
-    const [question11, setQuestion11] = usePersistentDraft(draftKeys[10], existing.facilitatorSynthesis ?? "");
-    const [question12, setQuestion12] = usePersistentDraft(draftKeys[11], existing.facilitatorFocus ?? "");
-    const [question13, setQuestion13] = usePersistentDraft(draftKeys[12], existing.facilitatorNeedFit ?? "");
-    const [question14, setQuestion14] = usePersistentDraft(draftKeys[13], existing.facilitatorTimingAppropriateness ?? "");
-    const [question15, setQuestion15] = usePersistentDraft(draftKeys[14], existing.facilitatorOptionPush ?? "");
+    const [question8, setQuestion8] = usePersistentDraft(draftKeys[6], existing.facilitatorGroupFreetext ?? "");
+    const [question9, setQuestion9] = usePersistentDraft(draftKeys[7], existing.facilitatorSharing ?? "");
+    const [question10, setQuestion10] = usePersistentDraft(draftKeys[8], existing.facilitatorDistracting ?? "");
+    const [question11, setQuestion11] = usePersistentDraft(draftKeys[9], existing.facilitatorSynthesis ?? "");
+    const [question12, setQuestion12] = usePersistentDraft(draftKeys[10], existing.facilitatorFocus ?? "");
+    const [question13, setQuestion13] = usePersistentDraft(draftKeys[11], existing.facilitatorNeedFit ?? "");
+    const [question14, setQuestion14] = usePersistentDraft(draftKeys[12], existing.facilitatorTimingAppropriateness ?? "");
+    const [question15, setQuestion15] = usePersistentDraft(draftKeys[13], existing.facilitatorOptionPush ?? "");
     const [submitting, setSubmitting] = useState(false);
 
     const alwaysVisibleComplete = [question1, question2, question3, question4, question5, question6]
         .every((answer) => String(answer).trim());
-    const facilitatorRoleComplete = playerName != "Facilitator" || String(question7).trim();
-    const facilitatorQuestionsComplete =
-        facilitation == "none" ||
-        playerName == "Facilitator" ||
-        [question8, question9, question10, question11, question12, question13, question14, question15]
-            .every((answer) => String(answer).trim());
+    const facilitatorQuestionsComplete = [question8, question9, question10, question11, question12, question13, question14, question15]
+        .every((answer) => String(answer).trim());
     const isComplete = Boolean(
         alwaysVisibleComplete &&
-        facilitatorRoleComplete &&
         facilitatorQuestionsComplete
     );
 
@@ -66,7 +57,6 @@ export function SubjectiveSurvey() {
             groupProductive: question4,
             groupStructured: question5,
             groupCohesion: question6,
-            facilitatorRoleFreetext: question7,
             facilitatorGroupFreetext: question8,
             facilitatorSharing: question9,
             facilitatorDistracting: question10,
@@ -206,30 +196,7 @@ export function SubjectiveSurvey() {
 
 
 
-                                {(playerName == "Facilitator") && <>
-                                    <div>
-                                        <label htmlFor="question7" className={`${labelClassName}`}>
-                                            How did you feel about your role as the facilitator during the task? What went well? What could have gone better?
-                                        </label>
-                                        <div className="mt-1">
-                                            <textarea
-                                                id="question7"
-                                                name="question7"
-                                                type="text"
-                                                rows={4}
-                                                autoComplete="off"
-                                                className={inputClassName}
-                                                value={question7}
-                                                onChange={(e) => updateAnswer("facilitatorRoleFreetext", e.target.value, setQuestion7)}
-                                                required
-                                            />
-                                        </div>
-                                    </div>
-                                </>}
-
-
-
-                                {(facilitation != "none" && playerName != "Facilitator") && <><div>
+                                <><div>
                                     <label htmlFor="question8" className={`${labelClassName}`}>
                                         How did you feel about the facilitator during the task?
                                     </label>
@@ -329,7 +296,7 @@ export function SubjectiveSurvey() {
                                     </div>
 
 
-                                </>}
+                                </>
 
                                 {!isComplete && (
                                     <Alert title="Survey incomplete">

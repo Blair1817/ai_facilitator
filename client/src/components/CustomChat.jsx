@@ -198,7 +198,6 @@ function Input({ onNewMessage, requestResult }) {
     const [text, setText] = usePersistentDraft(messageDraftKey, "");
     const [pendingRequestId, setPendingRequestId] = useState(null);
     const [requestError, setRequestError] = useState("");
-    const facilitation = round?.get("facilitation");
 
     useEffect(() => {
         if (!pendingRequestId || requestResult?.requestId !== pendingRequestId) return;
@@ -216,7 +215,7 @@ function Input({ onNewMessage, requestResult }) {
         display: player.get("name"),
     }));
 
-    if (stage?.get("name") === "Introduction" || (facilitation != "none" && facilitation != "human")) {
+    if (["Introduction", "Task", "Discussion"].includes(stage?.get("name"))) {
         mentionUsers.push({
             id: "ai",
             display: "Facilitator",

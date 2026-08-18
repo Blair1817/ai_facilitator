@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { usePlayer, usePlayers, useRound } from "@empirica/core/player/classic/react";
+import { usePlayer, usePlayers, useRound, useStage } from "@empirica/core/player/classic/react";
 
 function remainingSeconds(endAt, now) {
   return Math.max(0, Math.ceil((endAt - now) / 1000));
@@ -9,10 +9,12 @@ export function Break() {
   const player = usePlayer();
   const players = usePlayers();
   const round = useRound();
+  const stage = useStage();
   const scheduledEnd = round?.get("breakScheduledEndAt");
   const [now, setNow] = useState(Date.now());
   const [requesting, setRequesting] = useState(false);
   const readyRequestAt = useRef(0);
+  const advanceRequested = useRef(false);
   const ready = player.round?.get("breakReadyStatus") === "ready";
   const derivedReadyCount = players.filter((participant) => participant.round?.get("breakReadyStatus") === "ready").length;
   const readyCount = round?.get("breakReadyCount") ?? derivedReadyCount;
@@ -27,10 +29,15 @@ export function Break() {
   }, []);
 
   useEffect(() => {
-    if (remaining === 0 && ready && allReady && !player.stage.get("submit")) {
-      player.stage.set("submit", true);
-    }
-  }, [allReady, player, ready, remaining]);
+    if (remaining !== 0 || !ready || !allReady || advanceRequested.current) return;
+    advanceRequested.current = true;
+    player.set("breakAdvanceRequest", {
+      requestId: globalThis.crypto?.randomUUID?.() ?? `${player.id}-${Date.now()}`,
+      roundId: round?.id,
+      stageId: stage.id,
+      requestedAt: Date.now(),
+    });
+  }, [allReady, player, ready, remaining, round?.id, stage.id]);
 
   useEffect(() => {
     const rejectedAt = player.round?.get("breakReadyRejectedAt") ?? 0;

@@ -2,12 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   canConfirmBreak,
+  canFinalizeBreak,
   allFinalDecisionConfirmationsMatch,
   classifyFinalDecision,
   MESSAGE_TYPES,
   NO_GROUP_FINAL_DECISION,
   allocateSequencePosition,
   buildCanonicalMessage,
+  isFreshFinalDecisionDraftRequest,
+  isCurrentFinalDecisionConfirmation,
   normalizeMessageContent,
   reviewHumanMessageRequest,
   summarizeFinalDecisionDrafts,
@@ -18,6 +21,30 @@ const breakEnd = 1_000_000;
 test("T32-T33: readiness opens exactly 45 seconds before the scheduled end", () => {
   assert.equal(canConfirmBreak(breakEnd, breakEnd - 45_001), false);
   assert.equal(canConfirmBreak(breakEnd, breakEnd - 45_000), true);
+});
+
+test("Break can finalize only after its minimum duration and full-group readiness", () => {
+  assert.equal(canFinalizeBreak(breakEnd, breakEnd - 1, true), false);
+  assert.equal(canFinalizeBreak(breakEnd, breakEnd, false), false);
+  assert.equal(canFinalizeBreak(breakEnd, breakEnd, true), true);
+});
+
+test("FinalDecision accepts only well-formed, strictly newer private draft requests", () => {
+  const request = { requestId: "draft-2", requestedAt: 2_000 };
+  assert.equal(isFreshFinalDecisionDraftRequest(request, null), true);
+  assert.equal(isFreshFinalDecisionDraftRequest(request, 1_999), true);
+  assert.equal(isFreshFinalDecisionDraftRequest(request, 2_000), false);
+  assert.equal(isFreshFinalDecisionDraftRequest(request, 2_001), false);
+  assert.equal(isFreshFinalDecisionDraftRequest({ ...request, requestId: "" }, null), false);
+  assert.equal(isFreshFinalDecisionDraftRequest({ ...request, requestedAt: "invalid" }, null), false);
+});
+
+test("FinalDecision rejects confirmations from an earlier agreement revision", () => {
+  assert.equal(isCurrentFinalDecisionConfirmation({ agreementRevision: 3 }, 3), true);
+  assert.equal(isCurrentFinalDecisionConfirmation({ agreementRevision: 2 }, 3), false);
+  assert.equal(isCurrentFinalDecisionConfirmation({ agreementRevision: "3" }, 3), true);
+  assert.equal(isCurrentFinalDecisionConfirmation({ agreementRevision: -1 }, 0), false);
+  assert.equal(isCurrentFinalDecisionConfirmation({}, 0), false);
 });
 
 test("FinalDecision requires exactly three identical non-empty drafts", () => {

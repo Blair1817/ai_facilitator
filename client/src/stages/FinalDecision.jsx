@@ -17,13 +17,17 @@ export function FinalDecision() {
   const [choice, setChoice] = usePersistentDraft(choiceDraftKey, player.round.get("groupFinalChoice") ?? "");
   const [confidence, setConfidence] = usePersistentDraft(confidenceDraftKey, player.round.get("groupChoiceConfidence") ?? null);
   const lastDraftRequest = useRef("");
+  const requestClock = useRef(0);
   const [confirming, setConfirming] = useState(false);
 
   const agreementStatus = round?.get("finalDecisionAgreementStatus") ?? "not_agreed";
-  const matchedChoice = round?.get("finalDecisionMatchedChoice") ?? null;
+  const agreementRevision = round?.get("finalDecisionAgreementRevision") ?? 0;
+  const savedChoice = player.round.get("groupFinalChoice") ?? "";
+  const savedConfidence = player.round.get("groupChoiceConfidence") ?? null;
   const confirmedChoice = player.round.get("groupFinalConfirmedChoice") ?? null;
-  const agreed = agreementStatus === "agreed" && Boolean(choice) && matchedChoice === choice;
-  const ownConfirmationCurrent = agreed && confirmedChoice === matchedChoice;
+  const ownDraftSynced = Boolean(choice) && savedChoice === choice && savedConfidence === confidence;
+  const agreed = agreementStatus === "agreed" && ownDraftSynced;
+  const ownConfirmationCurrent = agreed && confirmedChoice === choice;
   const canConfirm = agreed && confidence !== null && !ownConfirmationCurrent;
 
   // Persist this participant's current private draft promptly. The server
@@ -34,13 +38,15 @@ export function FinalDecision() {
     const requestKey = `${choice}:${confidence ?? "unset"}`;
     if (lastDraftRequest.current === requestKey) return;
     lastDraftRequest.current = requestKey;
+    const requestedAt = Math.max(Date.now(), requestClock.current + 1);
+    requestClock.current = requestedAt;
     player.set("finalDecisionDraftRequest", {
-      requestId: globalThis.crypto?.randomUUID?.() ?? `${player.id}-${Date.now()}`,
+      requestId: globalThis.crypto?.randomUUID?.() ?? `${player.id}-${requestedAt}`,
       roundId: round?.id,
       stageId: stage.id,
       choice,
       confidence,
-      requestedAt: Date.now(),
+      requestedAt,
     });
   }, [choice, confidence, player, round?.id, stage.id]);
 
@@ -59,6 +65,7 @@ export function FinalDecision() {
       roundId: round?.id,
       stageId: stage.id,
       choice,
+      agreementRevision,
       requestedAt: Date.now(),
     });
   };

@@ -21,7 +21,7 @@ test("Static context contains the complete chronological public transcript, time
     chat: [
       { timestamp: 1_000, messageType: "human", speakerType: "human", sender: { id: "p1", name: "Green" }, content: "Hello" },
       { timestamp: 2_000, messageType: "facilitator", speakerType: "facilitator", sender: { id: "ai", name: "Facilitator" }, content: "What else should be considered?" },
-      { timestamp: 3_000, messageType: "timer_reminder", speakerType: "timer_reminder", sender: { id: "timer", name: "Timer" }, content: "One minute remains." },
+      { timestamp: 3_000, messageType: "timer_reminder", speakerType: "timer_reminder", sender: { id: "timer", name: "Timer" }, content: "1 minute remains." },
       { timestamp: 4_000, messageType: "human", speakerType: "human", sender: { id: "p2", name: "Blue" }, content: "I have another point" },
     ],
     remainingTimeMs: 75_000,
@@ -32,7 +32,7 @@ test("Static context contains the complete chronological public transcript, time
   assert.match(context.userContent, /Elapsed discussion time: 8:45/);
   assert.match(context.userContent, /\[m0\] \[1970-01-01T00:00:01\.000Z\] @\[Green\]: Hello/);
   assert.match(context.userContent, /\[m1\].*@\[Facilitator\]: What else should be considered\?/);
-  assert.match(context.userContent, /\[m2\].*\[Timer\]: One minute remains\./);
+  assert.match(context.userContent, /\[m2\].*\[Timer\]: 1 minute remains\./);
   assert.match(context.userContent, /\[m3\].*@\[Blue\]: I have another point/);
   assert.ok(context.userContent.indexOf("[m0]") < context.userContent.indexOf("[m3]"));
   assert.deepEqual(context.eligibleMessageIds, ["m0", "m3"]);

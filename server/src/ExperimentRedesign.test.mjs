@@ -128,7 +128,7 @@ test("timer reminders flush immediately without waiting for a human chat message
     callbacks.indexOf('Empirica.onStageStart'),
   );
   assert.match(timedMessageBlock, /appendCanonicalMessage\([\s\S]*Empirica\.flush\(\)/);
-  assert.match(callbacks, /Thirty seconds remain in the IceBreaker\./);
+  assert.match(callbacks, /30 seconds remain in the IceBreaker\./);
 });
 
 test("IceBreaker is wrapped by the approved ten-second countdown screens", () => {
@@ -165,15 +165,17 @@ test("T13-T14/T48: three stages reuse the original report component with compact
 test("T16-T26/T46: stable participant and official group-decision fields are separate", () => {
   for (const key of ["initialChoice","initialConfidence"]) assert.match(initial, new RegExp(key));
   for (const key of ["groupFinalChoice","groupChoiceConfidence"]) assert.match(finalDecision, new RegExp(key));
-  for (const key of ["officialGroupFinalChoice","finalDecisionOutcome","finalDecisionTimedOut","finalDecisionFinalizedAt","finalDecisionDraftChoices","finalDecisionConfirmed"]) assert.match(callbacks, new RegExp(key));
+  for (const key of ["officialGroupFinalChoice","finalDecisionOutcome","finalDecisionTimedOut","finalDecisionFinalizedAt","finalDecisionConfirmed"]) assert.match(callbacks, new RegExp(key));
+  assert.doesNotMatch(callbacks + finalDecision, /finalDecisionDraftChoices|finalDecisionMatchedChoice/);
   for (const key of ["agreesWithGroupChoice","finalPersonalChoice","finalPersonalChoiceConfidence","finalPersonalChoiceRationale","individualAssessmentTimeoutReason"]) assert.match(individual + callbacks, new RegExp(key));
   assert.match(initial + finalDecision + individual, /!== null/);
   assert.doesNotMatch(initial + finalDecision + individual, /perceivedGroupRationale/);
   assert.doesNotMatch(callbacks + policies, /groupChoiceMismatch(Status)?/);
 });
 
-test("Group Final Decision is a 90-second server-authoritative unanimous confirmation stage", () => {
-  assert.equal((callbacks.match(/name: "FinalDecision",\s+duration: 90/g) ?? []).length, 2);
+test("Group Final Decision is a 60-second server-authoritative unanimous confirmation stage", () => {
+  assert.match(callbacks, /const FINAL_DECISION_DURATION_SECONDS = 60;/);
+  assert.equal((callbacks.match(/name: "FinalDecision",\s+duration: FINAL_DECISION_DURATION_SECONDS/g) ?? []).length, 2);
   assert.match(decisionControls, /id: "NO_GROUP_FINAL_DECISION"/);
   assert.match(decisionControls, /label: "Fail to reach a final decision"/);
   assert.match(decisionControls, /options\.length === 4 \? "sm:grid-cols-2"/);
@@ -187,7 +189,15 @@ test("Group Final Decision is a 90-second server-authoritative unanimous confirm
   assert.match(callbacks, /summarizeFinalDecisionDrafts/);
   assert.match(callbacks, /allFinalDecisionConfirmationsMatch/);
   assert.match(callbacks, /clearFinalDecisionConfirmations/);
-  assert.match(callbacks, /setTimeout\(\(\) => \{[\s\S]*finalizeGroupDecision\(stage, \{ timedOut: true \}\);[\s\S]*90_000/);
+  assert.match(callbacks, /setTimeout\(\(\) => \{[\s\S]*finalizeGroupDecision\(stage, \{ timedOut: true \}\);[\s\S]*FINAL_DECISION_DURATION_SECONDS \* 1000/);
+  assert.match(callbacks, /isFreshFinalDecisionDraftRequest/);
+  assert.match(callbacks, /request\.choice !== ownChoice/);
+  assert.match(callbacks, /finalDecisionAgreementRevision/);
+  assert.match(callbacks, /isCurrentFinalDecisionConfirmation/);
+  assert.match(callbacks, /const ownConfidence = player\.round\.get\("groupChoiceConfidence"\)/);
+  assert.doesNotMatch(callbacks, /allConfidenceRecorded/);
+  assert.match(finalDecision, /agreementRevision/);
+  assert.match(finalDecision, /ownDraftSynced/);
   assert.match(individual, /finalDecisionOutcome === "consensus_choice"/);
   assert.match(individual, /finalDecisionOutcome === "declared_fail" \|\| finalDecisionOutcome === "timeout_fail"/);
   assert.match(callbacks, /stageName === "IndividualAssessment" && stage\.round\.get\("finalDecisionOutcome"\) === "consensus_choice"/);
@@ -222,7 +232,7 @@ test("R8: formal Discussion retains the original unanimous early-finish path", (
   assert.match(discussion, /player\.stage\.set\("submit", !isReady\)/);
 });
 
-test("Discussion uses native unanimous readiness and an idempotent deadline-only recovery path", () => {
+test("Discussion uses native unanimous readiness with idempotent server recovery paths", () => {
   assert.match(discussion, /discussionAdvanceRequest/);
   assert.doesNotMatch(discussion, /requestAdvance\("all_ready"\)/);
   assert.match(discussion, /requestAdvance\("deadline_reached"\)/);
@@ -230,6 +240,9 @@ test("Discussion uses native unanimous readiness and an idempotent deadline-only
   assert.match(callbacks, /discussionAdvanceRequest\.reason !== "deadline_reached"/);
   assert.match(callbacks, /discussionAdvanceCommittedStageId/);
   assert.match(callbacks, /Date\.now\(\) >= deadline/);
+  assert.match(callbacks, /stageName === "Task"/);
+  assert.match(callbacks, /assignedHumanPlayers\(game\)\.every/);
+  assert.match(callbacks, /}, 750\);/);
   assert.match(callbacks, /stage\.set\("ended", true\)/);
 });
 

@@ -4,8 +4,9 @@ grant usage on schema research to service_role;
 
 create table research.game_assignments (
   game_id text primary key,
+  runtime_ledger_id text not null,
   sequence_id text not null check (sequence_id in ('S1', 'S2', 'S3', 'S4')),
-  allocation_number bigint not null unique,
+  allocation_number bigint not null,
   allocation_block_id bigint not null,
   allocation_position smallint not null check (allocation_position between 1 and 4),
   allocation_claimed_at timestamptz not null,
@@ -13,7 +14,9 @@ create table research.game_assignments (
   ledger_key text not null,
   assignment_status text not null default 'confirmed',
   created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
-  unique (allocation_block_id, allocation_position), unique (allocation_block_id, sequence_id)
+  unique (runtime_ledger_id, allocation_number),
+  unique (runtime_ledger_id, allocation_block_id, allocation_position),
+  unique (runtime_ledger_id, allocation_block_id, sequence_id)
 );
 
 create table research.participants (

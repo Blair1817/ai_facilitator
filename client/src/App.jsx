@@ -3,7 +3,7 @@ import { EmpiricaContext } from "@empirica/core/player/classic/react";
 import { EmpiricaMenu, EmpiricaParticipant } from "@empirica/core/player/react";
 import React from "react";
 import { Game } from "./Game";
-import { GamesFull } from "./intro-exit/GamesFull";
+import { GamesFull, SessionStartFailed } from "./intro-exit/GamesFull";
 import { NoGames } from "./intro-exit/NoGames";
 import { OverallInstructions } from "./intro-exit/OverallInstructions";
 import { PlayerCreate } from "./intro-exit/PlayerCreate"
@@ -32,6 +32,9 @@ export default function App() {
   }
 
   function exitSteps({ game, player }) {
+    if (player.get("ended") == "game failed") {
+      return [SessionStartFailed];
+    }
     if (player.get("ended") == "game ended") {
       // FinalDecision is now a per-round Stage
       // (client/src/stages/FinalDecision.jsx), so the

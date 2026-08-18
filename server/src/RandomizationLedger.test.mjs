@@ -68,6 +68,8 @@ test("production allocation is persisted on Globals before onGameStart and never
   const gameStartIndex = callbacksSource.indexOf("Empirica.onGameStart");
   assert.ok(allocationIndex !== -1 && allocationIndex < gameStartIndex);
   assert.match(callbacksSource, /claimSequenceForStudy\(ctx\.globals, games, game, SEQUENCE_IDS\)/);
+  assert.match(callbacksSource, /getOrCreateResearchRuntimeLedgerId\(ctx\.globals\)/);
+  assert.match(callbacksSource, /runtime_ledger_id: runtimeLedgerId/);
   assert.match(callbacksSource, /has no valid durable sequence allocation/);
   assert.doesNotMatch(callbacksSource, /currentSequenceBlock|nextAllocationPosition|claimNextSequence/);
 });

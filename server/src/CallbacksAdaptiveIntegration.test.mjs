@@ -59,6 +59,55 @@ test("callbacks.js: buildGeneratorContext and runSharedGeneration are each defin
   assert.equal([...callbacksSource.matchAll(/async function runSharedGeneration\(/g)].length, 1);
 });
 
+test("callbacks.js: legacy llmLog is read-only and new audit events are never scalar-initialized", () => {
+  assert.doesNotMatch(callbacksSource, /(?:set|append)\(\s*["']llmLog["']/);
+  assert.doesNotMatch(callbacksSource, /set\(\s*["']llmAuditEvents["']/);
+});
+
+test("callbacks.js: a posted Facilitator message is flushed before best-effort audit finalization", () => {
+  const wrapperStart = callbacksSource.indexOf("function finalizeAuditLog(store, entry)");
+  const wrapperEnd = callbacksSource.indexOf("\n}\n", wrapperStart) + 2;
+  const wrapper = callbacksSource.slice(wrapperStart, wrapperEnd);
+  const flushIndex = wrapper.indexOf("Empirica.flush()");
+  const auditIndex = wrapper.indexOf("finalizeAuditLogBase(store, entry)");
+  assert.match(wrapper, /if \(entry\?\.messageAdded\)/);
+  assert.ok(flushIndex !== -1 && auditIndex !== -1 && flushIndex < auditIndex);
+  assert.match(wrapper, /const completed = finalizeAuditLogBase\(store, entry\)/);
+  assert.match(wrapper, /buildInterventionMirror\([\s\S]*entry: completed/);
+  assert.match(wrapper, /MIRROR_ENQUEUE_FAILED/);
+});
+
+test("callbacks.js: every Generator attempt retains its own request for Supabase audit", () => {
+  const sharedFnStart = callbacksSource.indexOf("async function runSharedGeneration");
+  const sharedFnEnd = callbacksSource.indexOf("\n// ── onGameStart", sharedFnStart);
+  const sharedFn = callbacksSource.slice(
+    sharedFnStart,
+    sharedFnEnd === -1 ? callbacksSource.length : sharedFnEnd,
+  );
+
+  assert.match(sharedFn, /logEntry\.generatorRequests\s*=\s*\[/);
+  assert.match(sharedFn, /attempt:\s*\(logEntry\.generatorRequests\?\.length \|\| 0\) \+ 1/);
+  assert.match(sharedFn, /messages,\s*\n\s*promptMetadata:\s*built\.metadata/);
+  assert.match(sharedFn, /promptMetadata:\s*built\.metadata/);
+});
+
+test("callbacks.js: participant-request fallback cannot duplicate an already queued message", () => {
+  const mentionStart = callbacksSource.indexOf("if (isMentionCheckpoint)");
+  const mentionEnd = callbacksSource.indexOf("// ── Record the attempt BEFORE", mentionStart);
+  const mentionBlock = callbacksSource.slice(mentionStart, mentionEnd);
+  assert.match(mentionBlock, /!requestedResult\.published\s*&&\s*!logEntry\.messageAdded/);
+});
+
+test("callbacks.js: unexpected pipeline failures cannot strand an in-flight checkpoint", () => {
+  const handleStart = callbacksSource.indexOf("async function handleChat");
+  const handleEnd = callbacksSource.indexOf('Empirica.on("game", "chat_round_0"', handleStart);
+  const handle = callbacksSource.slice(handleStart, handleEnd);
+  assert.match(handle, /catch \{[\s\S]*SILENT_PIPELINE_ERROR/);
+  assert.match(handle, /finally \{[\s\S]*pending\[logEntry\.auditRequestId\][\s\S]*finalizeAuditLog\(game, logEntry\)/);
+  assert.match(handle, /isMentionCheckpoint\s*&&\s*!logEntry\.messageAdded/);
+  assert.doesNotMatch(handle, /error\.message|error\.stack/);
+});
+
 test("callbacks.js: no candidate is published before runSharedGeneration's full parse/schema/deterministic-validation sequence passes", () => {
   const sharedFnStart = callbacksSource.indexOf("async function runSharedGeneration");
   const sharedFnBody = callbacksSource.slice(sharedFnStart, callbacksSource.indexOf("\n// ── onGameStart", sharedFnStart) === -1 ? sharedFnStart + 4000 : callbacksSource.length);

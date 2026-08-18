@@ -35,12 +35,15 @@ import { randomUUID } from "node:crypto";
 import { beginInFlight, finalizeAuditLog as finalizeAuditLogBase, recoverInterruptedInFlight } from "./InFlightAudit.mjs";
 import {
   canConfirmBreak,
+  canFinalizeBreak,
   allFinalDecisionConfirmationsMatch,
   classifyFinalDecision,
   MESSAGE_TYPES,
   NO_GROUP_FINAL_DECISION,
   allocateSequencePosition,
   buildCanonicalMessage,
+  isFreshFinalDecisionDraftRequest,
+  isCurrentFinalDecisionConfirmation,
   reviewHumanMessageRequest,
   summarizeFinalDecisionDrafts,
 } from "./ExperimentPolicies.mjs";
@@ -50,40 +53,59 @@ import {
   buildMessageRow,
   buildRoundResponseRows,
   mirrorNonBlocking,
+  mirrorResponsesWithParents,
   persistAssignmentOrBlock,
   researchParticipantId,
   researchPersistence,
+  wasSubmittedDuringCurrentServerRun,
 } from "./SupabasePersistence.mjs";
 
 dotenv.config();
 
 let researchMirrorQueue = Promise.resolve();
-function queueResearchMirror(operation, task) {
+function queueResearchMirror(operation, task, context = {}) {
   researchMirrorQueue = mirrorNonBlocking(researchMirrorQueue.then(task), {
     operation,
-    onError: (failure) => console.warn("[research mirror] non-blocking write failed", failure),
+    onError: (failure) => console.warn("[research mirror] non-blocking write failed", {
+      ...context,
+      ...failure,
+    }),
   });
   return researchMirrorQueue;
 }
 
 function finalizeAuditLog(store, entry) {
-  finalizeAuditLogBase(store, entry);
-  const round = store.currentRound;
-  if (!round) return;
-  const chat = store.get(`chat_round_${round.get("index")}`) || [];
-  const completed = { ...entry, auditCompletedAt: Date.now() };
-  queueResearchMirror("intervention", async () => {
-    const persistence = researchPersistence();
-    for (const message of chat) {
-      await persistence.upsertMessage(buildMessageRow({
-        gameId: store.id, roundId: round.id,
-        transcriptKey: `chat_round_${round.get("index")}`, message,
-      }));
+  // A validated participant-facing message and its publish bookkeeping are
+  // runtime-critical. Commit them before any best-effort audit or mirror work
+  // so a storage failure cannot make an already-generated reply disappear.
+  if (entry?.messageAdded) {
+    try {
+      Empirica.flush();
+    } catch {
+      console.warn("[facilitator publish] pre-audit flush failed", { code: "PRE_AUDIT_FLUSH_FAILED" });
     }
-    await persistence.mirrorIntervention(buildInterventionMirror({
-      gameId: store.id, roundId: round.id, facilitation: round.get("facilitation"), chat, entry: completed,
-    }));
-  });
+  }
+  const completed = finalizeAuditLogBase(store, entry);
+  const round = store.currentRound;
+  if (!round) return completed;
+  const chat = store.get(`chat_round_${round.get("index")}`) || [];
+  try {
+    queueResearchMirror("intervention", async () => {
+      const persistence = researchPersistence();
+      for (const message of chat) {
+        await persistence.upsertMessage(buildMessageRow({
+          gameId: store.id, roundId: round.id,
+          transcriptKey: `chat_round_${round.get("index")}`, message,
+        }));
+      }
+      await persistence.mirrorIntervention(buildInterventionMirror({
+        gameId: store.id, roundId: round.id, facilitation: round.get("facilitation"), chat, entry: completed,
+      }));
+    });
+  } catch {
+    console.warn("[facilitator audit] research mirror enqueue failed", { code: "MIRROR_ENQUEUE_FAILED" });
+  }
+  return completed;
 }
 
 // Phase 6.3 (model-version freeze): the default was previously the
@@ -115,6 +137,7 @@ const _llmBase = process.env.LLM_API_ENDPOINT || "https://api.minimax.chat/v1";
 const llmAPIEndpoint = _llmBase.endsWith("/chat/completions") ? _llmBase : `${_llmBase.replace(/\/$/, "")}/chat/completions`;
 const llmMaxOutputTokens = Number.parseInt(process.env.LLM_MAX_OUTPUT_TOKENS ?? "1000", 10);
 const CALLBACKS_INSTANCE_ID = randomUUID();
+const CALLBACKS_STARTED_AT = Date.now();
 
 // ── LLM API call ──────────────────────────────────────────────────────────────
 
@@ -371,6 +394,14 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     ];
     logEntry.requestMade = true;
     logEntry.messagesOAIFormat = messages;
+    logEntry.generatorRequests = [
+      ...(logEntry.generatorRequests || []),
+      {
+        attempt: (logEntry.generatorRequests?.length || 0) + 1,
+        messages,
+        promptMetadata: built.metadata,
+      },
+    ];
 
     const generatorStartedAt = Date.now();
     const llmResponse = await getLLMResponse(messages);
@@ -577,13 +608,149 @@ const WALKTHROUGH_DURATION_SECONDS = 10 * 60;
 const ICEBREAKER_TRANSITION_DURATION_SECONDS = 10;
 // The visible Break countdown is controlled by breakScheduledEndAt. This long
 // safety duration prevents Empirica's timer from ending the stage before the
-// server-validated readiness gate is satisfied; clients submit synchronously
+// server-validated readiness gate is satisfied. The server ends the stage
 // only after both the five-minute minimum and full-group readiness are true.
 const BREAK_STAGE_SAFETY_DURATION_SECONDS = 24 * 60 * 60;
 const TLX_DURATION_SECONDS = 10 * 60;
 const SUBJECTIVE_SURVEY_DURATION_SECONDS = 10 * 60;
 const BREAK_DURATION_SECONDS = 300;
+const FINAL_DECISION_DURATION_SECONDS = 60;
 const INDIVIDUAL_ASSESSMENT_DURATION_SECONDS = 10 * 60;
+// Identifies one persistent Tajriba allocation ledger inside Supabase. The
+// value survives ordinary server restarts because it is stored on Empirica's
+// Global scope, but a deliberately cleared Tajriba database receives a new
+// value. This lets allocation numbers restart after a pretest reset without
+// colliding with durable assignments retained for earlier ledgers.
+const RESEARCH_RUNTIME_LEDGER_ID_KEY = "researchRuntimeLedgerIdV1";
+
+function getOrCreateResearchRuntimeLedgerId(globals) {
+  const existing = globals.get(RESEARCH_RUNTIME_LEDGER_ID_KEY);
+  if (typeof existing === "string" && existing.trim()) return existing;
+  const created = randomUUID();
+  globals.set(RESEARCH_RUNTIME_LEDGER_ID_KEY, created);
+  return created;
+}
+
+function assignmentParentFromGame(game) {
+  const claimedAt = new Date(game?.get("allocationClaimedAt"));
+  const row = {
+    game_id: game?.id,
+    runtime_ledger_id: game?.get("researchRuntimeLedgerId"),
+    sequence_id: game?.get("sequenceId"),
+    allocation_number: game?.get("allocationNumber"),
+    allocation_block_id: game?.get("allocationBlockId"),
+    allocation_position: game?.get("allocationPosition"),
+    allocation_claimed_at: Number.isNaN(claimedAt.valueOf()) ? null : claimedAt.toISOString(),
+    allocation_method: game?.get("allocationMethod"),
+    ledger_key: game?.get("allocationLedgerKey"),
+    assignment_status: "confirmed",
+    updated_at: new Date().toISOString(),
+  };
+  const valid = row.game_id
+    && row.runtime_ledger_id
+    && SEQUENCE_IDS.includes(row.sequence_id)
+    && Number.isInteger(row.allocation_number)
+    && Number.isInteger(row.allocation_block_id)
+    && Number.isInteger(row.allocation_position)
+    && row.allocation_claimed_at
+    && row.allocation_method
+    && row.ledger_key;
+  return valid ? row : null;
+}
+
+function participantParentsFromGame(game) {
+  if (!game?.id || !Array.isArray(game.players) || game.players.length === 0) return null;
+  const updatedAt = new Date().toISOString();
+  const rows = game.players.map((player) => ({
+    participant_id: researchParticipantId(game.id, player.id),
+    game_id: game.id,
+    participant_number: player.get("participantNumber"),
+    profile_slot: player.get("profileSlot"),
+    updated_at: updatedAt,
+  }));
+  return rows.every((row) => (
+    row.participant_id
+    && Number.isInteger(row.participant_number)
+    && row.participant_number >= 1
+    && row.participant_number <= 3
+    && Number.isInteger(row.profile_slot)
+    && row.profile_slot >= 0
+    && row.profile_slot <= 2
+  )) ? rows : null;
+}
+
+function roundParentFromRound(round) {
+  const game = round?.currentGame;
+  const row = {
+    round_id: round?.id,
+    game_id: game?.id,
+    task_index: round?.get("taskIndex"),
+    task_version: round?.get("taskVersion"),
+    facilitation: round?.get("facilitation"),
+    updated_at: new Date().toISOString(),
+  };
+  return row.round_id
+    && row.game_id
+    && [0, 1].includes(row.task_index)
+    && ["A", "B"].includes(row.task_version)
+    && ["static", "adaptive"].includes(row.facilitation)
+    ? row
+    : null;
+}
+
+function responseMirrorContext(operation, game, player, rows) {
+  return {
+    gameId: game?.id || null,
+    playerId: player?.id || null,
+    participantId: game?.id && player?.id
+      ? researchParticipantId(game.id, player.id)
+      : null,
+    roundId: rows?.[0]?.round_id || null,
+    responseKeys: [...new Set((rows || []).map((row) => row.response_type).filter(Boolean))],
+    payloadShape: {
+      table: "responses",
+      method: "POST",
+      rowCount: rows?.length || 0,
+      keys: [...new Set((rows || []).flatMap((row) => Object.keys(row || {})))].sort(),
+    },
+  };
+}
+
+function mirrorResponseRowsFromRuntime({ operation, game, round = null, player = null, rows }) {
+  const responseRows = Array.isArray(rows) ? rows : rows ? [rows] : [];
+  if (!responseRows.length) return null;
+  const context = responseMirrorContext(operation, game, player, responseRows);
+  const assignment = assignmentParentFromGame(game);
+  const participants = participantParentsFromGame(game);
+  const scopedRound = responseRows.some((row) => row.round_id)
+    ? roundParentFromRound(round)
+    : null;
+  if (!assignment || !participants || (responseRows.some((row) => row.round_id) && !scopedRound)) {
+    console.warn("[research mirror] response skipped", {
+      operation,
+      code: "RESPONSE_PARENT_RECONSTRUCTION_UNAVAILABLE",
+      ...context,
+    });
+    return null;
+  }
+  return queueResearchMirror(operation, async () => {
+    const result = await mirrorResponsesWithParents(researchPersistence(), {
+      assignment,
+      participants,
+      rounds: scopedRound ? [scopedRound] : [],
+      responses: responseRows,
+    });
+    if (!result.mirrored) {
+      console.warn("[research mirror] response skipped", {
+        operation,
+        code: "RESPONSE_PARENT_RECONSTRUCTION_UNAVAILABLE",
+        reason: result.reason,
+        ...context,
+      });
+    }
+    return result;
+  }, context);
+}
 
 function addReviewQuizStage(round) {
   round.addStage({ name: "ReviewQuiz", duration: REVIEW_QUIZ_SAFETY_DURATION_SECONDS });
@@ -603,9 +770,9 @@ function addReviewQuizStage(round) {
 // onGameStart so Round creation can fail closed unless a durable claim exists.
 Empirica.before("game", "start", async (ctx, { game, start }) => {
   if (!start) return;
-  if (game.get("assignmentPersistenceStatus") === "confirmed") return;
   const games = [...ctx.scopesByKind("game").values()];
   const { ledger, claim } = claimSequenceForStudy(ctx.globals, games, game, SEQUENCE_IDS);
+  const runtimeLedgerId = getOrCreateResearchRuntimeLedgerId(ctx.globals);
 
   game.set("sequenceId",           claim.sequenceId);
   game.set("allocationNumber",     claim.allocationNumber);
@@ -614,6 +781,7 @@ Empirica.before("game", "start", async (ctx, { game, start }) => {
   game.set("allocationClaimedAt",  claim.claimedAt);
   game.set("allocationMethod",     "global_persisted_least-count-permuted-block-v1");
   game.set("allocationLedgerKey",  RANDOMIZATION_LEDGER_KEY);
+  game.set("researchRuntimeLedgerId", runtimeLedgerId);
   game.batch?.set("sequenceAllocationSummaryV1", {
     ledgerKey: RANDOMIZATION_LEDGER_KEY,
     allocationNumber: ledger.allocationNumber,
@@ -624,6 +792,7 @@ Empirica.before("game", "start", async (ctx, { game, start }) => {
   try {
     await persistAssignmentOrBlock(researchPersistence(), {
       game_id: game.id,
+      runtime_ledger_id: runtimeLedgerId,
       sequence_id: claim.sequenceId,
       allocation_number: claim.allocationNumber,
       allocation_block_id: claim.allocationBlockId,
@@ -638,7 +807,14 @@ Empirica.before("game", "start", async (ctx, { game, start }) => {
   } catch (error) {
     game.set("assignmentPersistenceStatus", "blocked");
     game.set("assignmentPersistenceError", error.message);
-    throw error;
+    game.set("assignmentPersistenceFailureCode", error.persistence?.code || error.code || "ASSIGNMENT_PERSISTENCE_BLOCKED");
+    console.error("[assignment persistence] game start blocked", {
+      gameId: game.id,
+      ...(error.persistence || {
+        code: error.code || "ASSIGNMENT_PERSISTENCE_BLOCKED",
+        status: null,
+      }),
+    });
   }
 });
 
@@ -646,7 +822,6 @@ Empirica.before("game", "start", async (ctx, { game, start }) => {
 
 Empirica.onGameStart(({ game }) => {
   if (game.get("assignmentPersistenceStatus") !== "confirmed") {
-    game.end("failed", game.get("assignmentPersistenceError") || "Research assignment persistence failed before this session could begin.");
     return;
   }
   const treatment = game.get("treatment");
@@ -666,7 +841,6 @@ Empirica.onGameStart(({ game }) => {
   }
 
   // Initialize game-level state
-  if (!Array.isArray(game.get("llmLog"))) game.set("llmLog", []);
   if (!Number.isFinite(game.get("totalInterventions"))) game.set("totalInterventions", 0);
   if (!Number.isFinite(game.get("totalFallbackMessages"))) game.set("totalFallbackMessages", 0);
   if (!game.get("llmInFlight")) game.set("llmInFlight", {});
@@ -721,7 +895,7 @@ Empirica.onGameStart(({ game }) => {
   round1.addStage({ name: "IceBreakerEndCountdown",   duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
   round1.addStage({ name: "InitialDecision",          duration: phase1Duration * 60 });
   round1.addStage({ name: "Task",                     duration: gameDuration * 60 });
-  round1.addStage({ name: "FinalDecision",            duration: 90 });
+  round1.addStage({ name: "FinalDecision",            duration: FINAL_DECISION_DURATION_SECONDS });
   round1.addStage({ name: "IndividualAssessment",     duration: INDIVIDUAL_ASSESSMENT_DURATION_SECONDS });
   round1.addStage({ name: "TLX",                      duration: TLX_DURATION_SECONDS });
   round1.addStage({ name: "SubjectiveSurvey",         duration: SUBJECTIVE_SURVEY_DURATION_SECONDS });
@@ -741,7 +915,7 @@ Empirica.onGameStart(({ game }) => {
   round2.addStage({ name: "IceBreakerEndCountdown",   duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
   round2.addStage({ name: "InitialDecision",          duration: phase1Duration * 60 });
   round2.addStage({ name: "Task",                     duration: gameDuration * 60 });
-  round2.addStage({ name: "FinalDecision",            duration: 90 });
+  round2.addStage({ name: "FinalDecision",            duration: FINAL_DECISION_DURATION_SECONDS });
   round2.addStage({ name: "IndividualAssessment",     duration: INDIVIDUAL_ASSESSMENT_DURATION_SECONDS });
   round2.addStage({ name: "TLX",                      duration: TLX_DURATION_SECONDS });
   round2.addStage({ name: "SubjectiveSurvey",         duration: SUBJECTIVE_SURVEY_DURATION_SECONDS });
@@ -790,6 +964,19 @@ Empirica.onGameStart(({ game }) => {
       },
     ]);
   });
+});
+
+// Classic's own game-start after-listener marks every started game as
+// `running`. Finish blocked games in a later app after-listener so that status
+// cannot overwrite the failure and leave participants on a blank loading
+// screen. Confirmed games are untouched.
+Empirica.after("game", "start", (_ctx, { game, start }) => {
+  if (!start || game.get("assignmentPersistenceStatus") === "confirmed") return;
+  game.end(
+    "failed",
+    game.get("assignmentPersistenceError")
+      || "Research assignment persistence failed before this session could begin.",
+  );
 });
 
 // ── onRoundStart ──────────────────────────────────────────────────────────────
@@ -897,7 +1084,6 @@ function finalDecisionDrafts(game) {
 
 function publishFinalDecisionStatus(round, summary) {
   round.set("finalDecisionAgreementStatus", summary.status);
-  round.set("finalDecisionMatchedChoice", summary.matchedChoice);
 }
 
 function clearFinalDecisionConfirmations(game) {
@@ -916,13 +1102,13 @@ function finalizeGroupDecision(stage, { timedOut = false, now = Date.now() } = {
   if (!timedOut && (summary.status !== "agreed" || !allFinalDecisionConfirmationsMatch(drafts, summary.matchedChoice))) return false;
 
   const classification = classifyFinalDecision(summary.matchedChoice, { timedOut });
-  // Write the official result once. The latest private drafts are retained
-  // separately for analysis and are never used as a first-player fallback.
+  // Write the official result once. Each participant's current draft remains
+  // on that participant's private round scope; never copy individual drafts
+  // into shared Round state before or after confirmation.
   round.set("officialGroupFinalChoice", classification.officialChoice);
   round.set("finalDecisionOutcome", classification.outcome);
   round.set("finalDecisionTimedOut", classification.timedOut);
   round.set("finalDecisionFinalizedAt", now);
-  round.set("finalDecisionDraftChoices", drafts.map(({ participantId, choice, confidence }) => ({ participantId, choice, confidence })));
   round.set("finalDecisionConfirmed", true);
   publishFinalDecisionStatus(round, { status: "finalized", matchedChoice: summary.matchedChoice });
 
@@ -1033,29 +1219,30 @@ Empirica.onStageStart(({ stage }) => {
     const chatKey = `chat_round_${stage.round.get("index")}`;
     const durationMs = gameDuration * 60 * 1000;
     setTimeout(() => appendTimedMessage(stage, chatKey, `${Math.ceil(gameDuration / 2)} minutes remain in the discussion.`), durationMs / 2);
-    if (durationMs > 60_000) setTimeout(() => appendTimedMessage(stage, chatKey, "One minute remains in the discussion."), durationMs - 60_000);
+    if (durationMs > 60_000) setTimeout(() => appendTimedMessage(stage, chatKey, "1 minute remains in the discussion."), durationMs - 60_000);
   }
   if (stageName === "Introduction") {
     const durationMs = stage.get("duration") * 1000;
     const introChatKey = `intro_round_${stage.round.get("index")}`;
     appendIcebreakerOpening(stage, introChatKey);
-    if (durationMs > 30_000) setTimeout(() => appendTimedMessage(stage, introChatKey, "Thirty seconds remain in the IceBreaker."), durationMs - 30_000);
+    if (durationMs > 30_000) setTimeout(() => appendTimedMessage(stage, introChatKey, "30 seconds remain in the IceBreaker."), durationMs - 30_000);
     Empirica.flush();
   }
   if (stageName === "FinalDecision") {
     stage.round.set("finalDecisionAgreementStatus", "not_agreed");
-    stage.round.set("finalDecisionMatchedChoice", null);
+    stage.round.set("finalDecisionAgreementRevision", 0);
     stage.round.set("officialGroupFinalChoice", null);
     stage.round.set("finalDecisionOutcome", null);
     stage.round.set("finalDecisionTimedOut", false);
     stage.round.set("finalDecisionFinalizedAt", null);
-    stage.round.set("finalDecisionDraftChoices", []);
     stage.round.set("finalDecisionConfirmed", false);
     for (const participant of assignedHumanPlayers(game)) {
       participant.round.set("groupFinalChoice", "");
       participant.round.set("groupChoiceConfidence", null);
       participant.round.set("groupFinalConfirmedChoice", null);
       participant.round.set("groupFinalConfirmedAt", null);
+      participant.round.set("finalDecisionLastDraftRequestedAt", null);
+      participant.round.set("finalDecisionLastDraftRequestId", null);
     }
     // Empirica owns the visible stage clock; this server timer is the
     // authoritative fail-safe and remains valid across client refreshes.
@@ -1063,7 +1250,7 @@ Empirica.onStageStart(({ stage }) => {
       if (stage.get("name") === "FinalDecision" && !stage.round.get("finalDecisionConfirmed")) {
         finalizeGroupDecision(stage, { timedOut: true });
       }
-    }, 90_000);
+    }, FINAL_DECISION_DURATION_SECONDS * 1000);
     Empirica.flush();
   }
   if (stageName === "IndividualAssessment" && stage.round.get("finalDecisionOutcome") === "consensus_choice") {
@@ -1083,13 +1270,38 @@ Empirica.onStageStart(({ stage }) => {
       }
       updateBreakReadySummary(stage);
     }
+    const scheduledEnd = round.get("breakScheduledEndAt");
+    if (Number.isFinite(scheduledEnd)) {
+      setTimeout(() => finalizeBreak(stage), Math.max(0, scheduledEnd - Date.now()) + 100);
+    }
   }
 });
 
-Empirica.on("player", "breakReadyRequest", (ctx, { player }) => {
+function finalizeBreak(stage, { now = Date.now() } = {}) {
+  const round = stage?.round;
+  const game = stage?.currentGame;
+  if (!round || !game || stage.get("name") !== "Break" || stage.get("ended")) return false;
+  if (round.get("breakAdvanceCommittedAt")) return false;
+  const scheduledEnd = round.get("breakScheduledEndAt");
+  const summary = updateBreakReadySummary(stage);
+  if (!canFinalizeBreak(scheduledEnd, now, summary.allReady)) return false;
+
+  // Claim before ending the stage so timer callbacks and reconnect recovery
+  // requests remain idempotent.
+  round.set("breakAdvanceCommittedAt", now);
+  for (const participant of assignedHumanPlayers(game)) {
+    if (!participant.stage?.get("submit")) participant.stage?.set("submit", true);
+  }
+  stage.set("ended", true);
+  Empirica.flush();
+  return true;
+}
+
+Empirica.on("player", "breakReadyRequest", (_ctx, { player, breakReadyRequest }) => {
   const stage = player.currentGame?.currentStage;
   if (!stage || stage.get("name") !== "Break") return;
   const round = stage.round;
+  if (typeof breakReadyRequest !== "string" || !breakReadyRequest.startsWith(`${round.id}:`)) return;
   const now = Date.now();
   const scheduledEnd = round.get("breakScheduledEndAt");
   if (!canConfirmBreak(scheduledEnd, now)) {
@@ -1101,6 +1313,15 @@ Empirica.on("player", "breakReadyRequest", (ctx, { player }) => {
     player.round.set("breakReadyConfirmedAt", now);
   }
   updateBreakReadySummary(stage);
+  finalizeBreak(stage, { now });
+});
+
+Empirica.on("player", "breakAdvanceRequest", (_ctx, { player, breakAdvanceRequest }) => {
+  const stage = player.currentGame?.currentStage;
+  const round = stage?.round;
+  if (!stage || !round || stage.get("name") !== "Break") return;
+  if (!breakAdvanceRequest || breakAdvanceRequest.roundId !== round.id || breakAdvanceRequest.stageId !== stage.id) return;
+  finalizeBreak(stage);
 });
 
 Empirica.on("player", "discussionAdvanceRequest", (_ctx, { player, discussionAdvanceRequest }) => {
@@ -1131,8 +1352,11 @@ Empirica.on("player", "finalDecisionDraftRequest", (_ctx, { player, finalDecisio
   const game = player.currentGame;
   const round = game?.currentRound;
   const stage = game?.currentStage;
-  if (!game || !round || !stage || stage.get("name") !== "FinalDecision" || round.get("finalDecisionConfirmed")) return;
+  if (!game || !round || !stage || stage.get("name") !== "FinalDecision" || stage.get("ended") || round.get("finalDecisionConfirmed")) return;
   if (!request || request.roundId !== round.id || request.stageId !== stage.id) return;
+  const lastRequestedAt = player.round.get("finalDecisionLastDraftRequestedAt");
+  if (!isFreshFinalDecisionDraftRequest(request, lastRequestedAt)) return;
+  const requestedAt = Number(request.requestedAt);
 
   const validChoices = new Set([
     ...(round.get("decisionOptions") || []).map((option) => option.id),
@@ -1145,10 +1369,14 @@ Empirica.on("player", "finalDecisionDraftRequest", (_ctx, { player, finalDecisio
   const choiceChanged = player.round.get("groupFinalChoice") !== choice;
   player.round.set("groupFinalChoice", choice);
   player.round.set("groupChoiceConfidence", confidence);
+  player.round.set("finalDecisionLastDraftRequestedAt", requestedAt);
+  player.round.set("finalDecisionLastDraftRequestId", request.requestId);
   player.round.set("finalDecision", { choice, confidence, updatedAt: Date.now() });
   if (choiceChanged) {
     // A new draft invalidates every confirmation tied to the previous
     // agreement attempt, including confirmations from other participants.
+    const previousRevision = Number(round.get("finalDecisionAgreementRevision")) || 0;
+    round.set("finalDecisionAgreementRevision", previousRevision + 1);
     clearFinalDecisionConfirmations(game);
   }
   publishFinalDecisionStatus(round, summarizeFinalDecisionDrafts(finalDecisionDrafts(game)));
@@ -1159,14 +1387,22 @@ Empirica.on("player", "finalDecisionConfirmRequest", (_ctx, { player, finalDecis
   const game = player.currentGame;
   const round = game?.currentRound;
   const stage = game?.currentStage;
-  if (!game || !round || !stage || stage.get("name") !== "FinalDecision" || round.get("finalDecisionConfirmed")) return;
+  if (!game || !round || !stage || stage.get("name") !== "FinalDecision" || stage.get("ended") || round.get("finalDecisionConfirmed")) return;
   if (!request || request.roundId !== round.id || request.stageId !== stage.id) return;
+  const agreementRevision = round.get("finalDecisionAgreementRevision") ?? 0;
+  if (!isCurrentFinalDecisionConfirmation(request, agreementRevision)) return;
 
   const drafts = finalDecisionDrafts(game);
   const summary = summarizeFinalDecisionDrafts(drafts);
   const ownChoice = player.round.get("groupFinalChoice");
-  const allConfidenceRecorded = drafts.every((draft) => Number.isFinite(draft.confidence));
-  if (summary.status !== "agreed" || !allConfidenceRecorded || !ownChoice || ownChoice !== summary.matchedChoice) return;
+  const ownConfidence = player.round.get("groupChoiceConfidence");
+  if (
+    summary.status !== "agreed"
+    || !Number.isFinite(ownConfidence)
+    || !ownChoice
+    || request.choice !== ownChoice
+    || ownChoice !== summary.matchedChoice
+  ) return;
 
   // Duplicate confirmations are idempotent and always bind to the current
   // matching choice, never merely to a participant identity.
@@ -1182,6 +1418,22 @@ Empirica.on("playerStage", "submit", (_ctx, { playerStage, submit }) => {
   const round = playerStage.stage.round;
   const stageName = playerStage.stage.get("name");
   const now = Date.now();
+  if (stageName === "Task") {
+    const stage = playerStage.stage;
+    const game = stage.currentGame;
+    // Empirica's native unanimous-ready transition remains the primary path.
+    // If it has not moved the current stage shortly after the third submit,
+    // this server-side recovery ends the same stage exactly once.
+    setTimeout(() => {
+      if (!stage.isCurrent?.() || stage.get("ended")) return;
+      const allReady = assignedHumanPlayers(game).length > 0
+        && assignedHumanPlayers(game).every((participant) => Boolean(participant.stage?.get("submit")));
+      if (!allReady || game.get("discussionAdvanceCommittedStageId") === stage.id) return;
+      game.set("discussionAdvanceCommittedStageId", stage.id);
+      stage.set("ended", true);
+      Empirica.flush();
+    }, 750);
+  }
   const fieldsByStage = {
     InitialDecision: ["initialSubmittedAt", "initialCompletionDurationMs", "initialDecisionTimeoutReason"],
     FinalDecision: ["groupFinalSubmittedAt", "groupFinalCompletionDurationMs", "groupFinalTimeoutReason"],
@@ -1535,6 +1787,8 @@ async function handleChat(env, { game }) {
   beginInFlight(game, { ...logEntry, outcome: "PENDING" });
   Empirica.flush();
 
+  try {
+
   // Explicit @Facilitator request: answer with the participant-requested
   // Generalist before either condition's automatic policy. This path uses
   // only public context, retains all Generator/Validator safeguards, and is
@@ -1570,6 +1824,7 @@ async function handleChat(env, { game }) {
 
     if (
       !requestedResult.published &&
+      !logEntry.messageAdded &&
       game.currentRound?.id === originatingRoundId &&
       game.currentStage?.id === originatingStageId &&
       game.currentStage?.get("name") === "Task"
@@ -1827,6 +2082,35 @@ async function handleChat(env, { game }) {
 
   finalizeAuditLog(game, logEntry);
   Empirica.flush();
+  } catch {
+    // Do not expose raw exception messages here: provider errors may contain
+    // prompt or participant content. A participant-requested checkpoint gets
+    // the existing neutral fallback only if no reply has already been queued.
+    logEntry.reason = "Unexpected facilitator pipeline failure";
+    logEntry.outcome = logEntry.messageAdded ? "PUBLISHED_WITH_PIPELINE_ERROR" : "SILENT_PIPELINE_ERROR";
+    logEntry.requestSuccess = false;
+    if (
+      isMentionCheckpoint &&
+      !logEntry.messageAdded &&
+      game.currentRound?.id === originatingRoundId &&
+      game.currentStage?.id === originatingStageId &&
+      game.currentStage?.get("name") === "Task"
+    ) {
+      postParticipantRequestFallback(game, chatKey, logEntry);
+    }
+  } finally {
+    // Normal branches finalize before returning. This guard handles only an
+    // unexpected exception that would otherwise strand a PENDING checkpoint.
+    const pending = game.get("llmInFlight") || {};
+    if (pending[logEntry.auditRequestId]) {
+      finalizeAuditLog(game, logEntry);
+      try {
+        Empirica.flush();
+      } catch {
+        console.warn("[facilitator audit] terminal flush failed", { code: "TERMINAL_FLUSH_FAILED" });
+      }
+    }
+  }
 }
 
 Empirica.on("game", "chat_round_0", handleChat);
@@ -1838,6 +2122,43 @@ Empirica.onStageEnded(({ stage }) => {
   const stageName = stage.get("name");
   if (["Task", "InitialDecision", "FinalDecision", "IndividualAssessment"].includes(stageName)) {
     round.set(`${stageName}EndedAt`, Date.now());
+  }
+
+  if (stageName === "Task") {
+    const endedAt = new Date().toISOString();
+    const transcriptKey = `chat_round_${round.get("index")}`;
+    const chat = [...(game.get(transcriptKey) || [])];
+    queueResearchMirror("discussion_ended", async () => {
+      const persistence = researchPersistence();
+      for (const message of chat) {
+        await persistence.upsertMessage(buildMessageRow({
+          gameId: game.id,
+          roundId: round.id,
+          transcriptKey,
+          message,
+        }));
+      }
+      const lastSequencePosition = chat.reduce((latest, message) => (
+        Number.isInteger(message.sequencePosition)
+          ? Math.max(latest, message.sequencePosition)
+          : latest
+      ), -1);
+      await persistence.upsertSnapshot({
+        snapshot_id: `${game.id}:${round.id}:discussion_ended`,
+        game_id: game.id,
+        round_id: round.id,
+        snapshot_type: "discussion_ended",
+        runtime_status: {
+          taskIndex: round.get("taskIndex"),
+          taskVersion: round.get("taskVersion"),
+          facilitation: round.get("facilitation"),
+          messageCount: chat.length,
+          lastSequencePosition,
+          transcriptComplete: true,
+        },
+        occurred_at: endedAt,
+      });
+    });
   }
 
   if (stageName === "FinalDecision") {
@@ -1869,7 +2190,15 @@ Empirica.onStageEnded(({ stage }) => {
       stageName,
       read: (key) => player.round.get(key),
     });
-    if (rows.length) queueResearchMirror(`response_${stageName}`, () => researchPersistence().upsertResponses(rows));
+    if (rows.length) {
+      mirrorResponseRowsFromRuntime({
+        operation: `response_${stageName}`,
+        game,
+        round,
+        player,
+        rows,
+      });
+    }
   }
 
 });
@@ -1923,12 +2252,20 @@ Empirica.onGameEnded(({ game }) => {
 
 for (const responseType of ["finalQuestions", "expFeedback"]) {
   Empirica.on("player", responseType, (_ctx, { player }) => {
+    const stored = player.get(responseType);
+    if (!wasSubmittedDuringCurrentServerRun(stored, CALLBACKS_STARTED_AT)) return;
     const game = player.currentGame;
-    const gameId = game?.id || player.get("researchGameId");
-    if (!gameId) return;
+    if (!game?.id) return;
     const row = buildGlobalResponseRow({
-      gameId, participantId: player.id, responseType, stored: player.get(responseType),
+      gameId: game.id, participantId: player.id, responseType, stored,
     });
-    if (row) queueResearchMirror(`response_${responseType}`, () => researchPersistence().upsertResponses(row));
+    if (row) {
+      mirrorResponseRowsFromRuntime({
+        operation: `response_${responseType}`,
+        game,
+        player,
+        rows: [row],
+      });
+    }
   });
 }

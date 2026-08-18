@@ -1,4 +1,4 @@
-import { usePlayer, useGame } from "@empirica/core/player/classic/react";
+import { usePlayer } from "@empirica/core/player/classic/react";
 import React, { useEffect, useState } from "react";
 import { Alert } from "../components/Alert";
 import { Button } from "../components/Button";
@@ -10,11 +10,6 @@ export function ExpFeedback({ next }) {
     const inputClassName =
         "appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-empirica-500 focus:border-empirica-500 sm:text-sm";
     const player = usePlayer();
-    // Phase 6.2 cleanup: previously read `const { facilitation } =
-    // game.get("treatment")` here. v2 design dropped the treatment-level
-    // `facilitation` factor, so the value is always undefined and was
-    // never actually used in this component. Removed.
-    const game = useGame();
 
     // Define state variables for each question
     const feedbackDraftKey = draftKey({ playerId: player.id, form: "expFeedback", field: "question1" });
@@ -76,9 +71,9 @@ export function ExpFeedback({ next }) {
                                     </div>
                                 </div>
     
-    
+
                                 <div className="mb-12 text-right">
-                                    <Button type="submit" disabled={submitting}>Exit survey and receive submission code</Button>
+                                    <Button type="submit" disabled={submitting}>Continue to debriefing</Button>
                                 </div>
                             </div>
                         </div>
