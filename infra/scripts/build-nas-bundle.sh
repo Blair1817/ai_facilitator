@@ -76,6 +76,48 @@ if [[ "$ARCHIVE_CONFIG_SHA" != "$TEMPLATE_CONFIG_SHA" ]]; then
   exit 4
 fi
 
+# Strip the `volta` field from every package.json in the bundle. Empirica
+# v1.12's serve re-runs `npm run build` per start; npm/pnpm honour the
+# `volta` field and try to download the pinned node version from
+# github.com. The NAS has no public internet, so the install hangs and
+# the health check times out. Removing `volta` makes the system node
+# 20.12.2 (the image base) the canonical version.
+PATCHED_BUNDLE_TMP="$STAGING_DIR/delibra-patched.tar.zst"
+python3 - "$BUNDLE_TMP" "$PATCHED_BUNDLE_TMP" <<'PY'
+import json, sys, tarfile, io, zstandard as zstd
+src, dst = sys.argv[1], sys.argv[2]
+dctx = zstd.ZstdDecompressor()
+cctx = zstd.ZstdCompressor()
+with tarfile.open(src, "r:zst") as ti, \
+     tarfile.open(dst, "w:zst", compresslevel=3) as to:
+    for m in ti:
+        if m.isfile() and m.name.endswith("package.json"):
+            with ti.extractfile(m) as f:
+                data = f.read()
+            try:
+                pkg = json.loads(data)
+            except Exception:
+                pkg = None
+            if isinstance(pkg, dict) and "volta" in pkg:
+                del pkg["volta"]
+                data = (json.dumps(pkg, indent=2) + "\n").encode("utf-8")
+                buf = io.BytesIO(data)
+                info = tarfile.TarInfo(name=m.name)
+                info.size = len(data)
+                info.mode = 0o644
+                info.mtime = m.mtime
+                to.addfile(info, buf)
+                continue
+        # default: copy the original member as-is
+        if m.isfile():
+            with ti.extractfile(m) as f:
+                data = f.read()
+        else:
+            data = None
+        to.addfile(m) if data is None else to.addfile(m, io.BytesIO(data))
+PY
+BUNDLE_TMP="$PATCHED_BUNDLE_TMP"
+
 COMMIT="$(git -C "$REPO_DIR" rev-parse HEAD)"
 DIRTY="clean"
 if [[ -n "$(git -C "$REPO_DIR" status --porcelain)" ]]; then
