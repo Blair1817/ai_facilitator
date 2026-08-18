@@ -206,10 +206,13 @@ export class ExportService {
    */
   async getGameBundle(gameId) {
     if (!gameId) throw new Error("getGameBundle: gameId is required");
-    const gameScopes = await this.allScopes([
-      { kinds: ["game"] },
-      { ids: [gameId] },
-    ]);
+    // Tajriba v1.12's admin `scopes(filter: {ids})` does not match the
+    // same way the kvs filter didn't (D-014 deploy 2026-08-18
+    // empirical inspection of the live store). Pull all game scopes
+    // and filter by id in memory; the kvs path mirrors the renderer
+    // so a single code path covers both.
+    const allGames = await this.allScopes({ kinds: ["game"] });
+    const gameScopes = allGames.filter((s) => s.id === gameId);
     if (gameScopes.length === 0) {
       throw new ExportNotFoundError(`game not found: ${gameId}`);
     }
@@ -218,10 +221,8 @@ export class ExportService {
     const playerIDs = await this.gamePlayerIDs(gameId);
     const players = [];
     for (const pid of playerIDs) {
-      const pScopes = await this.allScopes([
-        { kinds: ["player"] },
-        { ids: [pid] },
-      ]);
+      const allPlayers = await this.allScopes({ kinds: ["player"] });
+      const pScopes = allPlayers.filter((s) => s.id === pid);
       if (pScopes.length === 0) continue;
       players.push(await this.readPlayer(pScopes[0], gameId));
     }
@@ -230,10 +231,8 @@ export class ExportService {
     const rounds = [];
     for (let idx = 0; idx < (game.rounds || []).length; idx += 1) {
       const roundId = game.rounds[idx];
-      const rScopes = await this.allScopes([
-        { kinds: ["round"] },
-        { ids: [roundId] },
-      ]);
+      const allRounds = await this.allScopes({ kinds: ["round"] });
+      const rScopes = allRounds.filter((s) => s.id === roundId);
       if (rScopes.length === 0) continue;
       rounds.push(await this.readRound(rScopes[0], players));
     }
@@ -315,10 +314,11 @@ export class ExportService {
   }
 
   async readLlmLog(gameId) {
-    const indexScopes = await this.allScopes([
-      { kinds: ["game"] },
-      { ids: [gameId] },
-    ]);
+    // Same in-memory filter pattern as the rest of the service: pull
+    // all game scopes and find the one whose id matches, because the
+    // admin `ids` filter is unreliable on Tajriba v1.12.
+    const allGames = await this.allScopes({ kinds: ["game"] });
+    const indexScopes = allGames.filter((s) => s.id === gameId);
     if (indexScopes.length === 0) return [];
     const gameAttrs = scopeAttributes(indexScopes[0]);
     const index = gameAttrs.llmLogIndex;
