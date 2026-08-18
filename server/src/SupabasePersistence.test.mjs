@@ -61,7 +61,35 @@ test("assignment persistence failure blocks a new untracked game", async () => {
   );
   assert.match(callbacksSource, /Empirica\.before\("game", "start", async/);
   assert.match(callbacksSource, /assignmentPersistenceStatus"\) === "confirmed"\) return/);
-  assert.match(callbacksSource, /assignmentPersistenceStatus"\) !== "confirmed"[\s\S]*game\.end\("failed"/);
+  // Pilot-only fail-open: onGameStart accepts both "confirmed" (Supabase
+  // mirror written) and "tajriba-only" (Supabase not configured). Only
+  // "blocked" or missing status ends the game.
+  assert.match(
+    callbacksSource,
+    /persistenceStatus !== "confirmed" && persistenceStatus !== "tajriba-only"[\s\S]*game\.end\("failed"/,
+  );
+});
+
+test("assignment persistence fail-opens when Supabase is not configured (pilot-only)", async () => {
+  // createSupabasePersistence throws SUPABASE_NOT_CONFIGURED when env
+  // vars are missing. persistAssignmentOrBlock must catch that and
+  // return a tajriba-only row so game.start can proceed during pilot.
+  const unconfigured = createSupabasePersistence({ url: "", serviceRoleKey: "", fetchImpl: globalThis.fetch });
+  const row = {
+    game_id: "pilot-game", sequence_id: "S1", allocation_number: 1,
+    allocation_block_id: 1, allocation_position: 0,
+    allocation_claimed_at: new Date(0).toISOString(),
+    allocation_method: "test", ledger_key: "ledger",
+  };
+  const result = await persistAssignmentOrBlock(unconfigured, row);
+  assert.equal(result?.persistenceMode, "tajriba-only");
+  assert.equal(result?.game_id, "pilot-game");
+  // Generic (non-NOT_CONFIGURED) failures must still block.
+  const failing = { persistAssignment: async () => { throw new Error("network down"); } };
+  await assert.rejects(
+    persistAssignmentOrBlock(failing, row),
+    (error) => error.code === "ASSIGNMENT_PERSISTENCE_BLOCKED",
+  );
 });
 
 test("ReviewQuiz mirror stores only a minimal successful completion and no attempt history", () => {

@@ -222,10 +222,23 @@ export function mirrorNonBlocking(promise, { operation = "mirror", onError = () 
 export async function persistAssignmentOrBlock(persistence, row) {
   try {
     return await persistence.persistAssignment(row);
-  } catch (_error) {
-    const error = new Error("This session cannot begin because its research assignment could not be durably recorded. Please contact the research team.");
-    error.code = "ASSIGNMENT_PERSISTENCE_BLOCKED";
-    throw error;
+  } catch (error) {
+    if (error?.code === "SUPABASE_NOT_CONFIGURED") {
+      // Pilot-only fail-open: Tajriba JSON DB already records the
+      // assignment through its own durable claim. We log a warning so
+      // this never silently turns into a formal-research config.
+      // Re-attach Supabase before formal data collection — see
+      // project-knowledge/open-gates.md Gate 11.
+      console.warn(
+        "[research-persistence] Supabase is not configured; " +
+        "assignment is held only in the local Tajriba DB. " +
+        "Re-attach Supabase before formal data collection."
+      );
+      return { ...row, persistenceMode: "tajriba-only" };
+    }
+    const blocked = new Error("This session cannot begin because its research assignment could not be durably recorded. Please contact the research team.");
+    blocked.code = "ASSIGNMENT_PERSISTENCE_BLOCKED";
+    throw blocked;
   }
 }
 
