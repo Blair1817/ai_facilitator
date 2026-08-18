@@ -469,9 +469,14 @@ export class ExportService {
   }
 
   async gamePlayerIDs(gameId) {
+    // The Tajriba store attributes a player scope with `gameID` (a bare
+    // string), not `currentGameID`. Using the wrong key returns zero
+    // scopes and downstream renderers would silently emit an empty
+    // player list. The empirical inspection of a live store on the NAS
+    // (D-014 deploy 2026-08-18) confirmed the key is `gameID`.
     const playerScopes = await this.allScopes([
       { kinds: ["player"] },
-      { kvs: [{ key: "currentGameID", val: JSON.stringify(gameId) }] },
+      { kvs: [{ key: "gameID", val: JSON.stringify(gameId) }] },
     ]);
     return playerScopes.map((s) => s.id);
   }

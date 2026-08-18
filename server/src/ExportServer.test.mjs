@@ -40,7 +40,7 @@ function fixture() {
     ]);
   });
   const player = makeScope("p1", "player", (s) => {
-    attr(s, "currentGameID", T("GAME1"));
+    attr(s, "gameID", T("GAME1"));
     attr(s, "name", "Red");
     attr(s, "introDone", true);
     attr(s, "ended", "debriefing");

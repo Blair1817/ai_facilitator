@@ -136,7 +136,7 @@ function fixture() {
   });
   const players = [
     makeScope("p1", "player", (s) => {
-      attr(s, "currentGameID", T("GAME1"));
+      attr(s, "gameID", T("GAME1"));
       attr(s, "name", "Red");
       attr(s, "introDone", true);
       attr(s, "ended", "debriefing");
@@ -155,7 +155,7 @@ function fixture() {
       });
     }),
     makeScope("p2", "player", (s) => {
-      attr(s, "currentGameID", T("GAME1"));
+      attr(s, "gameID", T("GAME1"));
       attr(s, "name", "Pink");
       attr(s, "introDone", true);
       attr(s, "ended", "debriefing");
@@ -169,7 +169,7 @@ function fixture() {
       });
     }),
     makeScope("p3", "player", (s) => {
-      attr(s, "currentGameID", T("GAME1"));
+      attr(s, "gameID", T("GAME1"));
       attr(s, "name", "Blue");
       attr(s, "introDone", true);
       attr(s, "ended", "debriefing");
