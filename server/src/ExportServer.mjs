@@ -137,6 +137,33 @@ async function route(req, res, ctx) {
     await handleBundleZip(req, res, ctx, bundleZip[1], redact, auditFields);
     return;
   }
+  // TEMP debug: /__debug/scopes?kinds=game&ids=...&first=5
+  if (path === "/__debug/scopes") {
+    const filter = [];
+    if (search.kinds) filter.push({ kinds: search.kinds.split(",") });
+    if (search.ids) filter.push({ ids: search.ids.split(",") });
+    if (search.kvs) filter.push({ kvs: JSON.parse(search.kvs) });
+    const args = { first: Number(search.first) || 5 };
+    if (filter.length > 0) args.filter = filter;
+    try {
+      const r = await ctx.service.admin.scopes(args);
+      await sendJson(res, 200, {
+        argsSent: args,
+        edgeCount: r?.edges?.length || 0,
+        pageInfo: r?.pageInfo || null,
+        sample: (r?.edges || []).slice(0, 3).map((e) => ({
+          id: e.node?.id,
+          kind: e.node?.kind,
+          name: e.node?.name,
+          attrCount: e.node?.attributes?.length || 0,
+          firstAttrs: (e.node?.attributes || []).slice(0, 5).map((a) => ({ key: a.key, val: typeof a.val === "string" ? a.val.slice(0, 60) : a.val, hasValue: a.value !== undefined })),
+        })),
+      });
+    } catch (e) {
+      await sendJson(res, 500, { error: e.message });
+    }
+    return;
+  }
   await sendJson(res, 404, { error: "not found" });
 }
 
