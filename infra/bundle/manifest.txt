@@ -1,5 +1,5 @@
-built_at_utc=2026-08-18T15:32:54Z
-commit=4382b8b71350bd8125b9eeb4afdad3e4abae2ab7
+built_at_utc=2026-08-18T15:33:00Z
+commit=78910934cf325cc06d7d1ed6029077991fb83368
 working_tree=dirty
 empirica_version=v1.12.0
-bundle_sha256=79d35ab4539112e7c270b288c4912e4b14894e29582ceacff2c9a9a0e8cfed86
+bundle_sha256=a6f79a26aaaaa46e9a51d9581fe7f9ae7bfa49266c492ab10563b1870fea8c43
