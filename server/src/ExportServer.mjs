@@ -147,32 +147,15 @@ async function route(req, res, ctx) {
     if (filter.length > 0) args.filter = filter;
     try {
       const r = await ctx.service.admin.scopes(args);
-      // Make robust against any shape; admin returns either {edges:[...], pageInfo}
-      // or sometimes a different structure
-      const edges = r?.edges || (Array.isArray(r) ? r.map((n) => ({ node: n })) : []);
-      const first3 = edges.slice(0, 3).map((e) => {
-        const node = e?.node || e;
-        return {
-          id: node?.id,
-          kind: node?.kind,
-          name: node?.name,
-          attrCount: node?.attributes?.length || 0,
-          firstAttrs: (node?.attributes || []).slice(0, 5).map((a) => ({
-            key: a?.key,
-            val: typeof a?.val === "string" ? a.val.slice(0, 80) : a?.val,
-            hasValue: a?.value !== undefined,
-            aKeys: a ? Object.keys(a) : null,
-          })),
-        };
-      });
+      // Dump raw response first; downstream code is fragile against the
+      // shape that Tajriba v1.12's admin client actually returns.
+      const safe = (v) => {
+        try { return JSON.parse(JSON.stringify(v, (k, x) => typeof x === "function" ? "[fn]" : x)); }
+        catch { return String(v); }
+      };
       await sendJson(res, 200, {
         argsSent: args,
-        rawType: Array.isArray(r) ? "array" : typeof r,
-        rawKeys: r ? Object.keys(r) : null,
-        rawSample0: edges[0] ? Object.keys(edges[0]) : null,
-        edgeCount: edges.length,
-        pageInfo: r?.pageInfo || null,
-        sample: first3,
+        rawResponse: safe(r),
       });
     } catch (e) {
       await sendJson(res, 500, { error: e.message, stack: e.stack });
