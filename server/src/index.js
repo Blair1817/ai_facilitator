@@ -74,9 +74,12 @@ if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "your-key-here
   // The server is bundled into the same `callbacks/index.js` archive
   // (esbuild's --bundle pulls it in via the import at the top of this
   // file), so a single `empirica bundle` produces both the callbacks
-  // process and the export surface. The export service binds to the
-  // loopback interface only; cloudflared forwards the public
-  // `exports.<domain>` route to it.
+  // process and the export surface. The export service binds to all
+  // interfaces (0.0.0.0) so that docker port-mapping on port 3001
+  // reaches the process; previously bound to 127.0.0.1 only, which
+  // broke the 192.168.0.109:3001 -> 172.17.0.2:3001 DNAT path
+  // (kernel sends RST because 172.17.0.2 != 127.0.0.1). The cloudflared
+  // tunnel routes the public `exports.<domain>` host to this port.
   //
   // Disable with DELIBRA_DISABLE_EXPORT_SERVER=1 (e.g. during incident
   // response or if the audit file is on a read-only mount).
@@ -109,7 +112,7 @@ if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "your-key-here
       const exportServer = createExportServer({ service: exportService, auditFile });
       await new Promise((resolve, reject) => {
         exportServer.once("error", reject);
-        exportServer.listen(exportPort, "127.0.0.1", resolve);
+        exportServer.listen(exportPort, "0.0.0.0", resolve);
       });
       info(`export-server: listening on http://127.0.0.1:${exportPort} (audit: ${auditFile})`);
     } catch (error) {
