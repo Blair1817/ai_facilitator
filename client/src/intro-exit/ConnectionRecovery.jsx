@@ -7,6 +7,11 @@ import {
 } from "@empirica/core/player/classic/react";
 
 const SHOW_RECOVERY_AFTER_MS = 12_000;
+// DELIBRA-PATCH (2026-08-20): after this many seconds of being stuck, force
+// window.location.reload(). Matches the existing watchdog
+// (infra/watchdog/tajriba-watchdog.js, 8 s on the server). 25 s here keeps
+// the participant one short-watchdog cycle ahead of the host-cron restart.
+const AUTO_RELOAD_AFTER_MS = 25_000;
 
 export function ConnectionRecovery() {
   const game = useGame();
@@ -15,6 +20,8 @@ export function ConnectionRecovery() {
   const stage = useStage();
   const [showRecovery, setShowRecovery] = useState(false);
   const [online, setOnline] = useState(() => navigator.onLine);
+  const [secondsWaiting, setSecondsWaiting] = useState(0);
+  const [autoReloadArmed, setAutoReloadArmed] = useState(true);
 
   useEffect(() => {
     const timer = window.setTimeout(
@@ -25,12 +32,36 @@ export function ConnectionRecovery() {
     window.addEventListener("online", updateOnline);
     window.addEventListener("offline", updateOnline);
 
+    // DELIBRA-PATCH: count up seconds so the participant sees progress
+    // even while the network/WS layer is silently silent.
+    const tick = window.setInterval(() => {
+      setSecondsWaiting((s) => s + 1);
+    }, 1000);
+
+    // DELIBRA-PATCH: automatic hard reload after AUTO_RELOAD_AFTER_MS. This
+    // is the participant-side mirror of the server-side Tajriba watchdog
+    // (which restarts the container every ~5 min on freeze). A reload here
+    // gives the participant a fresh WS and clears any sessionParticipant
+    // / _connecting deadlocks we patched in chunk-UMPSA52E.js.
+    const reloadTimer = window.setTimeout(() => {
+      if (autoReloadArmed) {
+        console.warn(
+          "[delibra-recovery] auto-reload after",
+          AUTO_RELOAD_AFTER_MS / 1000,
+          "s of being stuck",
+        );
+        window.location.reload();
+      }
+    }, AUTO_RELOAD_AFTER_MS);
+
     return () => {
       window.clearTimeout(timer);
+      window.clearTimeout(reloadTimer);
+      window.clearInterval(tick);
       window.removeEventListener("online", updateOnline);
       window.removeEventListener("offline", updateOnline);
     };
-  }, []);
+  }, [autoReloadArmed]);
 
   const gameStarted = Boolean(game?.get("status"));
   const missingStageData = gameStarted && player && (!round || !stage);
@@ -51,6 +82,15 @@ export function ConnectionRecovery() {
             : "Please keep this page open while the secure session reconnects."}
         </p>
 
+        {/* DELIBRA-PATCH: live waiting-time counter so the participant can
+            tell the difference between an actively-reconnecting state and a
+            real freeze. */}
+        <p className="mt-2 text-sm text-gray-500">
+          {secondsWaiting > 0
+            ? `Reconnecting for ${secondsWaiting}s…`
+            : null}
+        </p>
+
         {showRecovery && (
           <div className="mt-6 rounded border border-amber-300 bg-amber-50 p-5">
             <p className="text-base text-gray-800">
@@ -64,6 +104,19 @@ export function ConnectionRecovery() {
             >
               Reconnect now
             </button>
+            <label className="mt-3 block text-sm text-gray-700">
+              <input
+                type="checkbox"
+                className="mr-2"
+                checked={autoReloadArmed}
+                onChange={(e) => setAutoReloadArmed(e.target.checked)}
+              />
+              Auto-reload in {Math.max(
+                0,
+                Math.ceil((AUTO_RELOAD_AFTER_MS / 1000) - secondsWaiting),
+              )}s
+              (uncheck to keep this page open while you read the message)
+            </label>
             <p className="mt-3 text-sm text-gray-600">
               If reconnecting does not work, contact the research team and say
               that the session did not finish loading.

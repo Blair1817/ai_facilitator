@@ -88,10 +88,17 @@ services:
         soft: 65536
         hard: 65536
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/"]
-      interval: 30s
+      # DELIBRA-PATCH (2026-08-20): the old `curl /` check is a known FALSE
+      # POSITIVE for the Tajriba v1.12 partial-freeze fault (the static-HTML
+      # handler runs on a separate goroutine). Use the real subscription
+      # liveness probe instead: open a WS, subscribe to scopedAttributes,
+      # expect `next` within 8s. Note: Docker does NOT auto-restart an
+      # unhealthy container — the host watchdog (*/1 cron) is the restart
+      # actor; this healthcheck drives observability + fast detection.
+      test: ["CMD", "sh", "-c", "TAJRIBA_WS_URL=ws://127.0.0.1:3000/query node --experimental-websocket /opt/delibra/bin/tajriba-watchdog.js"]
+      interval: 15s
       timeout: 10s
-      retries: 5
+      retries: 4
       start_period: 90s
     logging:
       driver: json-file

@@ -1,0 +1,24 @@
+diff --git a/node_modules/graphql-ws/lib/client.mjs b/node_modules/graphql-ws/lib/client.mjs
+index 3f9d9f2..d825160 100644
+--- a/node_modules/graphql-ws/lib/client.mjs
++++ b/node_modules/graphql-ws/lib/client.mjs
+@@ -14,10 +14,18 @@ export * from './common.mjs';
+  */
+ export function createClient(options) {
+     const { url, connectionParams, lazy = true, onNonLazyError = console.error, lazyCloseTimeout = 0, keepAlive = 0, disablePong, connectionAckWaitTimeout = 0, retryAttempts = 5, retryWait = async function randomisedExponentialBackoff(retries) {
++        // DELIBRA-PATCH: cap the unbounded exponential backoff at 15 s. The
++        // upstream default doubled indefinitely, reaching ~9 h after only
++        // 15 failed attempts. Even with infinite retry attempts, capping
++        // the wait at 15 s keeps long-outage recovery snappy and the UI
++        // behaving like a proper "reconnecting" indicator instead of a
++        // frozen page.
+         let retryDelay = 1000; // start with 1s delay
+-        for (let i = 0; i < retries; i++) {
++        const capped = Math.min(retries, 14);
++        for (let i = 0; i < capped; i++) {
+             retryDelay *= 2;
+         }
++        retryDelay = Math.min(retryDelay, 15000);
+         await new Promise((resolve) => setTimeout(resolve, retryDelay +
+             // add random timeout from 300ms to 3s
+             Math.floor(Math.random() * (3000 - 300) + 300)));

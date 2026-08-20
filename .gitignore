@@ -19,3 +19,11 @@ client/vite.config.js.timestamp-*.mjs
 # Reproducible on demand via `playwright` / `npx playwright-cli`; never commit.
 output/
 .playwright-cli/
+
+# Empirica toolchain prewarm (2026-08-20). Captured from a running container
+# (~285MB: Volta 2.0.2 + node 24.19.0 + empirica release binaries) so the
+# image builds offline-deterministic. Regenerate from a healthy container:
+#   docker exec delibra-empirica tar -czf /tmp/pw.tgz \
+#     -C /home/delibra/.local/share/empirica volta   # + /home/delibra/.cache empirica
+# then extract both into infra/prewarm/. Never commit — it's a binary cache.
+infra/prewarm/

@@ -40,23 +40,38 @@ no-autoupdate: true
 ingress:
   # 1. Tajriba admin UI. Locked behind Cloudflare Access (set in the
   #    dashboard; this file only defines the route, not the auth policy).
+  # DELIBRA-PATCH (2026-08-20): explicit keepAlive + connection pool so
+  # Cloudflare's ~100 s idle-WS kill does not silently half-close the WS
+  # (which then triggers the partial-freeze-like recovery path on the
+  # client). keepAliveTimeout < cloudflare's idle kill, so the origin
+  # sends a ping before the tunnel is at risk. See DELIBRA_RECONNECT_PATCHES.md.
   - hostname: tajriba.*
     service: http://tajriba:9180
     originRequest:
-      # Admin UI is small; do not buffer uploads.
       noTLSVerify: false
+      keepAliveConnections: 10
+      keepAliveTimeout: "90s"
+      connectTimeout: 30s
+      noHappyEyeballs: false
 
   # 2. Participant-facing client. Public to all participants.
   - hostname: game.*
     service: http://client:5173
     originRequest:
       noTLSVerify: false
+      keepAliveConnections: 50
+      keepAliveTimeout: "90s"
+      connectTimeout: 30s
+      noHappyEyeballs: false
 
   # 3. Callbacks / API endpoint. Internal use only; lock behind Access.
   - hostname: api.*
     service: http://callbacks:8080
     originRequest:
       noTLSVerify: false
+      keepAliveConnections: 10
+      keepAliveTimeout: "90s"
+      connectTimeout: 30s
 
   # 4. D-014: research-data export server. Same Access policy as tajriba.*
   #    (any logged-in admin can download). The export service binds to
@@ -66,6 +81,9 @@ ingress:
     service: http://delibra:3001
     originRequest:
       noTLSVerify: false
+      keepAliveConnections: 5
+      keepAliveTimeout: "60s"
+      connectTimeout: 30s
 
   # 5. Required catch-all. Do not remove.
   - service: http_status:404

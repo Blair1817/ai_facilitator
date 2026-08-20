@@ -16,6 +16,11 @@ RUN apt-get update \
     # internet; only Tailscale). Empirica's `serve` re-runs `npm run
     # build` per start, which on a fresh image would otherwise
     # install Volta from github.com and time out.
+    # NOTE (2026-08-20): this /opt/volta no-op shim does NOT stop empirica
+    # serve's own Volta bootstrap (the Go binary runs the get.volta.sh
+    # installer directly and installs to ~/.local/share/empirica/volta).
+    # The real offline fix is the prewarm COPY below; the shim remains only
+    # to keep npm/pnpm-side `volta install node` attempts no-op.
     && curl -fsSL "https://github.com/volta-cli/volta/releases/download/v${VOLTA_VERSION}/volta-${VOLTA_VERSION}-linux.tar.gz" \
          -o /tmp/volta.tar.gz \
     && tar -xzf /tmp/volta.tar.gz -C /opt/ \
@@ -50,8 +55,29 @@ COPY --chown=delibra:delibra infra/scripts/verify-tajriba-integrity.mjs /opt/del
 COPY --chown=delibra:delibra infra/scripts/validate-admin-login.mjs /opt/delibra/validate-admin-login.mjs
 COPY --chown=delibra:delibra infra/scripts/empirica-entrypoint.sh /opt/delibra/empirica-entrypoint.sh
 
+# DELIBRA-PATCH (2026-08-20): pre-bake the entire Empirica toolchain state
+# (Volta 2.0.2 + Node 24.19.0 + empirica v1.12.0/v1.12.5 binaries) captured
+# from a known-good running container. Without this, every NEW container
+# re-downloads volta (~11MB) + node 24.19.0 (~30MB) + the empirica release
+# binary (~18MB) from github.com / install.empirica.dev at first start.
+# The empirica Go binary bootstraps Volta UNCONDITIONALLY on `serve`
+# (it runs the get.volta.sh installer directly and ignores the /opt/volta
+# PATH shim), so when the NAS's egress is flaky the startup hangs forever.
+# `docker restart` preserves the writable layer (so watchdog restarts were
+# safe), but any NEW container (upgrade, rebuild, recovery) hit the
+# download roulette. Baking the state makes startup offline-deterministic.
+#
+# The prewarm/ directory is produced by:
+#   docker exec delibra-empirica tar -czf /tmp/prewarm-volta.tgz \
+#     -C /home/delibra/.local/share/empirica volta
+#   docker exec delibra-empirica tar -czf /tmp/prewarm-cache.tgz \
+#     -C /home/delibra/.cache empirica
+# and extracting both into infra/prewarm/ on the build host.
+COPY --chown=delibra:delibra infra/prewarm/volta /home/delibra/.local/share/empirica/volta
+COPY --chown=delibra:delibra infra/prewarm/empirica /home/delibra/.cache/empirica
+
 # Tajriba v1.12.0 partial-freeze auto-recovery (2026-08-19). The
-# host's `*/5` host-watchdog.sh and `*/4` host-reopen.sh crons
+# host's `*/1` host-watchdog.sh and `*/4` host-reopen.sh crons
 # `docker exec` into these paths; if they are missing the host
 # wrappers misread "file not found" as "Tajriba frozen" and start
 # a `docker restart` loop every 5 min. Bake them in so the image

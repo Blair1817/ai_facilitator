@@ -83,7 +83,13 @@ fi
 # the health check times out. Removing `volta` makes the system node
 # 20.12.2 (the image base) the canonical version.
 PATCHED_BUNDLE_TMP="$STAGING_DIR/delibra-patched.tar.zst"
-python3 - "$BUNDLE_TMP" "$STAGING_DIR/untar" "$STAGING_DIR/repack.tar" <<'PY'
+# DELIBRA-PATCH (2026-08-20): empirica v1.12.5's `bundle --out` emits a
+# zstd-compressed tar, which Python 3.13's tarfile cannot open (zstd support
+# landed in 3.14 and is broken there anyway). Decompress to a plain tar first
+# so the Python strip step reads a format it can handle.
+PLAIN_BUNDLE_TAR="$STAGING_DIR/delibra-plain.tar"
+zstd -dc "$BUNDLE_TMP" > "$PLAIN_BUNDLE_TAR"
+python3 - "$PLAIN_BUNDLE_TAR" "$STAGING_DIR/untar" "$STAGING_DIR/repack.tar" <<'PY'
 import json, sys, tarfile, io, os, shutil
 src, staging_dir, dst = sys.argv[1], sys.argv[2], sys.argv[3]
 # Extract to a plain (uncompressed) tar on disk so we can rebuild with the
@@ -121,7 +127,7 @@ for root, _, files in os.walk(staging_dir):
 PY
 tar --no-mac-metadata -cf "$STAGING_DIR/repack.tar" -C "$STAGING_DIR/untar" .
 zstd -q -19 --threads=0 -o "$PATCHED_BUNDLE_TMP" "$STAGING_DIR/repack.tar" --rm
-rm -rf "$STAGING_DIR/untar" "$STAGING_DIR/repack.tar"
+rm -rf "$STAGING_DIR/untar" "$STAGING_DIR/repack.tar" "$PLAIN_BUNDLE_TAR"
 BUNDLE_TMP="$PATCHED_BUNDLE_TMP"
 
 COMMIT="$(git -C "$REPO_DIR" rev-parse HEAD)"

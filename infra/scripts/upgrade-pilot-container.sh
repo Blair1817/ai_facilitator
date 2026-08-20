@@ -106,10 +106,10 @@ docker run --detach \
   --memory 6g \
   --cpus 3.0 \
   --ulimit nofile=65536:65536 \
-  --health-cmd 'curl -fsS http://127.0.0.1:3000/' \
-  --health-interval 10s \
+  --health-cmd 'TAJRIBA_WS_URL=ws://127.0.0.1:3000/query node --experimental-websocket /opt/delibra/bin/tajriba-watchdog.js' \
+  --health-interval 15s \
   --health-timeout 10s \
-  --health-retries 8 \
+  --health-retries 4 \
   --health-start-period 90s \
   --log-driver json-file \
   --log-opt max-size=20m \

@@ -1,0 +1,97 @@
+diff --git a/node_modules/@empirica/core/dist/chunk-UMPSA52E.js b/node_modules/@empirica/core/dist/chunk-UMPSA52E.js
+index fa020ca..d3693ea 100644
+--- a/node_modules/@empirica/core/dist/chunk-UMPSA52E.js
++++ b/node_modules/@empirica/core/dist/chunk-UMPSA52E.js
+@@ -48,10 +48,26 @@ var ParticipantConnection = class {
+         }
+         this._connecting.next(true);
+         try {
+-          const tajPart = await taj.sessionParticipant(
+-            session.token,
+-            session.participant
+-          );
++          // DELIBRA-PATCH: race the sessionParticipant await against a
++          // 10-second timeout. With the patched @empirica/tajriba (see
++          // DELIBRA_RECONNECT_PATCHES.md), connectionStatus() still
++          // resolves on raw WS opened, but if auth drops mid-handshake the
++          // underlying promise can stall indefinitely. The timeout
++          // surfaces as a normal rejection so the finally block can clear
++          // _connecting and sessionParticipant can be retried by the outer
++          // reconnect event.
++          const tajPart = await Promise.race([
++            taj.sessionParticipant(
++              session.token,
++              session.participant
++            ),
++            new Promise((_, reject) =>
++              setTimeout(
++                () => reject(new Error("sessionParticipant timed out after 10 s")),
++                10000
++              )
++            ),
++          ]);
+           this._tajribaPart.next(tajPart);
+           if (tajPart.connected) {
+             this._connected.next(true);
+@@ -89,10 +105,25 @@ var ParticipantConnection = class {
+             this.resetSession();
+           });
+         } catch (err) {
++          // DELIBRA-PATCH: log every catch (including ErrNotConnected) so
++          // silent failures are visible in the browser console.
++          if (err && err.message) {
++            console.warn("[delibra-patch] sessionParticipant rejected:", err.message);
++          }
+           if (err !== ErrNotConnected) {
+             error("new conn error", err);
+             this.resetSession();
+           }
++        } finally {
++          // DELIBRA-PATCH: unconditionally clear _connecting so the outer
++          // merge(taj.connected, sessions) loop can re-trigger this branch
++          // on the next reconnect. Without this finally the guard at line
++          // 46 (if (_connected || _connecting) return) stays permanently
++          // true after a single bad handshake, leaving the participant
++          // stuck on the "Connecting" page forever.
++          if (this._connecting.getValue()) {
++            this._connecting.next(false);
++          }
+         }
+       }
+     );
+diff --git a/node_modules/@empirica/core/dist/chunk-WGYNSNUC.js b/node_modules/@empirica/core/dist/chunk-WGYNSNUC.js
+index e08c837..7c465cf 100644
+--- a/node_modules/@empirica/core/dist/chunk-WGYNSNUC.js
++++ b/node_modules/@empirica/core/dist/chunk-WGYNSNUC.js
+@@ -55,6 +55,31 @@ var TajribaConnection = class {
+         this._connecting.next(true);
+       }
+     });
++    // DELIBRA-PATCH: listen for the "closed" event emitted by the patched
++    // @empirica/tajriba `stop()` (index.js). The upstream wrapper only watches
++    // connected/disconnected/error, so when stop() fires (e.g. on Access
++    // Denied) the wrapper was not re-entering the connecting state and the
++    // participant UI stayed on the loading page forever. With this listener
++    // we re-arm the connection attempt.
++    this.tajriba.on("closed", () => {
++      if (this._stopped.getValue()) {
++        return;
++      }
++      if (this._connected.getValue()) {
++        this._connected.next(false);
++      }
++      if (!this._connecting.getValue()) {
++        this._connecting.next(true);
++      }
++      // Re-connect after a short delay (graphql-ws retry loop already
++      // handles backoff; this is only needed because stop() disposed the
++      // underlying WS client).
++      try {
++        this.tajriba.connect && this.tajriba.connect();
++      } catch (e) {
++        // ignore - already connecting
++      }
++    });
+     this.tajriba.on("error", (err) => {
+       error("connection error", err);
+     });
