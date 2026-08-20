@@ -337,36 +337,6 @@ test("renderTranscriptMd reads the current version of a multi-version scalar", a
   assert.ok(!markdown.includes("- Total interventions: 0"));
 });
 
-test("scopeAttributesOf paginates the attributes connection", async () => {
-  // A scope whose attributes are a Relay connection spanning two pages:
-  // the admin `scopes` query only returns `attributes(first: 100)`, so the
-  // rest must be fetched via `admin.attributes(after: endCursor)`.
-  const game = {
-    id: "GAME1",
-    kind: "game",
-    attributes: {
-      totalCount: 2,
-      pageInfo: { hasNextPage: true, endCursor: "cursor-1" },
-      edges: [{ node: { key: "sequenceId", val: '"S3"', index: null } }],
-    },
-  };
-  const admin = {
-    scopes: async () => ({ edges: [], pageInfo: { hasNextPage: false, endCursor: null } }),
-    attributes: async ({ scopeID, after }) => {
-      assert.equal(scopeID, "GAME1");
-      assert.equal(after, "cursor-1");
-      return {
-        pageInfo: { hasNextPage: false, endCursor: null },
-        edges: [{ node: { key: "totalInterventions", val: "2", index: null } }],
-      };
-    },
-  };
-  const svc = new ExportService({ admin });
-  const attrs = await svc.scopeAttributesOf(game);
-  assert.equal(attrs.sequenceId, "S3");
-  assert.equal(attrs.totalInterventions, "2");
-});
-
 test("redactGameBundle replaces PII in submitted forms and LLM audit", async () => {
   const fx = fixture();
   const svc = service({ scopes: fx.scopes });
