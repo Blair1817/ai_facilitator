@@ -57,6 +57,7 @@ import { redactDeep } from "./SupabasePersistence.mjs";
 /**
  * @typedef {Object} AdminConnection
  * @property {(filter: {kinds?: string[], kvs?: Array<{key: string, val: string}>, ids?: string[]}, first?: number) => Promise<{edges: Array<{node: any}>, pageInfo: {hasNextPage: boolean, endCursor: string|null}}>} scopes
+ * @property {(args: {scopeID: string, after?: string, first?: number}) => Promise<{edges: Array<{node: any}>, pageInfo: {hasNextPage: boolean, endCursor: string|null}}>} attributes
  * @property {() => void} [stop]
  *
  * @typedef {Object} ExportServiceOptions
@@ -105,14 +106,14 @@ export class ExportService {
     const allGames = await this.allScopes({ kinds: ["game"] });
     const gamesByBatch = new Map();
     for (const g of allGames) {
-      const bid = scopeAttributes(g).batchID;
+      const bid = (await this.scopeAttributesOf(g)).batchID;
       if (bid == null) continue;
       if (!gamesByBatch.has(bid)) gamesByBatch.set(bid, []);
       gamesByBatch.get(bid).push(g);
     }
     const result = [];
     for (const scope of scopes) {
-      const attrs = scopeAttributes(scope);
+      const attrs = await this.scopeAttributesOf(scope);
       const createdAt = attrs.createdAt || scope.createdAt || null;
       if (filter.fromISO && createdAt && createdAt < filter.fromISO) continue;
       if (filter.toISO && createdAt && createdAt > filter.toISO) continue;
@@ -161,12 +162,13 @@ export class ExportService {
     // Pull all game scopes once and filter by `attrs.batchID` in memory.
     // See listBatches for why the admin `kvs` filter is unreliable.
     const allGames = await this.allScopes({ kinds: ["game"] });
-    const all = allGames.filter(
-      (g) => scopeAttributes(g).batchID === batchId,
-    );
+    const all = [];
+    for (const g of allGames) {
+      if ((await this.scopeAttributesOf(g)).batchID === batchId) all.push(g);
+    }
     const items = [];
     for (const scope of all) {
-      const attrs = scopeAttributes(scope);
+      const attrs = await this.scopeAttributesOf(scope);
       const startedAt = attrs.startedAt || scope.createdAt || null;
       const endedAt = attrs.endedAt || null;
       const treatment = attrs.treatment || null;
@@ -243,7 +245,7 @@ export class ExportService {
   }
 
   async readGame(scope) {
-    const attrs = scopeAttributes(scope);
+    const attrs = await this.scopeAttributesOf(scope);
     const roundIDs = await this.gameRoundIDs(scope.id);
     // Include chat_round_<i> so renderTranscriptMd can render the
     // participant + facilitator transcript without re-querying.
@@ -294,7 +296,7 @@ export class ExportService {
   }
 
   async readPlayer(scope, gameId) {
-    const attrs = scopeAttributes(scope);
+    const attrs = await this.scopeAttributesOf(scope);
     return {
       id: scope.id,
       gameId,
@@ -307,7 +309,7 @@ export class ExportService {
   }
 
   async readRound(scope, players) {
-    const attrs = scopeAttributes(scope);
+    const attrs = await this.scopeAttributesOf(scope);
     const index = numberOrZero(attrs.index);
     const taskIndex = numberOrZero(attrs.taskIndex);
     const taskVersion = attrs.taskVersion || null;
@@ -342,7 +344,7 @@ export class ExportService {
     const allGames = await this.allScopes({ kinds: ["game"] });
     const indexScopes = allGames.filter((s) => s.id === gameId);
     if (indexScopes.length === 0) return [];
-    const gameAttrs = scopeAttributes(indexScopes[0]);
+    const gameAttrs = await this.scopeAttributesOf(indexScopes[0]);
     const index = gameAttrs.llmLogIndex;
     if (!Array.isArray(index) || index.length === 0) return [];
     const entries = [];
@@ -352,6 +354,45 @@ export class ExportService {
       if (entry && typeof entry === "object") entries.push(entry);
     }
     return entries;
+  }
+
+  /**
+   * Resolve a scope's attributes to a flat map, paginating through the
+   * Tajriba admin `attributes` connection when necessary.
+   *
+   * The admin `scopes` query nests `attributes(first: 100)`, so any scope
+   * with more than 100 attributes (e.g. a game with chat + llmLog +
+   * operational events) is silently truncated — which made scalar reads
+   * like `totalInterventions` or `sequenceId` flaky. This helper walks
+   * every page so no attribute is dropped.
+   *
+   * @param {Object} scope
+   * @returns {Promise<Object<string, any>>}
+   */
+  async scopeAttributesOf(scope) {
+    if (!scope) return {};
+    const conn = scope.attributes;
+    if (
+      conn &&
+      typeof conn === "object" &&
+      !Array.isArray(conn) &&
+      Array.isArray(conn.edges)
+    ) {
+      const edges = [...conn.edges];
+      let pageInfo = conn.pageInfo;
+      let after = pageInfo?.endCursor;
+      let guard = 0;
+      while (pageInfo?.hasNextPage && after && guard < 100) {
+        const page = await this.admin.attributes({ scopeID: scope.id, after, first: 100 });
+        const nextEdges = page?.edges || [];
+        edges.push(...nextEdges);
+        pageInfo = page?.pageInfo;
+        after = pageInfo?.endCursor;
+        guard += 1;
+      }
+      return scopeAttributes({ ...scope, attributes: { ...conn, edges } });
+    }
+    return scopeAttributes(scope);
   }
 
   // ── Format rendering ──────────────────────────────────────────────────

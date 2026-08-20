@@ -105,6 +105,7 @@ if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "your-key-here
       const exportService = new ExportService({
         admin: {
           scopes: async (args) => admin.scopes(args),
+          attributes: async (args) => admin.attributes(args),
           stop: () => taj.stop(),
         },
         auditFile,
