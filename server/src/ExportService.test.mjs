@@ -92,6 +92,14 @@ function attrIndexed(scope, key, index, value) {
   return scope;
 }
 
+function attrVersioned(scope, key, version, value, opts = {}) {
+  // Model a scalar attribute that was `game.set` more than once: each
+  // version is its own record, the live one is `current: true` (or the
+  // highest `version`), and superseded ones carry `deleted`/`deletedAt`.
+  scope.attributes.push({ key, version, value: typeof value === "string" ? value : JSON.stringify(value), ...opts });
+  return scope;
+}
+
 function makeScope(id, kind, builder = () => {}) {
   const scope = { id, kind, attributes: [] };
   builder(scope);
@@ -310,6 +318,23 @@ test("renderTranscriptMd reconstructs vector chat_round_N from indexed attribute
   assert.match(markdown, /Red.*focus on cost first/);
   assert.match(markdown, /Pink.*Why cost\?/);
   assert.match(markdown, /Facilitator.*Expander/);
+});
+
+test("renderTranscriptMd reads the current version of a multi-version scalar", async () => {
+  const fx = fixture();
+  const game = fx.game;
+  // Replace the single totalInterventions with three versioned records in a
+  // deliberately non-chronological edge order: the superseded v1/v2 come after
+  // the live v3, so a naive "last wins" would keep v1 ("0") instead of 2.
+  game.attributes = game.attributes.filter((a) => a.key !== "totalInterventions");
+  attrVersioned(game, "totalInterventions", 3, 2, { current: true });
+  attrVersioned(game, "totalInterventions", 1, 0, { deleted: true });
+  attrVersioned(game, "totalInterventions", 2, 1, { deletedAt: "2026-08-20T06:35:21Z" });
+
+  const svc = service({ scopes: fx.scopes });
+  const { markdown } = await svc.renderTranscriptMd("GAME1", { redact: true });
+  assert.match(markdown, /- Total interventions: 2/);
+  assert.ok(!markdown.includes("- Total interventions: 0"));
 });
 
 test("redactGameBundle replaces PII in submitted forms and LLM audit", async () => {

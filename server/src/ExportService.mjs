@@ -783,14 +783,30 @@ function scopeAttributes(scope) {
   }
   if (attrEdges) {
     const out = {};
+    const scalarBest = {}; // key -> { version, current, value }
     for (const e of attrEdges) {
       const a = e && e.node;
-      if (a && typeof a.key === "string") {
-        const raw = a.val !== undefined ? a.val : a.value;
-        if (a.index === undefined || a.index === null) out[a.key] = parseValue(raw);
-        else out[`${a.key}:${a.index}`] = parseValue(raw);
+      if (!a || typeof a.key !== "string") continue;
+      const raw = a.val !== undefined ? a.val : a.value;
+      if (a.index === undefined || a.index === null) {
+        // Scalar. Tajriba returns every historical version of a key that
+        // was set more than once, marking superseded records with
+        // `deleted`/`deletedAt` and the live one with `current: true` /
+        // the highest `version`. Resolve to that live value instead of
+        // relying on edge order ("last wins"), which could keep a stale
+        // version (e.g. totalInterventions reading "0" instead of "2").
+        if (a.deleted === true || a.deletedAt != null) continue;
+        const version = Number.isFinite(a.version) ? a.version : 0;
+        const current = a.current === true;
+        const best = scalarBest[a.key];
+        if (!best || current || version >= best.version) {
+          scalarBest[a.key] = { version, current, value: parseValue(raw) };
+        }
+      } else {
+        out[`${a.key}:${a.index}`] = parseValue(raw);
       }
     }
+    for (const [key, s] of Object.entries(scalarBest)) out[key] = s.value;
     return out;
   }
   return {};
