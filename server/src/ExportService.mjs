@@ -275,7 +275,10 @@ export class ExportService {
     return {
       id: scope.id,
       status: attrs.status || "unknown",
-      treatment: attrs.treatment || null,
+      // Prefer the human-readable treatment name; the raw `treatment`
+      // attribute is the full factor object and stringifies to
+      // "[object Object]" in the transcript/CSV.
+      treatment: attrs.treatmentName || (typeof attrs.treatment === "string" ? attrs.treatment : null),
       sequenceId: attrs.sequenceId || null,
       taskOrder: attrs.taskOrder || null,
       taskVersionOrder: attrs.taskVersionOrder || null,
