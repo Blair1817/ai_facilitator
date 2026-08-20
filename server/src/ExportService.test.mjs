@@ -83,6 +83,15 @@ function attr(scope, key, value) {
   return scope;
 }
 
+function attrIndexed(scope, key, index, value) {
+  // Model a Tajriba *vector* attribute (written via `game.append`):
+  // one Attribute record per element, sharing `key` and distinguished
+  // by `index`. This is how `chat_round_N` actually appears in the
+  // admin `scopes` response.
+  scope.attributes.push({ key, index, value: typeof value === "string" ? value : JSON.stringify(value) });
+  return scope;
+}
+
 function makeScope(id, kind, builder = () => {}) {
   const scope = { id, kind, attributes: [] };
   builder(scope);
@@ -284,6 +293,23 @@ test("renderTranscriptMd emits one section per round and a final LLM audit log s
   // when it ends up in the bundle (transcript does not embed
   // expFeedback today, so this is a defensive check).
   assert.ok(!markdown.includes("researcher@example.com"));
+});
+
+test("renderTranscriptMd reconstructs vector chat_round_N from indexed attributes", async () => {
+  const fx = fixture();
+  const game = fx.game;
+  // Replace the single-array chat_round_0 with the production vector
+  // shape: one indexed attribute per appended message.
+  game.attributes = game.attributes.filter((a) => a.key !== "chat_round_0");
+  attrIndexed(game, "chat_round_0", 0, { text: "I think we should focus on cost first.", sender: { id: "p1", name: "Red" }, ts: 1723705200000 });
+  attrIndexed(game, "chat_round_0", 1, { text: "Why cost?", sender: { id: "p2", name: "Pink" }, ts: 1723705210000 });
+  attrIndexed(game, "chat_round_0", 2, { text: "Consider the trade-offs across all options.", sender: { id: "ai", name: "Facilitator" }, ts: 1723705220000, role: "Expander" });
+
+  const svc = service({ scopes: fx.scopes });
+  const { markdown } = await svc.renderTranscriptMd("GAME1", { redact: true });
+  assert.match(markdown, /Red.*focus on cost first/);
+  assert.match(markdown, /Pink.*Why cost\?/);
+  assert.match(markdown, /Facilitator.*Expander/);
 });
 
 test("redactGameBundle replaces PII in submitted forms and LLM audit", async () => {

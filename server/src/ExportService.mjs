@@ -247,10 +247,29 @@ export class ExportService {
     const roundIDs = await this.gameRoundIDs(scope.id);
     // Include chat_round_<i> so renderTranscriptMd can render the
     // participant + facilitator transcript without re-querying.
+    //
+    // chat_round_<i> is a Tajriba *vector* attribute (written via
+    // `game.append`), so scopeAttributes returns each appended message
+    // as an indexed key `chat_round_<i>:<j>` — NOT as a single
+    // `chat_round_<i>` array. Reassemble the ordered list here. The
+    // non-indexed single-array shape is still accepted for the
+    // test fixture and any pre-vector store.
     const chat = {};
     for (const [key, value] of Object.entries(attrs)) {
-      if (/^chat_round_\d+$/.test(key) && Array.isArray(value)) {
-        chat[key] = value;
+      const match = /^(chat_round_\d+)(?::(\d+))?$/.exec(key);
+      if (!match) continue;
+      const base = match[1];
+      if (match[2] === undefined) {
+        if (Array.isArray(value)) chat[base] = value;
+        continue;
+      }
+      const index = Number(match[2]);
+      if (!Array.isArray(chat[base])) chat[base] = [];
+      chat[base][index] = value;
+    }
+    for (const base of Object.keys(chat)) {
+      if (Array.isArray(chat[base])) {
+        chat[base] = chat[base].filter((entry) => entry !== undefined);
       }
     }
     return {
