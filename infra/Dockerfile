@@ -19,14 +19,28 @@ RUN apt-get update \
     && curl -fsSL "https://github.com/volta-cli/volta/releases/download/v${VOLTA_VERSION}/volta-${VOLTA_VERSION}-linux.tar.gz" \
          -o /tmp/volta.tar.gz \
     && tar -xzf /tmp/volta.tar.gz -C /opt/ \
-    && ln -sf "/opt/volta-${VOLTA_VERSION}/volta" /usr/local/bin/volta \
+    # Replace the pre-baked volta binary with a no-op shim. The package
+    # managers Empirica v1.12 invokes (pnpm via npm callback build)
+    # detect volta on PATH and run \`volta install node\` to pin the
+    # node version; that fetch targets github.com, which the NAS
+    # cannot reach (only Tailscale is exposed). A no-op shim makes
+    # the volta-aware code path succeed immediately and the system
+    # node 20.12.2 (the image base) is what actually serves the
+    # callbacks.
+    && mv /opt/volta /opt/volta.real \
+    && printf '#!/bin/sh\nexit 0\n' > /opt/volta \
+    && chmod 0755 /opt/volta \
+    && ln -sf /opt/volta /usr/local/bin/volta \
     && rm -f /tmp/volta.tar.gz \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --gid "$DELIBRA_GID" delibra \
     && useradd --uid "$DELIBRA_UID" --gid "$DELIBRA_GID" --create-home delibra \
-    && mkdir -p /opt/delibra /data /backups/internal /backups/external \
-    && chown -R delibra:delibra /opt/delibra /data /backups /home/delibra
+    && mkdir -p /opt/delibra /opt/delibra/bin /data /backups/internal /backups/external \
+    && chown -R delibra:delibra /opt/delibra /data /backups /home/delibra \
+    # Make the unbundled volta binary readable for debug access; it is
+    # not on PATH by design (see the comment in the previous RUN).
+    && chmod a+rx /opt /opt/volta /opt/volta-migrate /opt/volta-shim
 
 COPY --chown=delibra:delibra infra/bundle/delibra.tar.zst /opt/delibra/delibra.tar.zst
 COPY --chown=delibra:delibra infra/bundle/manifest.txt /opt/delibra/manifest.txt
@@ -35,12 +49,23 @@ COPY --chown=delibra:delibra infra/scripts/restore-backup-for-review.sh /opt/del
 COPY --chown=delibra:delibra infra/scripts/verify-tajriba-integrity.mjs /opt/delibra/verify-tajriba-integrity.mjs
 COPY --chown=delibra:delibra infra/scripts/validate-admin-login.mjs /opt/delibra/validate-admin-login.mjs
 COPY --chown=delibra:delibra infra/scripts/empirica-entrypoint.sh /opt/delibra/empirica-entrypoint.sh
+
+# Tajriba v1.12.0 partial-freeze auto-recovery (2026-08-19). The
+# host's `*/5` host-watchdog.sh and `*/4` host-reopen.sh crons
+# `docker exec` into these paths; if they are missing the host
+# wrappers misread "file not found" as "Tajriba frozen" and start
+# a `docker restart` loop every 5 min. Bake them in so the image
+# is self-contained across rebuilds.
+COPY --chown=delibra:delibra infra/watchdog/tajriba-watchdog.js /opt/delibra/bin/tajriba-watchdog.js
+COPY --chown=delibra:delibra infra/watchdog/tajriba-reopen-experiment.js /opt/delibra/bin/tajriba-reopen-experiment.js
 RUN chmod 0555 \
   /opt/delibra/backup-local-encrypted.sh \
   /opt/delibra/restore-backup-for-review.sh \
   /opt/delibra/verify-tajriba-integrity.mjs \
   /opt/delibra/validate-admin-login.mjs \
-  /opt/delibra/empirica-entrypoint.sh
+  /opt/delibra/empirica-entrypoint.sh \
+  /opt/delibra/bin/tajriba-watchdog.js \
+  /opt/delibra/bin/tajriba-reopen-experiment.js
 
 USER delibra
 WORKDIR /home/delibra
