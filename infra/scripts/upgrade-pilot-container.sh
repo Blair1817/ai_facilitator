@@ -120,6 +120,8 @@ docker run --detach \
   --addr :3000 \
   --tajriba.store.file /data/tajriba.json \
   --callbacks.sessionTokenPath /data/callBackSessionToken \
+  --callbacks.buildcmd "" \
+  --player.buildcmd "" \
   --log.json \
   --log.level warn \
   --tajriba.log.level warn >/dev/null
