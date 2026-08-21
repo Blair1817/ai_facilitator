@@ -409,6 +409,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     ];
     if (!isOriginatingStageActive()) return { discarded: true };
     if (!llmResponse.success) {
+      logEntry.failureStage = "generator_api";
       return { silent: true, reason: `API Error: ${llmResponse.error}` };
     }
     logEntry.generatorRawResponses = [
@@ -419,11 +420,13 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
 
     const parseResult = parseGeneratorOutputStrict(llmResponse.rawText);
     if (!parseResult.ok) {
+      logEntry.failureStage = "parse";
       return { silent: true, reason: `Invalid Generator output: ${parseResult.error}` };
     }
 
     const schemaResult = validateAgainstGenerationSchema(parseResult.parsed, built.metadata.generationRole);
     if (!schemaResult.ok) {
+      logEntry.failureStage = "schema";
       return {
         silent: true,
         reason: "Generator output failed generation.schema.json",
@@ -447,6 +450,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     });
     logEntry.deterministic = deterministicResult;
     if (!deterministicResult.passed) {
+      logEntry.failureStage = "deterministic";
       return {
         silent: true,
         reason: `Generator output failed validation: ${deterministicResult.failedCriteria.join(", ")}`,
@@ -519,6 +523,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
 
   const v1 = await runValidator(a1.candidate);
   if (v1.validatorFailed) {
+    logEntry.failureStage = "validator_unavailable";
     logEntry.reason = `Validator LLM unavailable on attempt 1 (${v1.code}): ${v1.error}`;
     logEntry.outcome = "SILENT_VALIDATOR_UNAVAILABLE";
     return { published: false };
@@ -548,6 +553,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
 
   const v2 = await runValidator(a2.candidate, v1.verdict.failedCriteria, a1.candidate);
   if (v2.validatorFailed) {
+    logEntry.failureStage = "validator_unavailable";
     logEntry.reason = `Validator LLM unavailable on repair (${v2.code}): ${v2.error}`;
     logEntry.outcome = "SILENT_VALIDATOR_UNAVAILABLE";
     return { published: false };
@@ -566,6 +572,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   // never see a Validator-rejected attempt. The full failedCriteria
   // (both attempts) are logged so the researcher can audit post-hoc
   // which criteria the model couldn't satisfy.
+  logEntry.failureStage = "validator_rejected";
   logEntry.reason = `Validator rejected both attempts. attempt1: [${v1.verdict.failedCriteria.join(", ")}]; attempt2: [${v2.verdict.failedCriteria.join(", ")}]`;
   logEntry.outcome = "SILENT_VALIDATOR_REJECTED";
   return { published: false, attempts: 2, validator: v2.verdict };

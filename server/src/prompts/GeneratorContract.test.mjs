@@ -15,6 +15,8 @@ const {
   buildRuntimeGenerationSchema,
   validateAgainstGenerationSchema,
   runDeterministicValidation,
+  stripMarkdownWrapper,
+  getGenerationSchemaMaxLength,
 } = await import("./GeneratorContract.mjs");
 
 const VALID_CANDIDATE = { role: "INFORMATION_EXPANDER", message: "Is there anything else anyone has not shared yet?", groundingMessageIds: [] };
@@ -366,4 +368,168 @@ test("deterministic @-mention: check is disabled when activeParticipantNames is 
 test("deterministic @-mention: check is disabled when activeParticipantNames is an empty array (no participants known yet)", () => {
   const result = runDeterministicValidation({ role: "INFORMATION_EXPANDER", message: "@[Anyone], please share.", groundingMessageIds: [] }, { ...DETERMINISTIC_CONTEXT, activeParticipantNames: [] });
   assert.equal(result.passed, true);
+});
+
+// ── markdown wrapper stripper (2026-08-21, Phase 6.4 mention-pilot fix) ──────
+//
+// MiniMax-Text-01 / MiniMax-M2.7-highspeed emit `**bold**` and `- ` bullet
+// markers despite base.md's "no markdown" HARD CONSTRAINT. These tests pin
+// the new defensive stripper so the @Facilitator mention path no longer
+// collapses to a canned-reply fallback just because the model wrapped an
+// option name in `**`.
+
+test("stripMarkdownWrapper: strips `**bold**` to plain text (preserves the wrapped word)", () => {
+  const out = stripMarkdownWrapper("Based on the discussion, **Halden** stands out for its reliable record.");
+  assert.equal(out, "Based on the discussion, Halden stands out for its reliable record.");
+});
+
+test("stripMarkdownWrapper: strips `__bold__` to plain text", () => {
+  const out = stripMarkdownWrapper("__Halden__ is the top candidate.");
+  assert.equal(out, "Halden is the top candidate.");
+});
+
+test("stripMarkdownWrapper: strips leading bullet markers (`- `, `* `, `+ `) at line start", () => {
+  const out = stripMarkdownWrapper("- Halden: reliable record\n- Norvale: not looking good\n- Fenwick: surveys unfavorable");
+  assert.equal(out, "Halden: reliable record\nNorvale: not looking good\nFenwick: surveys unfavorable");
+});
+
+test("stripMarkdownWrapper: strips ATX headers (`# `, `## `, `### `) at line start", () => {
+  const out = stripMarkdownWrapper("## Summary\nHalden leads on time, Norvale on team structure.");
+  assert.equal(out, "Summary\nHalden leads on time, Norvale on team structure.");
+});
+
+test("stripMarkdownWrapper: strips numbered list markers at line start", () => {
+  const out = stripMarkdownWrapper("1. Halden: reliable\n2. Norvale: not looking good\n3. Fenwick: surveys");
+  assert.equal(out, "Halden: reliable\nNorvale: not looking good\nFenwick: surveys");
+});
+
+test("stripMarkdownWrapper: strips inline backticks", () => {
+  const out = stripMarkdownWrapper("Use the term `static` to describe the condition.");
+  assert.equal(out, "Use the term static to describe the condition.");
+});
+
+test("stripMarkdownWrapper: collapses 3+ consecutive newlines to 2 (paragraph break, not ugly whitespace)", () => {
+  const out = stripMarkdownWrapper("First paragraph.\n\n\n\nSecond paragraph.");
+  assert.equal(out, "First paragraph.\n\nSecond paragraph.");
+});
+
+test("stripMarkdownWrapper: does NOT strip snake_case identifiers (false-positive guard for `_word_` italic)", () => {
+  // Conservative: we don't touch single-underscore-word pairs because they
+  // collide with snake_case identifiers. This is documented in
+  // stripMarkdownWrapper's header.
+  const out = stripMarkdownWrapper("See the value in my_snake_case variable.");
+  assert.equal(out, "See the value in my_snake_case variable.");
+});
+
+test("stripMarkdownWrapper: does NOT strip `**` with empty content (defensive)", () => {
+  // Empty `****` would produce "" which destroys the message; we just
+  // leave it alone. Real model output never produces this, but pinning
+  // the behaviour guards against accidental future changes.
+  const out = stripMarkdownWrapper("Hello **** world.");
+  // The non-greedy match in the regex requires at least one char inside,
+  // so `****` does NOT match. The literal `****` is left in the string.
+  // The test pins this.
+  assert.equal(out, "Hello **** world.");
+});
+
+test("stripMarkdownWrapper: returns null when stripping would destroy >50% of the content (safety net for markdown documents, not formatted prose)", () => {
+  // Construct an input where the bullet markers dominate the character
+  // count. Each "- x" line is 4 chars; stripped down to "x\n" lines of
+  // 2 chars each. 10 such lines go from 40 chars down to 20 (a 50%
+  // reduction). To push it past the 50% safety threshold, use single-
+  // char content. 10 lines of "- a" → 20 chars → "a\n"×10 = 20 chars
+  // (50% retained, right at threshold). Use single-letter content with
+  // more bullets to clearly cross the threshold.
+  const heavyBullets = "- a\n- b\n- c\n- d\n- e\n- f\n- g\n- h\n- i\n- j\n- k\n- l\n- m";
+  // 13 lines, 3 chars each = 39 chars; stripped: 13×2 = 26 chars
+  // (66% retained, just over threshold). Need to go lower. Use
+  // alternating pattern with deeper nesting.
+  const tableLike = "- |\n- |\n- |\n- |\n- |\n- |\n- |\n- |\n- |\n- |\n- |\n- |";
+  // 12 lines of "- |" = 36 chars; stripped: 12 lines of "|\n" = 24 chars
+  // (66% retained). Still not under 50%. Need to use a 2-char prefix
+  // (- or list marker) with 1-char content per line.
+  const extreme = Array.from({ length: 15 }, () => "- ").join("\n");
+  // 15 "- " markers joined by "\n" = 44 chars. After stripping: 15
+  // empty lines = "\n" × 14 = 13 chars. 13/44 = 29.5%, well under 50%.
+  const out = stripMarkdownWrapper(extreme);
+  assert.equal(out, null);
+});
+
+test("stripMarkdownWrapper: returns the input unchanged when no markdown is present", () => {
+  const input = "Thanks @[Pink]! What do others think about the trade-offs?";
+  const out = stripMarkdownWrapper(input);
+  assert.equal(out, input);
+});
+
+test("stripMarkdownWrapper: returns the input unchanged for empty / non-string input", () => {
+  assert.equal(stripMarkdownWrapper(""), "");
+  assert.equal(stripMarkdownWrapper(null), null);
+  assert.equal(stripMarkdownWrapper(undefined), undefined);
+});
+
+test("stripMarkdownWrapper: the real failing 703-char mention-pilot output cleans to <500 chars and passes the safety net", () => {
+  // This is the actual rawText captured from game 01M0EX8EF2P7VDW55TNX7J6FY9
+  // llmLog.01M0EX8EF2P7VDW55TNX7J6FY9:0:9:1787207560994 (miniMax-Text-01 / m2.7-highspeed
+  // response to a `@Facilitator` request to summarise three campuses). It
+  // was rejected by `Generator output failed generation.schema.json
+  // (maxLength 400)` AND `MARKDOWN_DETECTED` deterministic check. With
+  // maxLength=1500 + markdown stripping, both failures clear.
+  const real = "Based on the discussion so far, here's what has been shared about the three campuses:\n\n- **Halden**: Highlighted for having a reliable record of delivering similar academic conferences on time and within budget (m1).\n- **Norvale**: Described as not looking good based on the shared input (m2).\n- **Fenwick**: Mentioned with a note that public surveys are not favorable (m4).\n\nThis is the full extent of publicly shared evidence at this point. No additional details about criteria, comparisons, or trade-offs have been contributed yet. @[Green] and @[Blue], do you have any additional information or perspectives to add?";
+  const out = stripMarkdownWrapper(real);
+  assert.ok(out !== null, "real failing output must not trip the >50% safety net");
+  assert.ok(!out.includes("**"), "all `**bold**` markers must be stripped");
+  assert.ok(!out.includes(" - "), "all leading bullet markers must be stripped");
+  assert.ok(out.includes("Halden") && out.includes("Norvale") && out.includes("Fenwick"), "all option names must be preserved");
+  assert.ok(out.includes("@[Green]") && out.includes("@[Blue]"), "all @[Name] mentions must be preserved (square-bracket, not underscore)");
+  assert.ok(out.length < real.length, "stripping should shorten the message");
+  assert.ok(out.length > real.length * 0.5, "but not by more than 50% (the safety net threshold)");
+});
+
+test("strict parser: end-to-end — a markdown-laden 703-char real failing output now parses AND passes the schema cap", () => {
+  // Regression for the production 2026-08-21 incident: the model
+  // returned this exact text in a real `@Facilitator` mention, the
+  // schema's old maxLength=400 rejected it, the deterministic check
+  // would have rejected the `**` / `- ` markers. With this fix, parsing
+  // succeeds, the message is cleaned, and the schema (maxLength=1500)
+  // accepts it.
+  const real = "Based on the discussion so far, here's what has been shared about the three campuses:\n\n- **Halden**: Highlighted for having a reliable record of delivering similar academic conferences on time and within budget (m1).\n- **Norvale**: Described as not looking good based on the shared input (m2).\n- **Fenwick**: Mentioned with a note that public surveys are not favorable (m4).\n\nThis is the full extent of publicly shared evidence at this point. No additional details about criteria, comparisons, or trade-offs have been contributed yet. @[Green] and @[Blue], do you have any additional information or perspectives to add?";
+  const wrapped = "```json\n" + JSON.stringify({ role: "GENERALIST", message: real, groundingMessageIds: ["m1", "m2", "m4"] }) + "\n```";
+
+  const parsed = parseGeneratorOutputStrict(wrapped);
+  assert.equal(parsed.ok, true, "the 703-char real failing output must now parse cleanly");
+  assert.equal(parsed.parsed.role, "GENERALIST");
+  assert.ok(!parsed.parsed.message.includes("**"), "markdown stripped from message field");
+  assert.ok(!parsed.parsed.message.includes(" - "), "bullet markers stripped from message field");
+
+  // Schema check: with the cap raised to 1500, this now passes.
+  const schemaResult = validateAgainstGenerationSchema(parsed.parsed, "GENERALIST");
+  assert.equal(schemaResult.ok, true, `schema must accept the cleaned 703-char message; errors=${JSON.stringify(schemaResult.errors)}`);
+
+  // Deterministic check: with the markdown stripped, the
+  // MARKDOWN_DETECTED criterion no longer fires. (Other criteria may
+  // still fire if grounding IDs are unknown to the test context, but
+  // markdown must not be one of them.)
+  const detResult = runDeterministicValidation(parsed.parsed, {
+    selectedRole: "GENERALIST",
+    eligibleMessageIds: ["m1", "m2", "m3", "m4", "m5"],
+    aiOrSystemMessageIds: [],
+    recentAiMessageTexts: [],
+    activeParticipantNames: ["Green", "Blue", "Pink"],
+  });
+  assert.equal(
+    detResult.failedCriteria.includes("MARKDOWN_DETECTED"),
+    false,
+    "after stripping, MARKDOWN_DETECTED must not fire (other criteria may still apply based on the test context)"
+  );
+  assert.equal(
+    detResult.failedCriteria.includes("MESSAGE_TOO_LONG"),
+    false,
+    "after schema cap raise to 1500, MESSAGE_TOO_LONG must not fire for a 703-char message"
+  );
+});
+
+test("strict parser: schema cap is now 1500 (regression: cap was 400, raised 2026-08-21)", () => {
+  // Pin the new cap. If a future change reverts it to 400, this test fails.
+  const maxLength = getGenerationSchemaMaxLength();
+  assert.equal(maxLength, 1500, `expected schema cap=1500, got ${maxLength}`);
 });

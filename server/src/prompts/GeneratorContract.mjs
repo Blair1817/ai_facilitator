@@ -88,6 +88,30 @@ export function strictParseJsonObject(rawText) {
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return { ok: false, code: "PARSE_FAILURE", error: "parsed value is not a single JSON object" };
   }
+
+  // Defensive markdown-wrapper strip on the `message` field if present.
+  // See stripMarkdownWrapper's header for rationale. Validator / Assessor /
+  // LLMTransport outputs don't have a `message` string field, so this is
+  // a no-op for them. For Generator outputs, the cleaned message is what
+  // `runDeterministicValidation` and the participant-facing publication
+  // both see — i.e. `**Halden**` in the model output becomes `Halden` in
+  // both the validator and the chat.
+  if (typeof parsed.message === "string" && parsed.message.length > 0) {
+    const stripped = stripMarkdownWrapper(parsed.message);
+    if (stripped === null) {
+      // Safety net: stripping destroyed >50% of the content, meaning the
+      // input was mostly markdown structure rather than a sentence with
+      // some formatting. Reject as a parse failure rather than silently
+      // publishing something the model never intended.
+      return {
+        ok: false,
+        code: "PARSE_FAILURE",
+        error: "message is primarily markdown structure (markdown-wrapper stripper would have removed >50% of the content); refusing to silently rewrite",
+      };
+    }
+    parsed = { ...parsed, message: stripped };
+  }
+
   return { ok: true, parsed };
 }
 
@@ -98,6 +122,75 @@ export function parseGeneratorOutputStrict(rawText) {
     return { ok: false, code: "GENERATOR_PARSE_FAILURE", error: result.error };
   }
   return result;
+}
+
+// ── markdown wrapper stripper (2026-08-21, Phase 6.4 mention-pilot fix) ──────
+//
+// MiniMax-Text-01 / MiniMax-M2.7-highspeed occasionally emit inline markdown
+// (especially `**bold**` for option names and `- ` bullet markers) despite
+// base.md's "no markdown" HARD CONSTRAINT. The deterministic validator
+// (runDeterministicValidation, `MARKDOWN_PATTERN`) would reject these,
+// sending the whole `@Facilitator` mention path to the canned-reply fallback.
+//
+// The defensive layer here mirrors the code-fence stripper above: we strip
+// benign markdown *wrappers* (characters that only format, not contribute
+// content) and pass through to the rest of the pipeline. The text content
+// is preserved 1:1 — `**Halden**` becomes `Halden`, `- foo` becomes `foo`.
+// Conservative by design: snake_case `_word_` italic is NOT stripped
+// (false-positive risk on legitimate identifiers); ATX headers, list
+// markers, and the two bold flavours are the only targets. The Validator /
+// Assessor / LLMTransport callers of `strictParseJsonObject` see no effect
+// because their outputs have no `message` string field.
+//
+// Safety net: if stripping would shrink the message to <50% of its original
+// length, the message is mostly markdown *structure* (e.g. an entire table)
+// and we return `null` so the caller can treat it as `invalid_json` rather
+// than silently publishing something the model never intended.
+const MARKDOWN_STRIP_PATTERNS = [
+  // `**bold**` and `__bold__` — the two flavours the live model uses for
+  // option-name emphasis. Require at least one non-marker char inside so
+  // we don't strip empty `****` or `____`.
+  [/\*\*([^*\n]+?)\*\*/g, "$1"],
+  [/__([^_\n]+?)__/g, "$1"],
+  // ATX headers at line start: `# `, `## `, ..., `###### ` (1-6 hashes + space).
+  // The line-start anchor prevents eating `#` characters that appear
+  // mid-sentence (e.g. as a numbered footnote).
+  [/(^|\n)#{1,6}[ \t]+/g, "$1"],
+  // Bullet list markers at line start: `- `, `* `, `+ ` followed by space.
+  // Anchored at line start so a hyphen in the middle of a sentence is
+  // not stripped.
+  [/(^|\n)[ \t]{0,3}[-*+][ \t]+/g, "$1"],
+  // Numbered list markers at line start: `1. `, `12. `, etc.
+  [/(^|\n)[ \t]{0,3}\d+\.[ \t]+/g, "$1"],
+  // Inline code backticks: `` `word` `` → `word`. Single-line to avoid
+  // eating a fence that the parser might have missed.
+  [/`([^`\n]+)`/g, "$1"],
+];
+
+/**
+ * Strips benign markdown wrappers (bold markers, list markers, ATX headers,
+ * inline code backticks) from a single string. Returns the cleaned string,
+ * or `null` if stripping would destroy more than 50% of the content
+ * (defensive sanity check — such an input is not "a sentence with some
+ * formatting" but "a markdown document", which we should not silently
+ * rewrite into prose).
+ */
+export function stripMarkdownWrapper(message) {
+  if (typeof message !== "string" || message.length === 0) return message;
+  let current = message;
+  for (const [pattern, replacement] of MARKDOWN_STRIP_PATTERNS) {
+    current = current.replace(pattern, replacement);
+  }
+  // Collapse 3+ consecutive blank lines that often appear after list removal
+  // (e.g. `- foo\n- bar\n- baz` becomes `foo\nbar\nbaz` with no separator —
+  // acceptable; but `\n\n\n\n` left over is ugly and the participant would
+  // see weird whitespace). Only collapses runs of 3+ newlines, so normal
+  // paragraph breaks (1 or 2 newlines) are preserved.
+  current = current.replace(/\n{3,}/g, "\n\n");
+  if (current.trim().length < message.trim().length * 0.5) {
+    return null; // safety net: stripping destroyed too much; treat as invalid
+  }
+  return current;
 }
 
 /**

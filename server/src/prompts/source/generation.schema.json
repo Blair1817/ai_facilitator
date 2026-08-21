@@ -18,8 +18,8 @@
     "message": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 400,
-      "description": "唯一显示给参与者的字段。字数上限待阶段9 pilot后冻结，此处 maxLength 为字符数占位值，非最终值。不得包含 rationale、角色名、内部推理、markdown。"
+      "maxLength": 1500,
+      "description": "唯一显示给参与者的字段。字数上限在 Stage 9 pilot 后冻结：1500 字符足够覆盖 15-20 条公开消息的总结/对比/梳理（requested_generalist 角色实测自然输出 500-700 字符）；其他角色（Static、Generalist）由各自提示词内的\"concise / at most two sentences\"软约束控制实际输出长度，1500 只是天花板不是目标。不得包含 rationale、角色名、内部推理、markdown。"
     },
     "groundingMessageIds": {
       "type": "array",
