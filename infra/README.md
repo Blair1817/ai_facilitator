@@ -164,10 +164,83 @@ Do not recruit formal participants until all of these have evidence:
 | --- | --- |
 | `Dockerfile` | pinned Empirica Linux image with least-privilege runtime |
 | `docker-compose.yml` | single-process, same-origin NAS deployment |
-| `.env.example` | non-secret runtime and host-path template |
+| `.env.example` | non-secret runtime and host-path template (NAS) |
+| `env.azure.example` | non-secret runtime template (Azure Container Apps) |
 | `empirica.toml.template` | public placeholder admin configuration |
 | `scripts/build-nas-bundle.sh` | sanitised bundle builder and provenance manifest |
+| `scripts/build-for-azure.sh` | build + tag for Azure; optional `--push` to ACR |
+| `scripts/capture-prewarm-from-running.sh` | populate `prewarm/` from a running v1.12.5 container |
 | `scripts/preflight-nas.sh` | fail-closed NAS configuration checks |
 | `scripts/backup-local-encrypted.sh` | encrypted dual-destination snapshot and rotation |
 | `scripts/restore-backup-for-review.sh` | non-destructive integrity/restore drill |
 | `crontab.example` | four-hour backup schedule |
+
+## Azure deployment (parallel target to NAS)
+
+The Docker image is identical between NAS and Azure; only the destination
+registry and the data dir mount differ. Azure Container Apps has outbound
+internet, so the in-container first-start of `empirica serve` can fetch
+`get.volta.sh` if the prewarm cache is empty — the offline-pinned build
+path that the NAS relies on is no longer mandatory, but capturing
+`prewarm/` from a known-good v1.12.5 container is still recommended for
+deterministic first starts.
+
+### One-time setup (every build host)
+
+1. `cp infra/env.azure.example infra/.env` and edit
+   `ACR_LOGIN_SERVER` / `ACR_NAME` / `DELIBRA_IMAGE_TAG`.
+2. `infra/scripts/capture-prewarm-from-running.sh` — pulls the Tajriba
+   v1.12.0 and v1.12.5 binaries (and optionally the Volta runtime) out
+   of the running NAS container into `infra/prewarm/`. This directory
+   is gitignored; it must be present on the build host before
+   `docker build` runs.
+3. `az login` (or enable the ACR admin user in the portal and set
+   `ACR_USERNAME` / `ACR_PASSWORD` in the env when pushing).
+
+### Build (Mac or CI runner)
+
+```sh
+infra/scripts/build-for-azure.sh            # build only
+infra/scripts/build-for-azure.sh --push     # build + push to ACR
+infra/scripts/build-for-azure.sh --tag=mybuild-20260829  # custom tag
+```
+
+### Provision the Azure side (portal)
+
+See `azure-deployment-guide.md` in the project root for the
+portal walkthrough covering:
+
+- Resource Group, ACR, Storage Account + File Share, Log Analytics,
+  Container Apps Environment, Container App, AcrPull role.
+- Health probe: TCP/3000, 30s period, failure threshold 3.
+- `/data` volume mount pointing at the File Share (Tajriba writes
+  its JSONL state there — without this mount the container
+  effectively starts fresh on every restart).
+
+### Operational differences from NAS
+
+- The `*/5` host-watchdog / `*/4` host-reopen crons on the NAS
+  **do not apply on Azure** — the built-in TCP health probe (failure
+  threshold 3) replaces them. Do not deploy the watchdog/reopen
+  scripts as Container Apps Jobs.
+- The `crontab.example` four-hour backup schedule also does not
+  apply. Backups on Azure are file-share snapshots triggered manually
+  or via an Azure Automation runbook; see the
+  `delibra-azure-handoff/scripts/backup-state.sh` reference in the
+  project root.
+- Secrets: Tajriba admin user / password / SRToken live in
+  `empirica.toml` (mounted as a Container App secret), not on a host
+  bind path. The host `secrets/` directory under
+  `DELIBRA_CONFIG_FILE` does not exist in the Azure layout.
+
+### What is identical
+
+- Empirica v1.12.5 framework version (the partial-freeze is fixed
+  at the framework level, so the image carries the fix on either
+  target).
+- Tajriba v1.12.5 state store (paired with the framework).
+- 24-hour `lobbyConfig.duration` rule for human-pilot batches
+  (`86400000000000` ns) — create new batches via the GraphQL
+  `addScopes` mutation; do not extend an existing batch.
+- Bundle construction: still `scripts/build-nas-bundle.sh` (the
+  bundle format is the same; only the destination registry differs).
