@@ -122,10 +122,15 @@ test("Debriefing is the final informational exit step and finishes without a cod
   assert.match(appSource, /return \[ExpFeedback, Debriefing\];/);
   assert.doesNotMatch(appSource, /FinishedExitCode|finished=/);
   assert.match(debriefingSource, /Thank you for taking part/);
-  assert.match(debriefingSource, /player\?\.id \|\| "Not available"/);
+  assert.match(debriefingSource, /two versions of the AI facilitator, both shown as &ldquo;Facilitator\.&rdquo;/);
+  assert.match(debriefingSource, /same name and appearance for both versions/);
   assert.match(debriefingSource, /jingnan\.zhang\.24@ucl\.ac\.uk/);
-  assert.match(debriefingSource, /\[withdrawal deadline\]/);
-  assert.match(debriefingSource, /\[Supervisor name\], \[UCL email\]/);
+  assert.doesNotMatch(debriefingSource, /Withdrawal|withdrawal deadline|withdraw your data|request withdrawal/i);
+  assert.doesNotMatch(debriefingSource, /const participantId =|participant ID/i);
+  assert.match(debriefingSource, />Contact for this study</);
+  assert.match(debriefingSource, />Academic supervisor</);
+  assert.match(debriefingSource, /Echo Wan/);
+  assert.match(debriefingSource, /href="mailto:e\.wan21@ic\.ac\.uk"/);
   assert.match(debriefingSource, /handleClick=\{handleFinish\}/);
   assert.match(debriefingSource, />\s*Finish study\s*</);
   assert.doesNotMatch(debriefingSource, /completionUrl|VITE_PROLIFIC_COMPLETION_URL|window\.location|Redirecting/);
