@@ -1,0 +1,288 @@
+name: Azure image validation and manual release
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      git_ref:
+        description: Git branch, tag, or full commit SHA to build and release
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 20.12.2
+  EMPIRICA_VERSION: v1.12.5
+  EMPIRICA_URL: https://install.empirica.dev/empirica/linux/amd64/version/v1.12.5/empirica
+  EMPIRICA_SHA256: 43d9d20ead6e1abe177a58ed28aaa94d821db46836a304b9ad9ed27826d27ba9
+  IMAGE_PLATFORM: linux/amd64
+  ACR_LOGIN_SERVER: acrdelibra-hhckbjfbe3ctata7.azurecr.io
+  ACR_NAME: acrdelibra
+  IMAGE_REPOSITORY: delibra-nas
+
+jobs:
+  validate:
+    name: Validate linux/amd64 image
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.metadata.outputs.commit }}
+      short_sha: ${{ steps.metadata.outputs.short_sha }}
+      build_date: ${{ steps.metadata.outputs.build_date }}
+      image_tag: ${{ steps.metadata.outputs.image_tag }}
+      bundle_sha256: ${{ steps.metadata.outputs.bundle_sha256 }}
+      image_archive_sha256: ${{ steps.image_artifact.outputs.image_archive_sha256 }}
+      image_id: ${{ steps.image_artifact.outputs.image_id }}
+    steps:
+      - name: Check out selected source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.git_ref || github.sha }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            client/package-lock.json
+            server/package-lock.json
+
+      - name: Install build tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends jq libdigest-sha-perl rsync shellcheck zstd
+          curl -fsSL "$EMPIRICA_URL" -o /tmp/empirica
+          echo "$EMPIRICA_SHA256  /tmp/empirica" | sha256sum -c -
+          sudo install -m 0755 /tmp/empirica /usr/local/bin/empirica
+          empirica version --json | grep -Eq '"version"[[:space:]]*:[[:space:]]*"v1\.12\.5"'
+
+      - name: Install exact dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefix client
+          npm ci --prefix server
+
+      - name: Run tests and production builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          find server/src -name '*.test.mjs' -print0 | sort -z | xargs -0 node --test --test-reporter=dot
+          npm --prefix server run build
+          npm --prefix client run build
+
+      - name: Run static and dependency security checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n \
+            infra/scripts/build-for-azure.sh \
+            infra/scripts/build-nas-bundle.sh \
+            infra/scripts/capture-prewarm-from-running.sh
+          shellcheck \
+            infra/scripts/build-for-azure.sh \
+            infra/scripts/build-nas-bundle.sh
+          npm --prefix client audit --omit=dev --audit-level=critical
+          npm --prefix server audit --omit=dev --audit-level=critical
+
+      - name: Build sanitised bundle
+        shell: bash
+        run: DELIBRA_SKIP_NPM_CI=1 infra/scripts/build-nas-bundle.sh
+
+      - name: Record immutable build metadata
+        id: metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse HEAD)"
+          short_sha="$(git rev-parse --short=7 HEAD)"
+          build_date="$(date -u +%Y%m%d)"
+          image_tag="${short_sha}-${EMPIRICA_VERSION}-azure-${build_date}"
+          bundle_sha256="$(awk -F= '/^bundle_sha256=/ {print $2}' infra/bundle/manifest.txt)"
+          test -n "$bundle_sha256"
+          {
+            echo "commit=$commit"
+            echo "short_sha=$short_sha"
+            echo "build_date=$build_date"
+            echo "image_tag=$image_tag"
+            echo "bundle_sha256=$bundle_sha256"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify committed source remained unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --cached --quiet --ignore-submodules --
+          git diff --quiet --ignore-submodules --
+          test -z "$(git ls-files --others --exclude-standard)"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build exact release image once without publishing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/Dockerfile
+          platforms: linux/amd64
+          pull: true
+          push: false
+          outputs: type=docker,dest=${{ runner.temp }}/delibra-image.tar
+          provenance: false
+          tags: ${{ env.IMAGE_REPOSITORY }}:${{ steps.metadata.outputs.image_tag }}
+
+      - name: Load and verify exact image artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker load --input "$RUNNER_TEMP/delibra-image.tar"
+          actual="$(docker image inspect "${IMAGE_REPOSITORY}:${{ steps.metadata.outputs.image_tag }}" --format '{{.Os}}/{{.Architecture}}')"
+          test "$actual" = "$IMAGE_PLATFORM"
+
+      - name: Record validated image artifact provenance
+        id: image_artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${IMAGE_REPOSITORY}:${{ steps.metadata.outputs.image_tag }}"
+          archive="$RUNNER_TEMP/delibra-image.tar"
+          provenance="$RUNNER_TEMP/azure-image-provenance.txt"
+          image_archive_sha256="$(sha256sum "$archive" | awk '{print $1}')"
+          image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+          test -n "$image_archive_sha256"
+          test -n "$image_id"
+          {
+            printf 'commit=%s\n' '${{ steps.metadata.outputs.commit }}'
+            printf 'bundle_sha256=%s\n' '${{ steps.metadata.outputs.bundle_sha256 }}'
+            printf 'image_tag=%s\n' '${{ steps.metadata.outputs.image_tag }}'
+            printf 'image_platform=%s\n' "$IMAGE_PLATFORM"
+            printf 'image_archive_sha256=%s\n' "$image_archive_sha256"
+            printf 'image_id=%s\n' "$image_id"
+          } > "$provenance"
+          {
+            echo "image_archive_sha256=$image_archive_sha256"
+            echo "image_id=$image_id"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Preserve exact validated image for manual release
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: azure-image-${{ steps.metadata.outputs.commit }}
+          path: |
+            ${{ runner.temp }}/delibra-image.tar
+            ${{ runner.temp }}/azure-image-provenance.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  release:
+    name: Publish immutable ACR image
+    if: github.event_name == 'workflow_dispatch'
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download exact validated image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: azure-image-${{ needs.validate.outputs.commit }}
+          path: ${{ runner.temp }}/validated-image
+
+      - name: Verify artifact provenance and load validated image
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/validated-image/delibra-image.tar"
+          provenance="$RUNNER_TEMP/validated-image/azure-image-provenance.txt"
+          test -f "$archive"
+          test -f "$provenance"
+          test "$(wc -l < "$provenance" | tr -d ' ')" = 6
+          grep -Fx "commit=${{ needs.validate.outputs.commit }}" "$provenance"
+          grep -Fx "bundle_sha256=${{ needs.validate.outputs.bundle_sha256 }}" "$provenance"
+          grep -Fx "image_tag=${{ needs.validate.outputs.image_tag }}" "$provenance"
+          grep -Fx "image_platform=$IMAGE_PLATFORM" "$provenance"
+          grep -Fx "image_archive_sha256=${{ needs.validate.outputs.image_archive_sha256 }}" "$provenance"
+          grep -Fx "image_id=${{ needs.validate.outputs.image_id }}" "$provenance"
+          actual_archive_sha="$(sha256sum "$archive" | awk '{print $1}')"
+          test "$actual_archive_sha" = "${{ needs.validate.outputs.image_archive_sha256 }}"
+          docker load --input "$archive"
+          image="${IMAGE_REPOSITORY}:${{ needs.validate.outputs.image_tag }}"
+          actual_platform="$(docker image inspect "$image" --format '{{.Os}}/{{.Architecture}}')"
+          actual_image_id="$(docker image inspect "$image" --format '{{.Id}}')"
+          test "$actual_platform" = "$IMAGE_PLATFORM"
+          test "$actual_image_id" = "${{ needs.validate.outputs.image_id }}"
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify tag absence and publish the validated image
+        id: publish
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ needs.validate.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          local_image="${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          remote_image="${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+          acr_token="$(az acr login --name "$ACR_NAME" --expose-token --output tsv --query accessToken)"
+          test -n "$acr_token"
+          manifest_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --request HEAD \
+            --header "Authorization: Bearer $acr_token" \
+            --header 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+            "https://${ACR_LOGIN_SERVER}/v2/${IMAGE_REPOSITORY}/manifests/${IMAGE_TAG}")"
+          case "$manifest_status" in
+            200)
+              unset acr_token
+              echo "FATAL: immutable release tag already exists: $remote_image" >&2
+              echo "No overwrite, deletion, reuse, or automatic replacement tag was attempted." >&2
+              exit 1
+              ;;
+            404) ;;
+            *)
+              unset acr_token
+              echo "FATAL: could not prove that the release tag is absent (ACR returned HTTP $manifest_status)." >&2
+              echo "Failing closed without publishing $remote_image." >&2
+              exit 1
+              ;;
+          esac
+          printf '%s' "$acr_token" | docker login "$ACR_LOGIN_SERVER" \
+            --username 00000000-0000-0000-0000-000000000000 \
+            --password-stdin >/dev/null
+          unset acr_token
+          docker tag "$local_image" "$remote_image"
+          docker push "$remote_image"
+          acr_digest="$(az acr repository show \
+            --name "$ACR_NAME" \
+            --image "${IMAGE_REPOSITORY}:${IMAGE_TAG}" \
+            --query digest \
+            --output tsv)"
+          test -n "$acr_digest"
+          echo "acr_digest=$acr_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Report release provenance
+        shell: bash
+        run: |
+          {
+            echo '## Azure image published'
+            echo
+            echo "- Commit: \`${{ needs.validate.outputs.commit }}\`"
+            echo "- Bundle SHA-256: \`${{ needs.validate.outputs.bundle_sha256 }}\`"
+            echo "- Validated image artifact SHA-256: \`${{ needs.validate.outputs.image_archive_sha256 }}\`"
+            echo "- Image: \`${ACR_LOGIN_SERVER}/${IMAGE_REPOSITORY}:${{ needs.validate.outputs.image_tag }}\`"
+            echo "- Immutable ACR digest: \`${{ steps.publish.outputs.acr_digest }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

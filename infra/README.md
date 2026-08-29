@@ -37,10 +37,16 @@ From the repository root:
 
 ```sh
 chmod +x infra/scripts/*.sh
-infra/scripts/build-nas-bundle.sh
+npm ci --prefix client
+npm ci --prefix server
+DELIBRA_SKIP_NPM_CI=1 infra/scripts/build-nas-bundle.sh
 cd server && node --test --test-reporter=dot src/**/*.test.mjs
 cd ../client && npm run build
 ```
+
+Running `infra/scripts/build-nas-bundle.sh` directly is also supported; it
+runs both lockfile-controlled `npm ci` commands unless the caller has just run
+them and explicitly sets `DELIBRA_SKIP_NPM_CI=1`.
 
 The generated bundle and manifest are intentionally Git-ignored. Transfer the
 repository plus `infra/bundle/delibra.tar.zst` and `manifest.txt` to the NAS over
@@ -165,11 +171,11 @@ Do not recruit formal participants until all of these have evidence:
 | `Dockerfile` | pinned Empirica Linux image with least-privilege runtime |
 | `docker-compose.yml` | single-process, same-origin NAS deployment |
 | `.env.example` | non-secret runtime and host-path template (NAS) |
-| `env.azure.example` | non-secret runtime template (Azure Container Apps) |
+| `env.azure.example` | non-secret Azure build/runtime contract notes |
 | `empirica.toml.template` | public placeholder admin configuration |
 | `scripts/build-nas-bundle.sh` | sanitised bundle builder and provenance manifest |
 | `scripts/build-for-azure.sh` | build + tag for Azure; optional `--push` to ACR |
-| `scripts/capture-prewarm-from-running.sh` | populate `prewarm/` from a running v1.12.5 container |
+| `scripts/capture-prewarm-from-running.sh` | legacy NAS recovery cache capture; not used by Azure builds |
 | `scripts/preflight-nas.sh` | fail-closed NAS configuration checks |
 | `scripts/backup-local-encrypted.sh` | encrypted dual-destination snapshot and rotation |
 | `scripts/restore-backup-for-review.sh` | non-destructive integrity/restore drill |
@@ -177,33 +183,93 @@ Do not recruit formal participants until all of these have evidence:
 
 ## Azure deployment (parallel target to NAS)
 
-The Docker image is identical between NAS and Azure; only the destination
-registry and the data dir mount differ. Azure Container Apps has outbound
-internet, so the in-container first-start of `empirica serve` can fetch
-`get.volta.sh` if the prewarm cache is empty — the offline-pinned build
-path that the NAS relies on is no longer mandatory, but capturing
-`prewarm/` from a known-good v1.12.5 container is still recommended for
-deterministic first starts.
+The Azure fresh-image path is independent of the NAS and `infra/prewarm/`.
+The Dockerfile downloads the official Linux AMD64 Empirica v1.12.5 runtime
+and Volta 2.0.2 during the image build, verifies fixed SHA-256 checksums, and
+verifies both reported versions. It therefore does not copy binaries or cache
+state from an old running container.
+
+Pinned public artifacts:
+
+- Empirica:
+  `https://install.empirica.dev/empirica/linux/amd64/version/v1.12.5/empirica`
+  (`43d9d20ead6e1abe177a58ed28aaa94d821db46836a304b9ad9ed27826d27ba9`)
+- Volta:
+  `https://github.com/volta-cli/volta/releases/download/v2.0.2/volta-2.0.2-linux.tar.gz`
+  (`6cec054c911fb925b629a09455775af6e95dc0f5694a4c28b63979ab9ef18037`)
 
 ### One-time setup (every build host)
 
-1. `cp infra/env.azure.example infra/.env` and edit
-   `ACR_LOGIN_SERVER` / `ACR_NAME` / `DELIBRA_IMAGE_TAG`.
-2. `infra/scripts/capture-prewarm-from-running.sh` — pulls the Tajriba
-   v1.12.0 and v1.12.5 binaries (and optionally the Volta runtime) out
-   of the running NAS container into `infra/prewarm/`. This directory
-   is gitignored; it must be present on the build host before
-   `docker build` runs.
-3. `az login` (or enable the ACR admin user in the portal and set
-   `ACR_USERNAME` / `ACR_PASSWORD` in the env when pushing).
+Install Docker, Git, Node/npm, the Empirica CLI, `rsync`, `tar`, `shasum`,
+`zstd`, and Python 3. The helper checks every prerequisite and fails before a
+partial build if one is unavailable. Optional non-secret `DELIBRA_UID` and
+`DELIBRA_GID` overrides may be exported in the invoking shell; the helper does
+not source an environment file.
 
 ### Build (Mac or CI runner)
 
 ```sh
-infra/scripts/build-for-azure.sh            # build only
-infra/scripts/build-for-azure.sh --push     # build + push to ACR
-infra/scripts/build-for-azure.sh --tag=mybuild-20260829  # custom tag
+infra/scripts/build-for-azure.sh         # local build and validation only
+infra/scripts/build-for-azure.sh --push  # explicit Azure CLI-authenticated push
 ```
+
+The helper always installs client and server dependencies using their
+package-lock files, builds the sanitised bundle, and invokes Docker with
+`--platform linux/amd64`. The immutable image destination is:
+
+```text
+acrdelibra-hhckbjfbe3ctata7.azurecr.io/delibra-nas:<7-char-sha>-v1.12.5-azure-<UTC-YYYYMMDD>
+```
+
+It never creates or pushes a `latest` tag. Local development builds may use a
+dirty working tree, but `--push` fails before building or authenticating unless
+the repository has a committed `HEAD` and no staged, unstaged, or untracked
+files. The helper validates one local image, refuses to reuse an existing ACR
+tag, and pushes that same image. It requires an already authenticated Azure CLI
+identity; ACR admin passwords are not supported.
+
+### GitHub Actions validation and release
+
+`.github/workflows/azure-image.yml` performs a non-publishing linux/amd64
+build on normal pushes and pull requests. It checks out the source, installs
+exact Node dependencies and tooling, generates the bundle, runs application
+builds/tests and static/security checks, and validates the image architecture.
+
+Its manual `workflow_dispatch` release path resolves the selected Git ref to
+one commit, builds and validates the linux/amd64 image once, and preserves that
+exact Docker image archive with its commit, bundle SHA-256, image tag, archive
+SHA-256, and image ID. The release job verifies and loads that same artifact,
+authenticates with Azure OIDC, fails closed if the deterministic ACR tag already
+exists, and pushes without rebuilding. It reports the full commit, bundle
+SHA-256, image tag, validated archive SHA-256, and immutable registry digest.
+It does not run `az acr build` and does not update or deploy an Azure Container
+App.
+
+Configure these GitHub repository variables outside source control:
+
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+
+The corresponding Azure application or managed identity needs a GitHub
+federated credential scoped to this repository and `AcrPush` on `acrdelibra`.
+No Azure secret is stored in GitHub or the repository.
+
+### Azure runtime contract
+
+- Image/runtime: Linux AMD64, Empirica v1.12.5, main server port 3000.
+- Persistent state: Azure File Share mounted read/write at `/data`, with the
+  Tajriba store at `/data/tajriba.json`.
+- Admin config: external `/run/secrets/empirica.toml`.
+- LLM and Supabase settings: external environment variables, including
+  `OPENAI_API_KEY`, `OPENAI_MODEL`, `LLM_API_ENDPOINT`,
+  `LLM_MAX_OUTPUT_TOKENS`, `SUPABASE_URL`, and
+  `SUPABASE_SERVICE_ROLE_KEY`.
+- Exactly one active Tajriba writer may use the mounted store.
+
+`capture-prewarm-from-running.sh` remains solely as a legacy NAS recovery
+utility. It is not invoked by the Dockerfile, the Azure build helper, or CI,
+and its output is not an Azure source of truth.
 
 ### Provision the Azure side (portal)
 

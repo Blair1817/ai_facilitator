@@ -19,9 +19,40 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for required in empirica node npm rsync tar shasum git; do
+for required in empirica node npm rsync tar shasum git zstd python3; do
   if ! command -v "$required" >/dev/null 2>&1; then
     echo "FATAL: required command not found: $required" >&2
+    exit 2
+  fi
+done
+
+for lockfile in client/package-lock.json server/package-lock.json; do
+  if [[ ! -f "$REPO_DIR/$lockfile" ]]; then
+    echo "FATAL: required lockfile not found: $lockfile" >&2
+    exit 2
+  fi
+done
+
+EXPECTED_EMPIRICA_VERSION="v1.12.5"
+PROJECT_EMPIRICA_VERSION="$(awk -F': *' '/^version:/ {print $2; exit}' "$REPO_DIR/.empirica/release")"
+if [[ "$PROJECT_EMPIRICA_VERSION" != "$EXPECTED_EMPIRICA_VERSION" ]]; then
+  echo "FATAL: expected Empirica $EXPECTED_EMPIRICA_VERSION, found ${PROJECT_EMPIRICA_VERSION:-unknown}" >&2
+  exit 2
+fi
+
+# A direct invocation must work from a clean checkout. Azure/CI callers that
+# have just run these exact commands may set DELIBRA_SKIP_NPM_CI=1 to avoid a
+# redundant install while retaining the same lockfile-controlled inputs.
+if [[ "${DELIBRA_SKIP_NPM_CI:-0}" != "1" ]]; then
+  echo "Installing client dependencies from package-lock.json..."
+  npm ci --prefix "$REPO_DIR/client"
+  echo "Installing server dependencies from package-lock.json..."
+  npm ci --prefix "$REPO_DIR/server"
+fi
+
+for modules_dir in client/node_modules server/node_modules; do
+  if [[ ! -d "$REPO_DIR/$modules_dir" ]]; then
+    echo "FATAL: required dependency directory not found after npm ci: $modules_dir" >&2
     exit 2
   fi
 done
@@ -36,15 +67,13 @@ cp "$REPO_DIR/.empirica/.gitignore" "$STAGING_DIR/.empirica/.gitignore"
 
 rsync -a \
   --exclude '.DS_Store' \
-  --exclude '.env' \
-  --exclude '*.env' \
+  --exclude '.env*' \
   --exclude 'node_modules' \
   --exclude 'dist' \
   "$REPO_DIR/client/" "$STAGING_DIR/client/"
 rsync -a \
   --exclude '.DS_Store' \
-  --exclude '.env' \
-  --exclude '*.env' \
+  --exclude '.env*' \
   --exclude 'node_modules' \
   --exclude 'dist' \
   "$REPO_DIR/server/" "$STAGING_DIR/server/"
@@ -60,16 +89,16 @@ ln -s "$REPO_DIR/server/node_modules" "$STAGING_DIR/server/node_modules"
 )
 
 CONTENTS_FILE="$STAGING_DIR/bundle-contents.txt"
-tar -tf "$BUNDLE_TMP" > "$CONTENTS_FILE"
+zstd -dc "$BUNDLE_TMP" | tar -tf - > "$CONTENTS_FILE"
 
-if grep -E '(^|/)(local|backups)(/|$)|(^|/)\.env$|\.DS_Store$|__pycache__|feature_server\.py' "$CONTENTS_FILE" >/dev/null; then
+if grep -E '(^|/)(local|backups)(/|$)|(^|/)\.env([^/]*)?$|(^|/)tajriba\.json$|\.DS_Store$|__pycache__|feature_server\.py' "$CONTENTS_FILE" >/dev/null; then
   echo "FATAL: sensitive or stale runtime files entered the Empirica bundle" >&2
   exit 3
 fi
 
 # The bundle must contain only the public placeholder admin config. The real
 # NAS config is mounted at runtime with --config and never enters the image.
-ARCHIVE_CONFIG_SHA="$(tar -xOf "$BUNDLE_TMP" .empirica/empirica.toml | shasum -a 256 | awk '{print $1}')"
+ARCHIVE_CONFIG_SHA="$(zstd -dc "$BUNDLE_TMP" | tar -xOf - .empirica/empirica.toml | shasum -a 256 | awk '{print $1}')"
 TEMPLATE_CONFIG_SHA="$(shasum -a 256 "$REPO_DIR/infra/empirica.toml.template" | awk '{print $1}')"
 if [[ "$ARCHIVE_CONFIG_SHA" != "$TEMPLATE_CONFIG_SHA" ]]; then
   echo "FATAL: bundle config differs from the public placeholder template" >&2
@@ -125,7 +154,7 @@ for root, _, files in os.walk(staging_dir):
             except FileNotFoundError:
                 pass
 PY
-tar --no-mac-metadata -cf "$STAGING_DIR/repack.tar" -C "$STAGING_DIR/untar" .
+COPYFILE_DISABLE=1 tar -cf "$STAGING_DIR/repack.tar" -C "$STAGING_DIR/untar" .
 zstd -q -19 --threads=0 -o "$PATCHED_BUNDLE_TMP" "$STAGING_DIR/repack.tar" --rm
 rm -rf "$STAGING_DIR/untar" "$STAGING_DIR/repack.tar" "$PLAIN_BUNDLE_TAR"
 BUNDLE_TMP="$PATCHED_BUNDLE_TMP"
@@ -144,7 +173,7 @@ cat > "$MANIFEST_PATH" <<EOF
 built_at_utc=$BUILT_AT
 commit=$COMMIT
 working_tree=$DIRTY
-empirica_version=$(empirica version | awk '/^Version:/ {print $2; exit}')
+empirica_version=$PROJECT_EMPIRICA_VERSION
 bundle_sha256=$BUNDLE_SHA
 EOF
 
