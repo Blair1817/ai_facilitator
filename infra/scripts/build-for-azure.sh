@@ -58,6 +58,47 @@ require_clean_release_source() {
   fi
 }
 
+require_expected_post_build_source() {
+  local allowed_generated_path="infra/bundle/manifest.txt"
+  local path
+  local changed_paths=""
+
+  while IFS= read -r -d '' path; do
+    changed_paths+="  ${path}"$'\n'
+  done < <(git -C "$REPO_DIR" diff --cached --name-only -z --ignore-submodules --)
+
+  if [[ -n "$changed_paths" ]]; then
+    echo "ERROR: Refusing to push because staged changes appeared during the build:" >&2
+    printf '%s' "$changed_paths" >&2
+    exit 6
+  fi
+
+  changed_paths=""
+  while IFS= read -r -d '' path; do
+    if [[ "$path" != "$allowed_generated_path" ]]; then
+      changed_paths+="  ${path}"$'\n'
+    fi
+  done < <(git -C "$REPO_DIR" diff --name-only -z --ignore-submodules --)
+
+  if [[ -n "$changed_paths" ]]; then
+    echo "ERROR: Refusing to push because unexpected tracked files changed during the build:" >&2
+    printf '%s' "$changed_paths" >&2
+    echo "Only ${allowed_generated_path} may change during bundle generation." >&2
+    exit 6
+  fi
+
+  changed_paths=""
+  while IFS= read -r -d '' path; do
+    changed_paths+="  ${path}"$'\n'
+  done < <(git -C "$REPO_DIR" ls-files --others --exclude-standard -z)
+
+  if [[ -n "$changed_paths" ]]; then
+    echo "ERROR: Refusing to push because untracked files appeared during the build:" >&2
+    printf '%s' "$changed_paths" >&2
+    exit 6
+  fi
+}
+
 if [[ "$PUSH" -eq 1 ]]; then
   # Release tags claim an exact commit. Refuse dirty or non-Git source before
   # any dependency installation, image build, Azure authentication, or push.
@@ -118,7 +159,7 @@ fi
 
 # Re-check immediately before any Azure authentication. This catches source
 # changes made while dependencies, the bundle, or the image were being built.
-require_clean_release_source
+require_expected_post_build_source
 
 if ! command -v az >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
   echo "FATAL: --push requires Azure CLI, curl, and an authenticated Azure identity; admin credentials are not supported." >&2
