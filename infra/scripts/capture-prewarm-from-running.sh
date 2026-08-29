@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
-# Capture the Tajriba binary + Volta runtime from a running v1.12.5
-# Empirica container so the next docker build can run offline
-# (no github.com / install.empirica.dev fetch on first start).
+# LEGACY NAS RECOVERY UTILITY ONLY.
+#
+# Capture the Tajriba binary + Volta runtime from an existing v1.12.5
+# Empirica container for an old offline NAS recovery workflow.
 #
 # Why this exists:
-#   The Dockerfile COPYs infra/prewarm/ into the image. infra/prewarm/
-#   is gitignored ("Never commit — it's a binary cache"). On a fresh
-#   build host — e.g. a teammate's Mac or a CI runner — there is no
-#   prewarm yet. This script populates it by `docker exec`ing into a
-#   known-good running v1.12.5 container and pulling the cache out.
+#   Historical NAS builds used a cache copied from a running container.
+#   The Azure fresh-image Dockerfile now downloads checksum-pinned official
+#   Linux AMD64 Empirica and Volta artifacts and DOES NOT read infra/prewarm/.
+#   Neither the Azure helper nor GitHub Actions invokes this script, and the
+#   NAS container is not an authoritative source for Azure images.
 #
 # Usage:
-#   1. Make sure you have a v1.12.5 container running somewhere
-#      reachable (the NAS at 192.168.0.109:922 is the source of
-#      truth for this project).
+#   1. Only for deliberate legacy recovery, identify an existing compatible
+#      container and obtain permission to access it.
 #   2. Run:  infra/scripts/capture-prewarm-from-running.sh
-#   3. It writes to infra/prewarm/. Then `docker build` works.
+#   3. It writes to infra/prewarm/ for the legacy recovery procedure only.
 #
 # SSH / Docker host selection: this script talks to the NAS via SSH.
 # Adjust NAS_HOST / NAS_PORT / NAS_SSH_KEY below if your NAS differs.
