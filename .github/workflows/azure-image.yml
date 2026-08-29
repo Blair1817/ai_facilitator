@@ -119,9 +119,39 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git diff --cached --quiet --ignore-submodules --
-          git diff --quiet --ignore-submodules --
-          test -z "$(git ls-files --others --exclude-standard)"
+          allowed_generated_path="infra/bundle/manifest.txt"
+
+          staged_paths=""
+          while IFS= read -r -d '' path; do
+            staged_paths+="  ${path}"$'\n'
+          done < <(git diff --cached --name-only -z --ignore-submodules --)
+          if [[ -n "$staged_paths" ]]; then
+            printf 'FATAL: build steps staged unexpected repository changes:\n' >&2
+            printf '%s' "$staged_paths" >&2
+            exit 1
+          fi
+
+          unexpected_tracked=""
+          while IFS= read -r -d '' path; do
+            if [[ "$path" != "$allowed_generated_path" ]]; then
+              unexpected_tracked+="  ${path}"$'\n'
+            fi
+          done < <(git diff --name-only -z --ignore-submodules --)
+          if [[ -n "$unexpected_tracked" ]]; then
+            printf 'FATAL: build steps modified unexpected tracked files:\n' >&2
+            printf '%s' "$unexpected_tracked" >&2
+            exit 1
+          fi
+
+          untracked_paths=""
+          while IFS= read -r -d '' path; do
+            untracked_paths+="  ${path}"$'\n'
+          done < <(git ls-files --others --exclude-standard -z)
+          if [[ -n "$untracked_paths" ]]; then
+            printf 'FATAL: build steps created unexpected untracked files:\n' >&2
+            printf '%s' "$untracked_paths" >&2
+            exit 1
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
