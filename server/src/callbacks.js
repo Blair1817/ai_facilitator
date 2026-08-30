@@ -1952,7 +1952,11 @@ Empirica.onRoundEnded(({ round }) => {
 });
 
 Empirica.onGameEnded(({ game }) => {
-  const endedAt = new Date().toISOString();
+  const storedEndedAt = game.get("endedAt");
+  const endedAt = typeof storedEndedAt === "string" && storedEndedAt.trim()
+    ? storedEndedAt
+    : new Date().toISOString();
+  if (endedAt !== storedEndedAt) game.set("endedAt", endedAt);
   queueResearchMirror("game_ended", async () => {
     const persistence = researchPersistence();
     await persistence.upsertParticipants(game.players.map((player) => ({

@@ -118,7 +118,7 @@ export class ExportService {
       if (filter.toISO && createdAt && createdAt > filter.toISO) continue;
       const status = attrs.status || "unknown";
       if (filter.status && status !== filter.status) continue;
-      const treatment = attrs.treatment || null;
+      const treatment = gameTreatmentName(attrs);
       // Players are not directly linked to batches; we walk through
       // `game -> player` to count the unique participants. This is the
       // same shape Tajriba exposes in the admin UI.
@@ -149,7 +149,7 @@ export class ExportService {
    * @param {Object} [filter]
    * @param {string} [filter.fromISO]
    * @param {string} [filter.toISO]
-   * @param {string} [filter.treatment]   "static" | "adaptive"
+   * @param {string} [filter.treatment]   game-level treatment name (for example, "main")
    * @param {string} [filter.sequenceId]  "S1" | "S2" | "S3" | "S4"
    * @param {string} [filter.status]      "created" | "running" | "ended"
    * @param {number} [filter.limit=100]
@@ -170,7 +170,7 @@ export class ExportService {
       const attrs = await this.scopeAttributesOf(scope);
       const startedAt = attrs.startedAt || scope.createdAt || null;
       const endedAt = attrs.endedAt || null;
-      const treatment = attrs.treatment || null;
+      const treatment = gameTreatmentName(attrs);
       const sequenceId = attrs.sequenceId || null;
       const status = attrs.status || "unknown";
       if (filter.fromISO && startedAt && startedAt < filter.fromISO) continue;
@@ -275,11 +275,9 @@ export class ExportService {
     }
     return {
       id: scope.id,
+      batchId: attrs.batchID || null,
       status: attrs.status || "unknown",
-      // Prefer the human-readable treatment name; the raw `treatment`
-      // attribute is the full factor object and stringifies to
-      // "[object Object]" in the transcript/CSV.
-      treatment: attrs.treatmentName || (typeof attrs.treatment === "string" ? attrs.treatment : null),
+      treatment: gameTreatmentName(attrs),
       sequenceId: attrs.sequenceId || null,
       taskOrder: attrs.taskOrder || null,
       taskVersionOrder: attrs.taskVersionOrder || null,
@@ -423,6 +421,7 @@ export class ExportService {
       schemaVersion: 1,
       generatedAt: this.now(),
       gameId,
+      batchId: redacted.game.batchId ?? null,
       redact: useRedact,
       players: redacted.players.map((p) => ({ id: p.id, name: p.name })),
       rounds: redacted.rounds.map((r) => ({
@@ -630,7 +629,7 @@ export function renderQuestionnaireCsv(bundle) {
     for (const round of rounds) {
       rows.push({
         game_id: game.id,
-        batch_id: null,
+        batch_id: game.batchId ?? "",
         treatment: game.treatment ?? "",
         sequence_id: game.sequenceId ?? "",
         started_at: game.startedAt ?? "",
@@ -643,7 +642,7 @@ export function renderQuestionnaireCsv(bundle) {
     }
     rows.push({
       game_id: game.id,
-      batch_id: null,
+      batch_id: game.batchId ?? "",
       treatment: game.treatment ?? "",
       sequence_id: game.sequenceId ?? "",
       started_at: game.startedAt ?? "",
@@ -848,6 +847,20 @@ function parseValue(value) {
   } catch {
     return value;
   }
+}
+
+function gameTreatmentName(attrs = {}) {
+  if (typeof attrs.treatmentName === "string" && attrs.treatmentName.trim()) {
+    return attrs.treatmentName;
+  }
+  if (typeof attrs.treatment === "string" && attrs.treatment.trim()) {
+    return attrs.treatment;
+  }
+  if (attrs.treatment && typeof attrs.treatment === "object") {
+    const name = attrs.treatment.name ?? attrs.treatment.treatmentName;
+    if (typeof name === "string" && name.trim()) return name;
+  }
+  return null;
 }
 
 function numberOrZero(value) {

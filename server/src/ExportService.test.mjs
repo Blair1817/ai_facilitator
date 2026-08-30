@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -118,13 +119,14 @@ const T = (v) => JSON.stringify(v);
 function fixture() {
   const batch = makeScope("BATCH1", "batch", (s) => {
     attr(s, "status", "ended");
-    attr(s, "treatment", "adaptive");
+    attr(s, "treatment", { name: "main", gameDuration: 10, phase1Duration: 2 });
     attr(s, "createdAt", "2026-08-15T10:00:00+08:00");
   });
   const game = makeScope("GAME1", "game", (s) => {
     attr(s, "batchID", T("BATCH1"));
     attr(s, "status", "ended");
-    attr(s, "treatment", "adaptive");
+    attr(s, "treatment", { gameDuration: 10, phase1Duration: 2 });
+    attr(s, "treatmentName", "main");
     attr(s, "sequenceId", "S2");
     attr(s, "startedAt", "2026-08-15T10:05:00+08:00");
     attr(s, "endedAt", "2026-08-15T10:45:00+08:00");
@@ -229,7 +231,7 @@ test("listBatches returns each batch with playerCount and gameCount", async () =
   const batches = await svc.listBatches();
   assert.equal(batches.length, 1);
   assert.equal(batches[0].id, "BATCH1");
-  assert.equal(batches[0].treatment, "adaptive");
+  assert.equal(batches[0].treatment, "main");
   assert.equal(batches[0].status, "ended");
   assert.equal(batches[0].gameCount, 1);
   assert.equal(batches[0].playerCount, 3);
@@ -240,21 +242,27 @@ test("listGames filters by treatment and respects limit/offset", async () => {
   const all = await svc.listGames("BATCH1", { limit: 10, offset: 0 });
   assert.equal(all.items.length, 1);
   assert.equal(all.total, 1);
-  assert.equal(all.items[0].treatment, "adaptive");
+  assert.equal(all.items[0].treatment, "main");
   assert.equal(all.items[0].sequenceId, "S2");
   assert.equal(all.items[0].playerCount, 3);
-  const filtered = await svc.listGames("BATCH1", { treatment: "static" });
-  assert.equal(filtered.items.length, 0);
+  const gameTreatment = await svc.listGames("BATCH1", { treatment: "main" });
+  assert.equal(gameTreatment.items.length, 1);
+  const roundFacilitation = await svc.listGames("BATCH1", { treatment: "static" });
+  assert.equal(roundFacilitation.items.length, 0);
 });
 
 test("getGameBundle assembles players, rounds, and the bounded LLM log", async () => {
   const svc = service();
   const bundle = await svc.getGameBundle("GAME1");
   assert.equal(bundle.game.id, "GAME1");
+  assert.equal(bundle.game.batchId, "BATCH1");
+  assert.equal(bundle.game.treatment, "main");
   assert.equal(bundle.players.length, 3);
   assert.equal(bundle.players[0].name, "Blue", "players should be sorted by name");
   assert.equal(bundle.rounds.length, 2);
   assert.equal(bundle.rounds[0].index, 0);
+  assert.equal(bundle.rounds[0].facilitation, "adaptive");
+  assert.equal(bundle.rounds[1].facilitation, "static");
   assert.equal(bundle.llmLog.length, 2);
   assert.equal(bundle.llmLog[0].auditRequestId, "R1");
   assert.equal(bundle.llmLog[1].outcome, "INTERRUPTED_CALLBACKS_RESTART");
@@ -280,6 +288,15 @@ test("renderQuestionnaireCsv produces one row per player per round plus an end-o
   assert.ok(!csv.includes("researcher@example.com"));
   // No raw LLM prompt should appear in the CSV (it lives in the bundle zip only).
   assert.ok(!csv.includes("internal-only-payload"));
+  for (const line of csv.trimEnd().split("\n").slice(1)) {
+    const [gameId, batchId, treatment, sequenceId, startedAt, endedAt] = line.split(",", 6);
+    assert.equal(gameId, "GAME1");
+    assert.equal(batchId, "BATCH1");
+    assert.equal(treatment, "main");
+    assert.equal(sequenceId, "S2");
+    assert.equal(startedAt, "2026-08-15T10:05:00+08:00");
+    assert.equal(endedAt, "2026-08-15T10:45:00+08:00");
+  }
 });
 
 test("renderQuestionnaireCsv with redact:false keeps the raw text", async () => {
@@ -292,6 +309,9 @@ test("renderTranscriptMd emits one section per round and a final LLM audit log s
   const svc = service();
   const { markdown } = await svc.renderTranscriptMd("GAME1", { redact: true });
   assert.match(markdown, /^# Game GAME1/m);
+  assert.match(markdown, /- Treatment: main/);
+  assert.match(markdown, /- Ended: 2026-08-15T10:45:00\+08:00/);
+  assert.doesNotMatch(markdown, /- Ended: \(in progress\)/);
   assert.match(markdown, /## Round 1 · Task 1/);
   assert.match(markdown, /## Round 2 · Task 2/);
   assert.match(markdown, /## LLM audit log \(2 entries\)/);
@@ -365,6 +385,8 @@ test("ExportService writeGameBundle produces a valid ZIP and records the audit e
   assert.ok(bytes > 0, "bundle must not be empty");
   assert.equal(sha256.length, 64);
   assert.deepEqual(files, ["questionnaire.csv", "transcript.md", "meta.json", "llm-audit.jsonl"]);
+  const meta = JSON.parse(execFileSync("unzip", ["-p", outFile, "meta.json"], { encoding: "utf8" }));
+  assert.equal(meta.batchId, "BATCH1");
 
   // The service is request-context-free; the caller (HTTP server / CLI)
   // writes the audit record. Simulate that here and verify the line.
@@ -389,4 +411,16 @@ test("ExportService writeGameBundle produces a valid ZIP and records the audit e
   assert.equal(record.redact, true);
   assert.equal(record.sizeBytes, bytes);
   assert.equal(record.sha256, sha256);
+});
+
+test("production game-ended handler persists an idempotent Tajriba endedAt", () => {
+  const callbacksSource = fs.readFileSync(new URL("./callbacks.js", import.meta.url), "utf8");
+  const handlerStart = callbacksSource.indexOf("Empirica.onGameEnded");
+  const handlerEnd = callbacksSource.indexOf("\nfor (const responseType", handlerStart);
+  assert.ok(handlerStart >= 0 && handlerEnd > handlerStart, "game-ended handler must exist");
+  const handler = callbacksSource.slice(handlerStart, handlerEnd);
+  assert.match(handler, /game\.get\("endedAt"\)/);
+  assert.match(handler, /new Date\(\)\.toISOString\(\)/);
+  assert.match(handler, /if \(endedAt !== storedEndedAt\) game\.set\("endedAt", endedAt\)/);
+  assert.match(handler, /occurred_at: endedAt/);
 });

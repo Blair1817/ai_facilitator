@@ -23,13 +23,14 @@ const T = (v) => JSON.stringify(v);
 function fixture() {
   const batch = makeScope("BATCH1", "batch", (s) => {
     attr(s, "status", "ended");
-    attr(s, "treatment", "adaptive");
+    attr(s, "treatment", { name: "main", gameDuration: 10, phase1Duration: 2 });
     attr(s, "createdAt", "2026-08-15T10:00:00+08:00");
   });
   const game = makeScope("GAME1", "game", (s) => {
     attr(s, "batchID", T("BATCH1"));
     attr(s, "status", "ended");
-    attr(s, "treatment", "adaptive");
+    attr(s, "treatment", { gameDuration: 10, phase1Duration: 2 });
+    attr(s, "treatmentName", "main");
     attr(s, "sequenceId", "S2");
     attr(s, "startedAt", "2026-08-15T10:05:00+08:00");
     attr(s, "endedAt", "2026-08-15T10:45:00+08:00");
@@ -153,6 +154,11 @@ test("GET / renders a list page with batches, games, and download links", async 
     assert.match(body, /\/games\/GAME1\/transcript\.md/);
     assert.match(body, /\/games\/GAME1\/bundle\.zip/);
     assert.match(body, /redact/);
+    assert.match(body, />main<\/td>/);
+    assert.doesNotMatch(body, /\[object Object\]/);
+    assert.match(body, /<option value="main"/);
+    assert.doesNotMatch(body, /<option value="static"/);
+    assert.doesNotMatch(body, /<option value="adaptive"/);
     // audit line recorded
     const audit = fs.readFileSync(srv.auditFile, "utf8").trim().split("\n");
     assert.equal(audit.length, 1);
@@ -165,14 +171,15 @@ test("GET / renders a list page with batches, games, and download links", async 
   }
 });
 
-test("GET /batches/:batchId/games returns a JSON list with limit/offset", async () => {
+test("GET /batches/:batchId/games returns a JSON list with game-level treatment filtering", async () => {
   const srv = await makeRunningServer();
   try {
-    const { status, body } = await fetchText(srv.base + "/batches/BATCH1/games?limit=5&offset=0");
+    const { status, body } = await fetchText(srv.base + "/batches/BATCH1/games?treatment=main&limit=5&offset=0");
     assert.equal(status, 200);
     const parsed = JSON.parse(body);
     assert.equal(parsed.total, 1);
     assert.equal(parsed.items[0].id, "GAME1");
+    assert.equal(parsed.items[0].treatment, "main");
     assert.equal(parsed.limit, 5);
     assert.equal(parsed.offset, 0);
   } finally {

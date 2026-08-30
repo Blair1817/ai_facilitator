@@ -404,8 +404,7 @@ function renderListPage({ batches, gamesByBatch, filter, limit }) {
       <label>treatment
         <select name="treatment">
           <option value="">(any)</option>
-          <option value="static"${filter.treatment === "static" ? " selected" : ""}>static</option>
-          <option value="adaptive"${filter.treatment === "adaptive" ? " selected" : ""}>adaptive</option>
+          <option value="main"${filter.treatment === "main" ? " selected" : ""}>main</option>
         </select>
       </label>
       <label>sequence
