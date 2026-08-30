@@ -25,6 +25,21 @@ test("request policy preserves the legacy request shape for non-reasoning models
   assert.equal("max_completion_tokens" in payload, false);
 });
 
+for (const model of ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]) {
+  test(`request policy uses max_completion_tokens for ${model}`, () => {
+    const payload = buildChatCompletionPayload({ model, messages: [], maxTokens: 500 });
+    assert.equal(payload.max_completion_tokens, 500);
+    assert.equal("max_tokens" in payload, false);
+    assert.equal("reasoning_split" in payload, false);
+  });
+}
+
+test("request policy still uses max_tokens for a legacy OpenAI model", () => {
+  const payload = buildChatCompletionPayload({ model: "gpt-4o", messages: [], maxTokens: 500 });
+  assert.equal(payload.max_tokens, 500);
+  assert.equal("max_completion_tokens" in payload, false);
+});
+
 test("transport preserves plain JSON for downstream validation", () => {
   const rawText = JSON.stringify({ role: "GENERALIST", message: "What criteria should the group compare?", groundingMessageIds: [] });
   const result = buildSuccessfulLLMResult(rawText);

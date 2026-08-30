@@ -6,12 +6,18 @@ export function isMiniMaxReasoningModel(model) {
   return typeof model === "string" && /^MiniMax-M2(?:$|[.\-])/i.test(model.trim());
 }
 
+function isOpenAIGpt56Model(model) {
+  return typeof model === "string" && /^gpt-5\.6(?:$|[.\-])/i.test(model.trim());
+}
+
 /**
  * MiniMax M2 models spend completion tokens on hidden/returned reasoning before
  * producing the final answer. The legacy max_tokens caps used for Text-01 can
  * therefore truncate the JSON answer entirely. Use MiniMax's documented
  * reasoning envelope and completion-token field for M2, while preserving the
- * legacy request shape for non-reasoning models.
+ * legacy request shape for models that still accept max_tokens. OpenAI GPT-5.6
+ * Chat Completions models require max_completion_tokens without MiniMax's
+ * reasoning_split extension or reasoning floor.
  */
 export function buildChatCompletionPayload({
   model,
@@ -28,6 +34,9 @@ export function buildChatCompletionPayload({
       reasoning_split: true,
       max_completion_tokens: Math.max(safeMax, reasoningCompletionFloor),
     };
+  }
+  if (isOpenAIGpt56Model(model)) {
+    return { model, messages, max_completion_tokens: safeMax };
   }
   return { model, messages, max_tokens: safeMax };
 }
