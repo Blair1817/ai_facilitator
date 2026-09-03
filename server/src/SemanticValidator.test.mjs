@@ -478,7 +478,11 @@ test("validateCandidate: combined Phase-5 + spec-§11 failures all appear in fai
 });
 
 test("validateCandidate: propagates an LLM API failure as VALIDATOR_API_ERROR", async () => {
-  const fakeCallLLM = async (_messages) => ({ success: false, error: "rate limited" });
+  const responseMetadata = {
+    finish_reason: "length",
+    usage: { prompt_tokens: 300, completion_tokens: 1000, total_tokens: 1300, reasoning_tokens: 999 },
+  };
+  const fakeCallLLM = async (_messages) => ({ success: false, error: "rate limited", responseMetadata });
   const result = await validateCandidate({
     chat: chat(),
     candidate: { role: "STATIC", message: "x", groundingMessageIds: [] },
@@ -489,6 +493,7 @@ test("validateCandidate: propagates an LLM API failure as VALIDATOR_API_ERROR", 
   assert.equal(result.success, false);
   assert.equal(result.code, "VALIDATOR_API_ERROR");
   assert.match(result.error, /rate limited/);
+  assert.equal(result.responseMetadata, responseMetadata);
 });
 
 test("validateCandidate: rejects malformed JSON as VALIDATOR_PARSE_FAILURE", async () => {

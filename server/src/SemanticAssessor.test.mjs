@@ -149,10 +149,15 @@ test("assessSemanticFactors: end-to-end success with a well-formed fake LLM resp
 });
 
 test("assessSemanticFactors: propagates an LLM API failure as ASSESSOR_API_ERROR", async () => {
-  const fakeCallLLM = async (_messages) => ({ success: false, error: "rate limited" });
+  const responseMetadata = {
+    finish_reason: "length",
+    usage: { prompt_tokens: 200, completion_tokens: 1000, total_tokens: 1200, reasoning_tokens: 1000 },
+  };
+  const fakeCallLLM = async (_messages) => ({ success: false, error: "missing content", responseMetadata });
   const result = await assessSemanticFactors({ chat: chat(), taskGeneralContext: "x", callLLM: fakeCallLLM });
   assert.equal(result.success, false);
   assert.equal(result.code, "ASSESSOR_API_ERROR");
+  assert.equal(result.responseMetadata, responseMetadata);
 });
 
 test("assessSemanticFactors: rejects malformed JSON as ASSESSOR_PARSE_FAILURE", async () => {

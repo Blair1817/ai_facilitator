@@ -38,7 +38,7 @@ test("persistent Specialist Validator rejection routes once to Adaptive Generali
   const specialistBody = callbacksSource.slice(specialistStart);
   const rejectionCheck = specialistBody.indexOf('logEntry.outcome === "SILENT_VALIDATOR_REJECTED"');
   const fallbackMarker = specialistBody.indexOf('logEntry.fallbackRoute = "SPECIALIST_TO_GENERALIST"');
-  const generalistBuild = specialistBody.indexOf('"adaptive",\n      "generalist"', rejectionCheck);
+  const generalistBuild = specialistBody.search(/"adaptive",\s*\n\s*"generalist"/);
   const fallbackCall = specialistBody.indexOf("runSharedGeneration(", generalistBuild);
 
   assert.ok(rejectionCheck >= 0, "fallback must be gated by two failed semantic validations");

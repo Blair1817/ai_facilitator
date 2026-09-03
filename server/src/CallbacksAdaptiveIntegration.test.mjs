@@ -51,6 +51,15 @@ test("callbacks.js imports the shared Generator contract and live Semantic Valid
   assert.doesNotMatch(callbacksSource, /import[^;]*from\s*"\.\/prompts\/regenerationPlaceholder\.js"/, "regenerationPlaceholder.js must not be imported in production");
 });
 
+test("callbacks.js persists sanitized response metadata for Assessor, Generator, Validator, and icebreaker calls", () => {
+  assert.match(callbacksSource, /extractChatCompletionResponseMetadata\(responseBody\)/);
+  assert.match(callbacksSource, /detectorResponseMetadata\s*=\s*assessorResult\.responseMetadata/);
+  assert.match(callbacksSource, /generatorResponseMetadata\s*=\s*\[/);
+  assert.match(callbacksSource, /validatorResponseMetadata\s*=\s*\[/);
+  assert.match(callbacksSource, /responseMetadata:\s*response\.responseMetadata\s*\?\?\s*null/);
+  assert.doesNotMatch(callbacksSource, /logEntry\.[A-Za-z]*responseBody|responseBody:\s*responseBody/);
+});
+
 test("callbacks.js: buildGeneratorContext and runSharedGeneration are each defined exactly once and used by both facilitation conditions", () => {
   assert.match(callbacksSource, /function buildGeneratorContext\(/);
   assert.match(callbacksSource, /async function runSharedGeneration\(/);
@@ -92,6 +101,21 @@ test("callbacks.js: a per-Round checkpoint marker (lastHandledCheckpoint) guards
   assert.match(callbacksSource, /recordAttempt\(game,\s*humanMessageCount,\s*now\)/);
 });
 
+test("every chat audit entry receives its stable id before either early finalization or beginInFlight", () => {
+  const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
+  const idDeclaration = handleChatBody.indexOf("const auditRequestId =");
+  const logEntryCreation = handleChatBody.indexOf("let logEntry =", idDeclaration);
+  const idOnEntry = handleChatBody.indexOf("auditRequestId,", logEntryCreation);
+  const nonTriggerBranch = handleChatBody.indexOf("if (!trigger.trigger)", logEntryCreation);
+  const earlyFinalize = handleChatBody.indexOf("finalizeAuditLog(game, logEntry)", nonTriggerBranch);
+  const begin = handleChatBody.indexOf("beginInFlight(", earlyFinalize);
+
+  assert.ok(idDeclaration >= 0 && idDeclaration < logEntryCreation);
+  assert.ok(logEntryCreation < idOnEntry && idOnEntry < nonTriggerBranch);
+  assert.ok(nonTriggerBranch < earlyFinalize && earlyFinalize < begin);
+  assert.doesNotMatch(handleChatBody.slice(begin), /logEntry\.auditRequestId\s*=/);
+});
+
 test("routing: Static reaches generation before and without every Adaptive assessment/selection function", () => {
   const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
   const staticStart = handleChatBody.indexOf('if (facilitation === "static")');
@@ -130,16 +154,99 @@ test("routing: Adaptive ABSTAIN returns before prompt construction and Generator
   assert.match(abstainBlock, /finalizeAuditLog\(game, logEntry\)/);
   assert.match(abstainBlock, /return;/);
   assert.doesNotMatch(abstainBlock, /buildGeneratorContext|runSharedGeneration|chooseRole|compilePlan/);
+  assert.doesNotMatch(abstainBlock, /whileFacilitatorPublishesVisibleResponse|setVisibleResponsePending/);
   assert.ok(abstainStart < generalistStart && generalistStart < roleSelectionIndex);
 });
 
-test("routing: Static and Adaptive retain the same existing six-human-message checkpoint opportunity", () => {
+test("typing visibility is separate from audit activity and every evaluation/generation phase remains hidden", () => {
+  assert.match(
+    customChatSource,
+    /entry\?\.outcome === "PENDING"[\s\S]*?entry\?\.visibleResponsePending === true[\s\S]*?entry\?\.originatingRoundId/,
+  );
+
+  const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
+  const beginIndex = handleChatBody.indexOf("beginInFlight(");
+  const assessorIndex = handleChatBody.indexOf("assessSemanticFactors(");
+  assert.ok(beginIndex < assessorIndex, "audit tracking must still begin before the Assessor");
+  assert.doesNotMatch(handleChatBody, /setVisibleResponsePending|whileFacilitatorPublishesVisibleResponse/);
+});
+
+test("validated publication sets typing immediately around append and always clears it", () => {
+  const helperStart = callbacksSource.indexOf("function whileFacilitatorPublishesVisibleResponse");
+  const helperEnd = callbacksSource.indexOf("\n}\n", helperStart) + 3;
+  const helperBody = callbacksSource.slice(helperStart, helperEnd);
+  assert.match(helperBody, /setVisibleResponsePending\(game, logEntry\.auditRequestId, true\)/);
+  assert.match(helperBody, /try\s*\{[\s\S]*?return task\(\);[\s\S]*?\}\s*finally\s*\{[\s\S]*?setVisibleResponsePending\(game, logEntry\.auditRequestId, false\)/);
+
+  const publishStart = callbacksSource.indexOf("function postGeneratorResultIfValid");
+  const publishEnd = callbacksSource.indexOf("\n}\n", publishStart) + 3;
+  const publishBody = callbacksSource.slice(publishStart, publishEnd);
+  const nonEmptyGuard = publishBody.indexOf("!llmAction.message.trim()");
+  const roleGuard = publishBody.indexOf("llmAction.role !== expectedRole");
+  const typingIndex = publishBody.indexOf("whileFacilitatorPublishesVisibleResponse(");
+  const appendIndex = publishBody.indexOf("appendCanonicalMessage(");
+  assert.ok(nonEmptyGuard < roleGuard && roleGuard < typingIndex && typingIndex < appendIndex);
+});
+
+test("failed generation, Validator rejection, repair/fallback failure, and stale abort never activate typing", () => {
+  const sharedFnBody = callbacksSource.slice(
+    callbacksSource.indexOf("async function runSharedGeneration"),
+    callbacksSource.indexOf("// ── S1-S4 sequence definitions"),
+  );
+  assert.doesNotMatch(sharedFnBody, /setVisibleResponsePending|whileFacilitatorPublishesVisibleResponse/);
+
+  for (const silentMarker of [
+    "a1.silent",
+    "a2.silent",
+    "v1.validatorFailed",
+    "v2.validatorFailed",
+    'logEntry.failureStage = "validator_rejected"',
+    "Discarded stale AI result",
+    "Discarded stale Validator result",
+    "Discarded stale repair Validator result",
+  ]) {
+    assert.ok(sharedFnBody.includes(silentMarker), `missing silent-path coverage marker: ${silentMarker}`);
+  }
+});
+
+test("Static, Adaptive, and participant-requested replies share publication-only typing", () => {
+  const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
+  assert.match(handleChatBody, /if \(facilitation === "static"\)[\s\S]*?runSharedGeneration\(/);
+  assert.match(handleChatBody, /if \(gateResult\.decision === "generalist"\)[\s\S]*?runSharedGeneration\(/);
+  assert.match(handleChatBody, /if \(isMentionCheckpoint\)[\s\S]*?runSharedGeneration\([\s\S]*?postParticipantRequestFallback\(/);
+
+  const fallbackStart = callbacksSource.indexOf("function postParticipantRequestFallback");
+  const fallbackEnd = callbacksSource.indexOf("\n}\n", fallbackStart) + 3;
+  const fallbackBody = callbacksSource.slice(fallbackStart, fallbackEnd);
+  assert.match(fallbackBody, /whileFacilitatorPublishesVisibleResponse\([\s\S]*?appendCanonicalMessage\(/);
+});
+
+test("routing: Static and Adaptive share one automatic pacing policy with no cap or Adaptive bypass", () => {
   const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
   const checkpointIndex = handleChatBody.indexOf("shouldEvaluateCheckpoint({");
   const staticIndex = handleChatBody.indexOf('if (facilitation === "static")');
   const adaptiveDetectorIndex = handleChatBody.indexOf("assessSemanticFactors(");
   assert.ok(checkpointIndex !== -1 && checkpointIndex < staticIndex && staticIndex < adaptiveDetectorIndex);
   assert.equal([...handleChatBody.matchAll(/shouldEvaluateCheckpoint\(\{/g)].length, 1, "there must be one shared checkpoint manager call, not one per condition");
+  assert.doesNotMatch(handleChatBody, /bypassAutomaticPacingAndCap|interventionCapPerRound|cap_reached/);
+});
+
+test("stale Validator results are rejected before either publication path", () => {
+  const sharedFnBody = callbacksSource.slice(
+    callbacksSource.indexOf("async function runSharedGeneration"),
+    callbacksSource.indexOf("// ── S1-S4 sequence definitions"),
+  );
+  const firstValidator = sharedFnBody.indexOf("const v1 = await runValidator(");
+  const firstStaleGuard = sharedFnBody.indexOf("if (!isOriginatingStageActive())", firstValidator);
+  const firstPublish = sharedFnBody.indexOf("postGeneratorResultIfValid(", firstValidator);
+  const repairValidator = sharedFnBody.indexOf("const v2 = await runValidator(");
+  const repairStaleGuard = sharedFnBody.indexOf("if (!isOriginatingStageActive())", repairValidator);
+  const repairPublish = sharedFnBody.indexOf("postGeneratorResultIfValid(", repairValidator);
+
+  assert.ok(firstValidator !== -1 && firstValidator < firstStaleGuard && firstStaleGuard < firstPublish);
+  assert.ok(repairValidator !== -1 && repairValidator < repairStaleGuard && repairStaleGuard < repairPublish);
+  assert.match(sharedFnBody, /Discarded stale Validator result/);
+  assert.match(sharedFnBody, /Discarded stale repair Validator result/);
 });
 
 test("routing: no requireLLMMessage switch or Generator-level WAIT/INTERVENE/ABSTAIN contract was introduced", () => {

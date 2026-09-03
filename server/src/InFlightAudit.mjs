@@ -37,13 +37,51 @@ function appendLog(store, entry) {
   // `bufio.Scanner` token limit on reload. The bounded per-entry +
   // index pattern in AppendOnlyAttribute keeps each line sized to one
   // entry instead of the cumulative log.
-  appendToAttribute(store, LLM_LOG_NAMESPACE, { id: entry.auditRequestId, ...entry });
+  const id = entry?.auditRequestId;
+  // A repeated terminal callback for the same lifecycle is an idempotent
+  // retry, not a second audit event. Keep the first append immutable while
+  // still allowing recovery from a partial write whose index or entry is
+  // missing. Invalid ids continue into appendToAttribute and fail loudly.
+  const index = store.get(LLM_LOG_INDEX_KEY);
+  if (
+    typeof id === "string"
+    && id.length > 0
+    && Array.isArray(index)
+    && index.includes(id)
+    && store.get(`${LLM_LOG_NAMESPACE}.${id}`)
+  ) {
+    return id;
+  }
+  // Write the canonical lifecycle id last so an incidental `id: undefined`
+  // field on a producer payload cannot overwrite it during object spread.
+  return appendToAttribute(store, LLM_LOG_NAMESPACE, { ...entry, id });
 }
 
 export function beginInFlight(store, entry) {
   if (!entry?.auditRequestId) throw new Error("An in-flight audit entry requires auditRequestId");
   const pending = store.get(IN_FLIGHT_KEY) || {};
-  store.set(IN_FLIGHT_KEY, { ...pending, [entry.auditRequestId]: { ...entry } });
+  store.set(IN_FLIGHT_KEY, {
+    ...pending,
+    [entry.auditRequestId]: { ...entry, visibleResponsePending: false },
+  });
+}
+
+/**
+ * Mark whether an audited checkpoint is actively preparing a participant-
+ * visible Facilitator response. This is intentionally separate from the
+ * broader in-flight audit lifecycle: Adaptive assessment can be in flight
+ * without implying that the Facilitator will respond.
+ */
+export function setVisibleResponsePending(store, auditRequestId, pending) {
+  if (!auditRequestId) return false;
+  const inFlight = store.get(IN_FLIGHT_KEY) || {};
+  const entry = inFlight[auditRequestId];
+  if (!entry) return false;
+  store.set(IN_FLIGHT_KEY, {
+    ...inFlight,
+    [auditRequestId]: { ...entry, visibleResponsePending: pending === true },
+  });
+  return true;
 }
 
 export function finalizeAuditLog(store, entry) {

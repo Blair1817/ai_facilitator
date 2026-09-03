@@ -2,10 +2,10 @@
  * CheckpointManager.mjs
  *
  * Phase 3 (v2 design): the single source of truth for "should this
- * human message trigger a facilitation checkpoint right now?". Shared
- * by the Static AI facilitator and the Adaptive AI facilitator --
- * the trigger conditions are identical for both; only the post-trigger
- * pipeline differs.
+ * human message trigger a facilitation checkpoint right now?". Static
+ * and Adaptive share the same automatic pacing policy: six human messages
+ * since the last successful publication, a 30-second cooldown since the
+ * last automatic attempt, and the final time floor.
  *
  * v2 design invariants (audited in `audit-phase1.md` v3):
  *   1. Every checkpoint consumes one "opportunity" only if it results
@@ -15,13 +15,11 @@
  *      research-team decision).
  *   2. "Attempt" is decoupled from "publish": `attemptedThisRound`
  *      counts every checkpoint trigger, `publishedThisRound` counts
- *      only successful publishes. The intervention cap (default 3
- *      attempts per round) is on `attemptedThisRound` to prevent
- *      failure-storms from burning through cap budget; the publish
- *      budget is naturally bounded by the 6-message opportunity gate.
+ *      only successful publishes. Both counters remain available for audit,
+ *      but neither condition has a per-round automatic-attempt cap.
  *   3. Cooldown is on wall-clock time between any two attempts
  *      (success or fail) so a hot loop of failures can't bypass the
- *      intervention cap.
+ *      shared pacing rules.
  *
  * This module is a pure function library over a thin state surface
  * (the `game` and `round` Empirica objects) -- no I/O, no LLM calls,
@@ -30,13 +28,12 @@
  * SemanticAssessor.js.
  */
 
-// Default config (Phase 3 placeholder values, frozen per Q4).
+// Shared automatic pacing config for Static and Adaptive.
 // Phase 8 will lock these once the pilot / Method M replay confirms
 // they are usable; until then they are conservative defaults.
 export const CHECKPOINT_DEFAULTS = Object.freeze({
   messagesBetweenInterventions: 6,   // 6 human messages between publishes
   cooldownMs: 30_000,                 // 30 seconds between any two attempts
-  interventionCapPerRound: 3,        // max 3 attempts per round (Static + Adaptive)
   minTimeForInterventionMs: 10_000,   // 10s before deadline
 });
 
@@ -139,7 +136,7 @@ function writeCheckpointState(store, state) {
  *                     the very first message of a stage before the
  *                     transcript is initialised)
  *   - isMentionCheckpoint: an explicit participant request. During Task it
- *     bypasses automatic pacing, time-floor, and intervention-cap rules.
+ *     bypasses automatic pacing and time-floor rules.
  *     Per-message dedup remains so one request yields exactly one response.
  */
 export function shouldEvaluateCheckpoint({
@@ -188,21 +185,10 @@ export function shouldEvaluateCheckpoint({
     };
   }
 
-  // -- Trigger condition 4: per-round intervention cap
-  // Counts every automatic attempt (success or fail) so a failure storm
-  // cannot burn through the budget. Participant requests returned above.
-  if (state.attemptedThisRound >= config.interventionCapPerRound) {
-    return {
-      trigger: false,
-      state,
-      reason: `cap_reached (attempted=${state.attemptedThisRound} >= ${config.interventionCapPerRound})`,
-    };
-  }
-
-  // -- Trigger conditions 5/6/7: automatic pacing gates. Explicit
+  // -- Trigger conditions 4/5/6: automatic pacing gates. Explicit
   // participant requests returned above.
 
-  // -- Trigger condition 5: cooldown (wall-clock since last attempt)
+  // -- Trigger condition 4: cooldown (wall-clock since last attempt)
   if (state.lastAttemptTimestamp > 0) {
     const elapsed = now - state.lastAttemptTimestamp;
     if (elapsed < config.cooldownMs) {
@@ -214,7 +200,7 @@ export function shouldEvaluateCheckpoint({
     }
   }
 
-  // -- Trigger condition 6: 6-human-message opportunity gate
+  // -- Trigger condition 5: 6-human-message opportunity gate
   // This is the "opportunity" gate per Q3: only PUBLISHED messages
   // reset it. Failed attempts do NOT reset it. (See audit-phase1.md
   // v3 §2 contract 1 for the data-driven rationale.)
@@ -226,7 +212,7 @@ export function shouldEvaluateCheckpoint({
     };
   }
 
-  // -- Trigger condition 7: per-checkpoint dedup
+  // -- Trigger condition 6: per-checkpoint dedup
   // Two events firing for the same humanMessageCount (e.g. retry of
   // a stale TCP message) must not double-trigger.
   if (state.lastHandledCheckpoint === humanMessageCount) {

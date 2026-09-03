@@ -8,6 +8,14 @@ const dirname = path.dirname(fileURLToPath(import.meta.url));
 const callbacksSource = readFileSync(path.join(dirname, "callbacks.js"), "utf8");
 const appSource = readFileSync(path.join(dirname, "../../client/src/App.jsx"), "utf8");
 const gameSource = readFileSync(path.join(dirname, "../../client/src/Game.jsx"), "utf8");
+const initialDecisionSource = readFileSync(
+  path.join(dirname, "../../client/src/stages/InitialDecision.jsx"),
+  "utf8",
+);
+const timerSource = readFileSync(
+  path.join(dirname, "../../client/src/components/Timer.jsx"),
+  "utf8",
+);
 const reviewQuizSource = readFileSync(
   path.join(dirname, "../../client/src/stages/ReviewQuiz.jsx"),
   "utf8",
@@ -62,6 +70,29 @@ test("R1-R2: both rounds wrap the IceBreaker in ten-second transition countdowns
   assert.match(gameSource, /stageName == "IceBreakerStartCountdown"/);
   assert.match(gameSource, /stageName == "IceBreakerEndCountdown"/);
   assert.match(reviewQuizSource, /player\.stage\.set\("submit", true\)/);
+});
+
+test("InitialDecision is 180 seconds in both rounds and shows the Empirica stage countdown", () => {
+  assert.match(callbacksSource, /const INITIAL_DECISION_DURATION_SECONDS = 3 \* 60;/);
+  assert.equal(
+    (callbacksSource.match(/name: "InitialDecision",\s+duration: INITIAL_DECISION_DURATION_SECONDS/g) ?? []).length,
+    2,
+  );
+
+  assert.match(initialDecisionSource, /import \{ Timer \} from "\.\.\/components\/Timer"/);
+  assert.match(initialDecisionSource, /Time remaining:/);
+  assert.match(initialDecisionSource, /<Timer \/>/);
+  assert.doesNotMatch(initialDecisionSource, /setInterval|setTimeout/);
+  assert.match(timerSource, /useStageTimer\(\)/);
+  assert.match(timerSource, /timer\?\.remaining/);
+
+  for (const key of ["initialChoice", "initialConfidence", "initialDecision"]) {
+    assert.match(initialDecisionSource, new RegExp(key));
+  }
+  assert.match(initialDecisionSource, /player\.stage\.set\("submit", true\)/);
+  assert.match(initialDecisionSource, /player\.stage\.get\("submit"\)/);
+  assert.match(initialDecisionSource, /Your initial decision has been submitted\./);
+  assert.match(initialDecisionSource, /Please wait for the other participant\(s\)\./);
 });
 
 test("R3-R7/R19: participant pages use normal stage submission, including the validated Break gate", () => {

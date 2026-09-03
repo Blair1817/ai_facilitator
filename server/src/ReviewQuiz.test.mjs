@@ -206,6 +206,8 @@ test("stale async Discussion results are discarded after their originating stage
   assert.match(callbacksSource, /game\.currentStage\?\.id !== originatingStageId/);
   assert.match(callbacksSource, /Discarded stale AI result after the originating Discussion stage ended/);
   assert.match(callbacksSource, /Discarded stale LLM detector result after the originating Discussion stage ended/);
+  assert.match(callbacksSource, /Discarded stale Validator result after the originating Discussion stage ended/);
+  assert.match(callbacksSource, /Discarded stale repair Validator result after the originating Discussion stage ended/);
 });
 
 test("Discussion remains 10 minutes and retains unanimous participant early-ready wiring", () => {

@@ -141,7 +141,8 @@ export function buildAssessorUserContext({ chat, taskGeneralContext }) {
 /**
  * The single exported entry point. `callLLM` must have the same contract
  * as callbacks.js's existing getLLMResponse: async (messages) =>
- * {success:true, data, rawText} | {success:false, error}. This module
+ * {success:true, data, rawText, responseMetadata?} |
+ * {success:false, error, responseMetadata?}. This module
  * never performs the fetch itself.
  *
  * Returns:
@@ -169,19 +170,20 @@ export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM 
   ];
 
   const llmResponse = await callLLM(messages);
+  const responseMetadata = llmResponse.responseMetadata ?? null;
   if (!llmResponse.success) {
-    return { success: false, code: "ASSESSOR_API_ERROR", error: llmResponse.error };
+    return { success: false, code: "ASSESSOR_API_ERROR", error: llmResponse.error, responseMetadata };
   }
 
   const parseResult = strictParseJsonObject(llmResponse.rawText);
   if (!parseResult.ok) {
-    return { success: false, code: "ASSESSOR_PARSE_FAILURE", error: parseResult.error, rawText: llmResponse.rawText };
+    return { success: false, code: "ASSESSOR_PARSE_FAILURE", error: parseResult.error, rawText: llmResponse.rawText, responseMetadata };
   }
 
   const schemaResult = validateAgainstAssessorSchema(parseResult.parsed);
   if (!schemaResult.ok) {
-    return { success: false, code: "ASSESSOR_SCHEMA_FAILURE", error: JSON.stringify(schemaResult.errors), rawText: llmResponse.rawText };
+    return { success: false, code: "ASSESSOR_SCHEMA_FAILURE", error: JSON.stringify(schemaResult.errors), rawText: llmResponse.rawText, responseMetadata };
   }
 
-  return { success: true, factors: parseResult.parsed, rawText: llmResponse.rawText };
+  return { success: true, factors: parseResult.parsed, rawText: llmResponse.rawText, responseMetadata };
 }
