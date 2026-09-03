@@ -271,6 +271,7 @@ jobs:
           acr_token="$(az acr login --name "$ACR_NAME" --expose-token --output tsv --query accessToken)"
           test -n "$acr_token"
           manifest_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+            --ignore-content-length \
             --request HEAD \
             --header "Authorization: Bearer $acr_token" \
             --header 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
