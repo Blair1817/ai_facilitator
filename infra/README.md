@@ -176,6 +176,7 @@ Do not recruit formal participants until all of these have evidence:
 | `scripts/build-nas-bundle.sh` | sanitised bundle builder and provenance manifest |
 | `scripts/build-for-azure.sh` | build + tag for Azure; optional `--push` to ACR |
 | `scripts/capture-prewarm-from-running.sh` | legacy NAS recovery cache capture; not used by Azure builds |
+| `azure/` | Phase 2 Caddy sidecar, ACA merge fragment, tests, and deployment/rollback plan |
 | `scripts/preflight-nas.sh` | fail-closed NAS configuration checks |
 | `scripts/backup-local-encrypted.sh` | encrypted dual-destination snapshot and rotation |
 | `scripts/restore-backup-for-review.sh` | non-destructive integrity/restore drill |
@@ -266,6 +267,10 @@ No Azure secret is stored in GitHub or the repository.
   `LLM_MAX_OUTPUT_TOKENS`, `SUPABASE_URL`, and
   `SUPABASE_SERVICE_ROLE_KEY`.
 - Exactly one active Tajriba writer may use the mounted store.
+- Same-origin HTTPS ingress targets the Caddy gateway on port 8080. See
+  `azure/README.md`; the gateway preserves `/query` WebSockets, proxies
+  `/exports` to the loopback ExportServer on 3001, and sends all other routes
+  to Empirica on 3000.
 
 `capture-prewarm-from-running.sh` remains solely as a legacy NAS recovery
 utility. It is not invoked by the Dockerfile, the Azure build helper, or CI,

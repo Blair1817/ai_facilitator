@@ -1,0 +1,51 @@
+# Merge this fragment into an export of the CURRENT Container App YAML.
+# It intentionally contains no secret values and is not a standalone deployment.
+# Keep every existing main-container env var, volume mount, probe, scale rule,
+# registry setting, and secret while applying these additions/replacements.
+
+properties:
+  configuration:
+    ingress:
+      external: true
+      allowInsecure: false
+      targetPort: 8080
+      transport: auto
+  template:
+    containers:
+      # Merge these settings into the existing Empirica container. Do not
+      # replace its existing environment or secret-volume configuration.
+      - name: empirica
+        env:
+          - name: EXPORT_BASE_PATH
+            value: /exports
+          - name: EXPORT_BIND_HOST
+            value: 127.0.0.1
+          - name: EXPORT_PORT
+            value: "3001"
+          - name: EXPORT_ALLOW_RAW
+            value: "0"
+          - name: TAJRIBA_CONFIG
+            value: /run/secrets/empirica.toml
+          - name: EXPORT_AUTH_USERNAME
+            secretRef: export-auth-username
+          - name: EXPORT_AUTH_PASSWORD
+            secretRef: export-auth-password
+
+      # Replace both image placeholders with immutable ACR tags/digests before
+      # applying the merged YAML. Port 3001 is deliberately not an ingress port.
+      - name: export-gateway
+        image: __ACR_LOGIN_SERVER__/delibra-export-gateway:__IMMUTABLE_TAG__
+        resources:
+          cpu: 0.25
+          memory: 0.5Gi
+        probes:
+          - type: readiness
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 1
+            periodSeconds: 5
+          - type: liveness
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10

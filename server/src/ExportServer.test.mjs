@@ -6,7 +6,15 @@ import path from "node:path";
 import test from "node:test";
 
 import { ExportService } from "./ExportService.mjs";
-import { createExportServer } from "./ExportServer.mjs";
+import {
+  createExportServer,
+  listenExportServer,
+  readExportServerConfig,
+} from "./ExportServer.mjs";
+
+const AUTH_USERNAME = "researcher";
+const AUTH_PASSWORD = "correct horse battery staple";
+const AUTHORIZATION = `Basic ${Buffer.from(`${AUTH_USERNAME}:${AUTH_PASSWORD}`, "utf8").toString("base64")}`;
 
 // ── Shared fixture (mirrors ExportService.test.mjs but local) ──────────
 
@@ -108,9 +116,15 @@ function makeMockAdmin(scopes) {
   };
 }
 
-async function startServer(service, auditFile) {
-  const server = createExportServer({ service, auditFile });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+async function startServer(service, auditFile, options = {}) {
+  const server = createExportServer({
+    service,
+    auditFile,
+    authUsername: AUTH_USERNAME,
+    authPassword: AUTH_PASSWORD,
+    ...options,
+  });
+  await listenExportServer(server, { port: 0, host: "127.0.0.1" });
   const { port } = server.address();
   return {
     server,
@@ -119,9 +133,10 @@ async function startServer(service, auditFile) {
   };
 }
 
-function fetchText(url, headers = {}) {
+function fetchText(url, headers = {}, { authenticate = true } = {}) {
   return new Promise((resolve, reject) => {
-    http.get(url, { headers }, (res) => {
+    const requestHeaders = authenticate ? { authorization: AUTHORIZATION, ...headers } : headers;
+    http.get(url, { headers: requestHeaders }, (res) => {
       const chunks = [];
       res.on("data", (c) => chunks.push(c));
       res.on("end", () => {
@@ -132,20 +147,18 @@ function fetchText(url, headers = {}) {
   });
 }
 
-async function makeRunningServer() {
+async function makeRunningServer(options = {}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "export-server-"));
   const auditFile = path.join(tmpDir, "audit.jsonl");
   const service = new ExportService({ admin: makeMockAdmin(fixture()) });
-  const handle = await startServer(service, auditFile);
+  const handle = await startServer(service, auditFile, options);
   return { ...handle, auditFile, tmpDir };
 }
 
 test("GET / renders a list page with batches, games, and download links", async () => {
   const srv = await makeRunningServer();
   try {
-    const { status, body } = await fetchText(srv.base + "/", {
-      "cf-access-authenticated-user-email": "researcher@example.com",
-    });
+    const { status, body } = await fetchText(srv.base + "/");
     assert.equal(status, 200);
     assert.match(body, /<title>Delibra research export<\/title>/);
     assert.match(body, /BATCH1/);
@@ -164,7 +177,7 @@ test("GET / renders a list page with batches, games, and download links", async 
     assert.equal(audit.length, 1);
     const rec = JSON.parse(audit[0]);
     assert.equal(rec.endpoint, "list-batches");
-    assert.equal(rec.requester, "researcher@example.com");
+    assert.equal(rec.requester, AUTH_USERNAME);
     assert.equal(rec.format, "html");
   } finally {
     await srv.close();
@@ -213,8 +226,8 @@ test("GET /games/:id/questionnaire.csv streams CSV with ETag and audit entry", a
   }
 });
 
-test("GET /games/:id/questionnaire.csv?raw=1 keeps the raw text and audit shows redact=false", async () => {
-  const srv = await makeRunningServer();
+test("GET /games/:id/questionnaire.csv?raw=1 keeps the raw text only when raw is enabled", async () => {
+  const srv = await makeRunningServer({ allowRaw: true });
   try {
     const { status, body } = await fetchText(srv.base + "/games/GAME1/questionnaire.csv?raw=1");
     assert.equal(status, 200);
@@ -222,6 +235,22 @@ test("GET /games/:id/questionnaire.csv?raw=1 keeps the raw text and audit shows 
     const audit = fs.readFileSync(srv.auditFile, "utf8").trim().split("\n");
     const csv = audit.map((l) => JSON.parse(l)).find((r) => r.endpoint === "questionnaire.csv");
     assert.equal(csv.redact, false);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("raw export is disabled by default and truthy raw forms receive 403", async () => {
+  const srv = await makeRunningServer();
+  try {
+    for (const raw of ["1", "true", "TRUE", "yes", "on"]) {
+      const { status } = await fetchText(`${srv.base}/games/GAME1/questionnaire.csv?raw=${raw}`);
+      assert.equal(status, 403);
+    }
+    const { status, body } = await fetchText(srv.base + "/games/GAME1/questionnaire.csv");
+    assert.equal(status, 200);
+    assert.match(body, /\[REDACTED_EMAIL\]/);
+    assert.doesNotMatch(body, /a@b\.co/);
   } finally {
     await srv.close();
   }
@@ -275,13 +304,48 @@ test("POST / is rejected with 405", async () => {
   try {
     const res = await new Promise((resolve, reject) => {
       const req = http.request(
-        { host: "127.0.0.1", port: new URL(srv.base).port, path: "/", method: "POST" },
+        {
+          host: "127.0.0.1",
+          port: new URL(srv.base).port,
+          path: "/",
+          method: "POST",
+          headers: { authorization: AUTHORIZATION },
+        },
         (r) => r.on("data", () => {}).on("end", () => resolve(r)),
       );
       req.on("error", reject);
       req.end();
     });
     assert.equal(res.statusCode, 405);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("authenticated HEAD preserves headers and omits the download body", async () => {
+  const srv = await makeRunningServer({ basePath: "/exports" });
+  try {
+    const res = await new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          host: "127.0.0.1",
+          port: new URL(srv.base).port,
+          path: "/exports/games/GAME1/questionnaire.csv",
+          method: "HEAD",
+          headers: { authorization: AUTHORIZATION },
+        },
+        (response) => {
+          const chunks = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => resolve({ response, body: Buffer.concat(chunks) }));
+        },
+      );
+      req.on("error", reject);
+      req.end();
+    });
+    assert.equal(res.response.statusCode, 200);
+    assert.match(res.response.headers["content-type"], /text\/csv/);
+    assert.equal(res.body.length, 0);
   } finally {
     await srv.close();
   }
@@ -297,4 +361,140 @@ test("audit log records source IP from CF-Connecting-IP when present", async () 
   } finally {
     await srv.close();
   }
+});
+
+test("Basic Auth rejects absent and invalid credentials and accepts correct credentials", async () => {
+  const srv = await makeRunningServer();
+  try {
+    const absent = await fetchText(srv.base + "/", {}, { authenticate: false });
+    assert.equal(absent.status, 401);
+    assert.match(absent.headers["www-authenticate"], /^Basic /);
+
+    const wrong = await fetchText(
+      srv.base + "/",
+      { authorization: `Basic ${Buffer.from("researcher:wrong").toString("base64")}` },
+      { authenticate: false },
+    );
+    assert.equal(wrong.status, 401);
+
+    const correct = await fetchText(srv.base + "/");
+    assert.equal(correct.status, 200);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("missing Basic Auth server configuration fails closed", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "export-server-auth-"));
+  const service = new ExportService({ admin: makeMockAdmin(fixture()) });
+  assert.throws(
+    () => createExportServer({ service, auditFile: path.join(tmpDir, "audit.jsonl") }),
+    /Basic Auth credentials are required/,
+  );
+});
+
+test("audit records only authenticated username and never credentials or proxy JWT fragments", async () => {
+  const srv = await makeRunningServer();
+  const fakeJwt = "secret.jwt.fragment-that-must-not-be-persisted";
+  try {
+    const { status } = await fetchText(srv.base + "/batches", {
+      "cf-access-authenticated-user-email": "spoofed@example.com",
+      "cf-access-jwt-assertion": fakeJwt,
+    });
+    assert.equal(status, 200);
+    const auditText = fs.readFileSync(srv.auditFile, "utf8");
+    const rec = JSON.parse(auditText.trim());
+    assert.equal(rec.requester, AUTH_USERNAME);
+    assert.doesNotMatch(auditText, new RegExp(AUTH_PASSWORD.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.doesNotMatch(auditText, /Authorization|Basic|secret\.jwt|spoofed@example\.com/i);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("configured /exports base path contains all HTML navigation and download routes", async () => {
+  const srv = await makeRunningServer({ basePath: "/exports" });
+  try {
+    const redirect = await fetchText(srv.base + "/exports");
+    assert.equal(redirect.status, 308);
+    assert.equal(redirect.headers.location, "/exports/");
+
+    const { status, body } = await fetchText(srv.base + "/exports/");
+    assert.equal(status, 200);
+    assert.match(body, /action="\/exports\/"/);
+    assert.match(body, /href="\/exports\/" class="reset"/);
+    assert.match(body, /\/exports\/games\/GAME1\/questionnaire\.csv/);
+    assert.match(body, /\/exports\/games\/GAME1\/transcript\.md/);
+    assert.match(body, /\/exports\/games\/GAME1\/bundle\.zip/);
+    assert.doesNotMatch(body, /(?:href|action)="\/(?:games|batches)(?:\/|\")/);
+
+    assert.equal((await fetchText(srv.base + "/exports/batches")).status, 200);
+    assert.equal((await fetchText(srv.base + "/exports/batches/BATCH1/games")).status, 200);
+    assert.equal((await fetchText(srv.base + "/exports/games/GAME1")).status, 200);
+    assert.equal((await fetchText(srv.base + "/exports/games/GAME1/questionnaire.csv")).status, 200);
+    assert.equal((await fetchText(srv.base + "/exports/games/GAME1/transcript.md")).status, 200);
+    assert.equal((await fetchText(srv.base + "/exports/games/GAME1/bundle.zip")).status, 200);
+    assert.equal((await fetchText(srv.base + "/")).status, 404);
+    assert.equal((await fetchText(srv.base + "/batches")).status, 404);
+    assert.equal((await fetchText(srv.base + "/games/GAME1/questionnaire.csv")).status, 404);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("researcher page does not advertise raw bypass when raw is disabled", async () => {
+  const srv = await makeRunningServer();
+  try {
+    const { body } = await fetchText(srv.base + "/");
+    assert.doesNotMatch(body, /\?raw=1|opt out/i);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("listen helper respects bind-host configuration", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "export-server-bind-"));
+  const server = createExportServer({
+    service: new ExportService({ admin: makeMockAdmin(fixture()) }),
+    auditFile: path.join(tmpDir, "audit.jsonl"),
+    authUsername: AUTH_USERNAME,
+    authPassword: AUTH_PASSWORD,
+  });
+  try {
+    const address = await listenExportServer(server, { port: 0, host: "127.0.0.1" });
+    assert.equal(address.address, "127.0.0.1");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("runtime configuration defaults securely and preserves Tajriba overrides", () => {
+  const config = readExportServerConfig({
+    EXPORT_AUTH_USERNAME: AUTH_USERNAME,
+    EXPORT_AUTH_PASSWORD: AUTH_PASSWORD,
+    TAJRIBA_CONFIG: "/tmp/local-empirica.toml",
+    TAJRIBA_SRTOKEN: "local-token",
+    TAJRIBA_URL: "http://127.0.0.1:3999/query",
+  });
+  assert.equal(config.host, "127.0.0.1");
+  assert.equal(config.port, 3001);
+  assert.equal(config.basePath, "/exports");
+  assert.equal(config.allowRaw, false);
+  assert.equal(config.tajribaConfig, "/tmp/local-empirica.toml");
+  assert.equal(config.tajribaSrToken, "local-token");
+  assert.equal(config.tajribaUrl, "http://127.0.0.1:3999/query");
+
+  const overridden = readExportServerConfig({
+    EXPORT_AUTH_USERNAME: AUTH_USERNAME,
+    EXPORT_AUTH_PASSWORD: AUTH_PASSWORD,
+    EXPORT_BIND_HOST: "127.0.0.2",
+    EXPORT_PORT: "3011",
+    EXPORT_BASE_PATH: "research-exports/",
+    EXPORT_ALLOW_RAW: "1",
+  });
+  assert.equal(overridden.host, "127.0.0.2");
+  assert.equal(overridden.port, 3011);
+  assert.equal(overridden.basePath, "/research-exports");
+  assert.equal(overridden.allowRaw, true);
+  assert.equal(overridden.tajribaConfig, undefined);
 });
