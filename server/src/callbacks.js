@@ -9,7 +9,11 @@ import { parseGeneratorOutputStrict, validateAgainstGenerationSchema, runDetermi
 import { buildDynamicUserContext, withMessageIds } from "./prompts/DynamicContext.mjs";
 import { getRequestedGeneralistPromptBundle } from "./prompts/promptLoader.js";
 import { buildStaticSharedTaskOverview, buildStaticUserContext } from "./prompts/StaticContext.mjs";
-import { buildChatCompletionPayload, buildSuccessfulLLMResult } from "./LLMTransport.mjs";
+import {
+  buildChatCompletionPayload,
+  buildSuccessfulLLMResult,
+  extractChatCompletionResponseMetadata,
+} from "./LLMTransport.mjs";
 import {
   buildIcebreakerLLMMessages,
   buildIcebreakerOpening,
@@ -32,7 +36,13 @@ import { buildAgentState } from "./AgentState.mjs";
 import { validateCandidate } from "./SemanticValidator.js";
 import { claimSequenceForStudy, RANDOMIZATION_LEDGER_KEY } from "./RandomizationLedger.mjs";
 import { randomUUID } from "node:crypto";
-import { beginInFlight, finalizeAuditLog as finalizeAuditLogBase, recoverInterruptedInFlight, ensureLlmLogIndex } from "./InFlightAudit.mjs";
+import {
+  beginInFlight,
+  finalizeAuditLog as finalizeAuditLogBase,
+  recoverInterruptedInFlight,
+  ensureLlmLogIndex,
+  setVisibleResponsePending,
+} from "./InFlightAudit.mjs";
 import { appendToAttribute, ensureAppendOnlyAttribute } from "./AppendOnlyAttribute.mjs";
 import {
   canConfirmBreak,
@@ -86,6 +96,17 @@ function finalizeAuditLog(store, entry) {
       gameId: store.id, roundId: round.id, facilitation: round.get("facilitation"), chat, entry: completed,
     }));
   });
+}
+
+function whileFacilitatorPublishesVisibleResponse(game, logEntry, task) {
+  setVisibleResponsePending(game, logEntry.auditRequestId, true);
+  Empirica.flush();
+  try {
+    return task();
+  } finally {
+    setVisibleResponsePending(game, logEntry.auditRequestId, false);
+    Empirica.flush();
+  }
 }
 
 // The participant client does not reliably receive ParticipantChange events
@@ -165,21 +186,26 @@ async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens) {
       console.error("LLM endpoint HTTP error:", { status: completion.status, error: errorPayload?.error || errorPayload });
       return { success: false, error: errorPayload?.error?.message || completion.statusText };
     }
+    const responseMetadata = extractChatCompletionResponseMetadata(responseBody);
     const text = responseBody?.choices?.[0]?.message?.content;
     if (typeof text !== "string" || text.length === 0) {
-      const finishReason = responseBody?.choices?.[0]?.finish_reason || "unknown";
       console.error("LLM response missing message content", {
         model: openaiModel,
-        finishReason,
+        ...responseMetadata,
         reasoningDetailsPresent: Array.isArray(responseBody?.choices?.[0]?.message?.reasoning_details),
       });
-      return { success: false, error: `LLM response missing message content (finish_reason=${finishReason})` };
+      const finishReason = responseMetadata.finish_reason || "unknown";
+      return {
+        success: false,
+        error: `LLM response missing message content (finish_reason=${finishReason})`,
+        responseMetadata,
+      };
     }
     // Provider envelopes are parsed by the schema-owning downstream stage.
     // In particular, MiniMax may wrap valid JSON in one Markdown code fence;
     // rejecting that here would bypass the Generator/Assessor/Validator
     // parsers that explicitly and safely support the envelope.
-    return buildSuccessfulLLMResult(text);
+    return buildSuccessfulLLMResult(text, responseMetadata);
   } catch (error) {
     console.error("LLM endpoint error:", error);
     return { success: false, error: error.message };
@@ -407,6 +433,15 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       ...(logEntry.generatorLatenciesMs || []),
       Date.now() - generatorStartedAt,
     ];
+    if (llmResponse.responseMetadata) {
+      logEntry.generatorResponseMetadata = [
+        ...(logEntry.generatorResponseMetadata || []),
+        {
+          attempt: (logEntry.generatorResponseMetadata?.length || 0) + 1,
+          ...llmResponse.responseMetadata,
+        },
+      ];
+    }
     if (!isOriginatingStageActive()) return { discarded: true };
     if (!llmResponse.success) {
       logEntry.failureStage = "generator_api";
@@ -495,6 +530,15 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       ...(logEntry.validatorLatenciesMs || []),
       Date.now() - validatorStartedAt,
     ];
+    if (result.responseMetadata) {
+      logEntry.validatorResponseMetadata = [
+        ...(logEntry.validatorResponseMetadata || []),
+        {
+          attempt: (logEntry.validatorResponseMetadata?.length || 0) + 1,
+          ...result.responseMetadata,
+        },
+      ];
+    }
     if (typeof result.rawText === "string") {
       logEntry.validatorRawResponses = [
         ...(logEntry.validatorRawResponses || []),
@@ -522,6 +566,11 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   }
 
   const v1 = await runValidator(a1.candidate);
+  if (!isOriginatingStageActive()) {
+    logEntry.reason = "Discarded stale Validator result after the originating Discussion stage ended";
+    logEntry.outcome = "SILENT";
+    return { published: false };
+  }
   if (v1.validatorFailed) {
     logEntry.failureStage = "validator_unavailable";
     logEntry.reason = `Validator LLM unavailable on attempt 1 (${v1.code}): ${v1.error}`;
@@ -552,6 +601,11 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   }
 
   const v2 = await runValidator(a2.candidate, v1.verdict.failedCriteria, a1.candidate);
+  if (!isOriginatingStageActive()) {
+    logEntry.reason = "Discarded stale repair Validator result after the originating Discussion stage ended";
+    logEntry.outcome = "SILENT";
+    return { published: false };
+  }
   if (v2.validatorFailed) {
     logEntry.failureStage = "validator_unavailable";
     logEntry.reason = `Validator LLM unavailable on repair (${v2.code}): ${v2.error}`;
@@ -611,6 +665,7 @@ const REVIEW_QUIZ_SAFETY_DURATION_SECONDS = 24 * 60 * 60;
 const TASK_INFORMATION_DURATION_SECONDS = 10 * 60;
 const WALKTHROUGH_DURATION_SECONDS = 10 * 60;
 const ICEBREAKER_TRANSITION_DURATION_SECONDS = 10;
+const INITIAL_DECISION_DURATION_SECONDS = 3 * 60;
 // The visible Break countdown is controlled by breakScheduledEndAt. This long
 // safety duration prevents Empirica's timer from ending the stage before the
 // server-validated readiness gate is satisfied; clients submit synchronously
@@ -773,7 +828,7 @@ Empirica.onGameStart(({ game }) => {
   round1.addStage({ name: "IceBreakerStartCountdown", duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
   round1.addStage({ name: "Introduction",             duration: introDuration * 60 });
   round1.addStage({ name: "IceBreakerEndCountdown",   duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
-  round1.addStage({ name: "InitialDecision",          duration: phase1Duration * 60 });
+  round1.addStage({ name: "InitialDecision",          duration: INITIAL_DECISION_DURATION_SECONDS });
   round1.addStage({ name: "Task",                     duration: gameDuration * 60 });
   round1.addStage({ name: "FinalDecision",            duration: 90 });
   round1.addStage({ name: "IndividualAssessment",     duration: INDIVIDUAL_ASSESSMENT_DURATION_SECONDS });
@@ -793,7 +848,7 @@ Empirica.onGameStart(({ game }) => {
   round2.addStage({ name: "IceBreakerStartCountdown", duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
   round2.addStage({ name: "Introduction",             duration: introDuration * 60 });
   round2.addStage({ name: "IceBreakerEndCountdown",   duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
-  round2.addStage({ name: "InitialDecision",          duration: phase1Duration * 60 });
+  round2.addStage({ name: "InitialDecision",          duration: INITIAL_DECISION_DURATION_SECONDS });
   round2.addStage({ name: "Task",                     duration: gameDuration * 60 });
   round2.addStage({ name: "FinalDecision",            duration: 90 });
   round2.addStage({ name: "IndividualAssessment",     duration: INDIVIDUAL_ASSESSMENT_DURATION_SECONDS });
@@ -1365,6 +1420,7 @@ async function handleIcebreakerChat(_env, { game }) {
       failureReason: parsed.ok ? null : parsed.reason,
       contextBoundary: "PUBLIC_ICEBREAKER_CHAT_ONLY",
       model: openaiModel,
+      responseMetadata: response.responseMetadata ?? null,
     },
   ]);
   Empirica.flush();
@@ -1389,50 +1445,54 @@ function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole, logE
     logEntry.reason = `LLM response role "${llmAction.role}" does not match the expected role "${expectedRole}" (base.md OUTPUT CONTRACT requires role to be unchanged) -- not posted`;
     return false;
   }
-  const publishedAt = Date.now();
-  const publishedMessage = appendCanonicalMessage(game, chatKey, {
-    messageId: `facilitator-${game.currentRound?.id}-${publishedAt}`,
-    groupId: game.id,
-    speakerId: "ai",
-    roundIndex: game.currentRound?.get("index"),
-    stage: "Discussion",
-    messageType: MESSAGE_TYPES.FACILITATOR,
-    speakerType: MESSAGE_TYPES.FACILITATOR,
-    timestamp: publishedAt,
-    content: llmAction.message,
-    sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
+  return whileFacilitatorPublishesVisibleResponse(game, logEntry, () => {
+    const publishedAt = Date.now();
+    const publishedMessage = appendCanonicalMessage(game, chatKey, {
+      messageId: `facilitator-${game.currentRound?.id}-${publishedAt}`,
+      groupId: game.id,
+      speakerId: "ai",
+      roundIndex: game.currentRound?.get("index"),
+      stage: "Discussion",
+      messageType: MESSAGE_TYPES.FACILITATOR,
+      speakerType: MESSAGE_TYPES.FACILITATOR,
+      timestamp: publishedAt,
+      content: llmAction.message,
+      sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
+    });
+    logEntry.messageAdded = true;
+    logEntry.countsAsIntervention = true;
+    logEntry.publishedMessageId = publishedMessage.messageId;
+    game.set("totalInterventions", (game.get("totalInterventions") || 0) + 1);
+    return true;
   });
-  logEntry.messageAdded = true;
-  logEntry.countsAsIntervention = true;
-  logEntry.publishedMessageId = publishedMessage.messageId;
-  game.set("totalInterventions", (game.get("totalInterventions") || 0) + 1);
-  return true;
 }
 
 // A participant-requested turn must receive a visible response even when the
 // prompt, model, parser, or Validator is unavailable. This deterministic
 // fallback is intentionally neutral and reveals no hidden information.
 function postParticipantRequestFallback(game, chatKey, logEntry) {
-  const publishedAt = Date.now();
-  const publishedMessage = appendCanonicalMessage(game, chatKey, {
-    messageId: `facilitator-fallback-${game.currentRound?.id}-${publishedAt}`,
-    groupId: game.id,
-    speakerId: "ai",
-    roundIndex: game.currentRound?.get("index"),
-    stage: "Discussion",
-    messageType: MESSAGE_TYPES.FACILITATOR,
-    speakerType: MESSAGE_TYPES.FACILITATOR,
-    timestamp: publishedAt,
-    content: "I couldn’t produce a verified answer using the shared task information and public discussion. Please rephrase your question or point to the public option, criterion, claim, or message you want me to address.",
-    sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
+  return whileFacilitatorPublishesVisibleResponse(game, logEntry, () => {
+    const publishedAt = Date.now();
+    const publishedMessage = appendCanonicalMessage(game, chatKey, {
+      messageId: `facilitator-fallback-${game.currentRound?.id}-${publishedAt}`,
+      groupId: game.id,
+      speakerId: "ai",
+      roundIndex: game.currentRound?.get("index"),
+      stage: "Discussion",
+      messageType: MESSAGE_TYPES.FACILITATOR,
+      speakerType: MESSAGE_TYPES.FACILITATOR,
+      timestamp: publishedAt,
+      content: "I couldn’t produce a verified answer using the shared task information and public discussion. Please rephrase your question or point to the public option, criterion, claim, or message you want me to address.",
+      sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
+    });
+    logEntry.messageAdded = true;
+    logEntry.countsAsIntervention = false;
+    logEntry.publishedMessageId = publishedMessage.messageId;
+    logEntry.fallbackUsed = "PARTICIPANT_REQUEST_SAFE_CLARIFICATION";
+    logEntry.outcome = "PUBLISHED_REQUEST_FALLBACK";
+    game.set("totalFallbackMessages", (game.get("totalFallbackMessages") || 0) + 1);
+    return true;
   });
-  logEntry.messageAdded = true;
-  logEntry.countsAsIntervention = false;
-  logEntry.publishedMessageId = publishedMessage.messageId;
-  logEntry.fallbackUsed = "PARTICIPANT_REQUEST_SAFE_CLARIFICATION";
-  logEntry.outcome = "PUBLISHED_REQUEST_FALLBACK";
-  game.set("totalFallbackMessages", (game.get("totalFallbackMessages") || 0) + 1);
-  return true;
 }
 
 async function handleChat(env, { game }) {
@@ -1509,9 +1569,10 @@ async function handleChat(env, { game }) {
   const timeElapsed   = now - game.get("taskStartTime");
 
   // ── Phase 3: ask CheckpointManager whether the trigger conditions
-  // are satisfied. The manager handles cooldown / cap / opportunity
-  // gate / dedup / time floor in one place; failed checkpoints no
-  // longer consume the participant's opportunity (Q3).
+  // are satisfied. Static and Adaptive share the six-message opportunity
+  // gate, 30-second cooldown, and final time floor. Neither condition has a
+  // per-round automatic-attempt cap. Task/chat guards and per-message
+  // deduplication remain shared.
   //
   // Phase 6.4 (Q8 = "即时"): if the latest human message contains an
   // @-Facilitator mention, set `isMentionCheckpoint: true` so the
@@ -1538,7 +1599,13 @@ async function handleChat(env, { game }) {
     isMentionCheckpoint,
   });
 
+  // Every callback audit event needs an identity, including ordinary
+  // non-trigger outcomes (opportunity/cooldown/time-floor/dedup). Keep the
+  // same id for a later beginInFlight/finalize lifecycle when the checkpoint
+  // does trigger.
+  const auditRequestId = `${game.id}:${roundIndex}:${humanMessageCount}:${now}`;
   let logEntry = {
+    auditRequestId,
     timestamp:                     now,
     roundIndex,
     facilitation,
@@ -1584,7 +1651,6 @@ async function handleChat(env, { game }) {
     return;
   }
 
-  logEntry.auditRequestId = `${game.id}:${roundIndex}:${humanMessageCount}:${now}`;
   logEntry.serverInstanceId = CALLBACKS_INSTANCE_ID;
   beginInFlight(game, { ...logEntry, outcome: "PENDING" });
   Empirica.flush();
@@ -1647,9 +1713,8 @@ async function handleChat(env, { game }) {
   // (e.g. a duplicate Empirica event) cannot double-trigger. ──
   recordAttempt(game, humanMessageCount, now);
 
-  // Static and Adaptive share the checkpoint opportunity above, but not the
-  // intervention-permission policy. Static's fixed policy requires a message
-  // attempt at every checkpoint, so it bypasses every discussion-state
+  // Static and Adaptive share the checkpoint pacing above. Static's fixed
+  // policy requires a message attempt at every eligible checkpoint, so it bypasses every discussion-state
   // assessment step and goes directly to the shared Generator/validation/
   // publication path. A blocked prompt or technical failure remains SILENT
   // and logged; it is not a discussion-state ABSTAIN and never fabricates a
@@ -1675,8 +1740,8 @@ async function handleChat(env, { game }) {
       originatingStageId,
       chat,
     );
-    // Phase 3: record a publish so the opportunity gate resets for the
-    // next checkpoint. Phase 2 made Static AI's role "STATIC" instead
+    // Phase 3: record a publish so Static's opportunity gate resets for the
+    // next paced checkpoint. Phase 2 made Static AI's role "STATIC" instead
     // of "generalist"; the publish is recorded with that role so
     // interventionHistory, lastRole, publishedThisRound all stay
     // consistent across both conditions.
@@ -1709,6 +1774,9 @@ async function handleChat(env, { game }) {
     }),
     callLLM: getLLMResponse,
   });
+  if (assessorResult.responseMetadata) {
+    logEntry.detectorResponseMetadata = assessorResult.responseMetadata;
+  }
   if (
     game.currentRound?.id !== originatingRoundId ||
     game.currentStage?.id !== originatingStageId ||
@@ -1814,7 +1882,7 @@ async function handleChat(env, { game }) {
     logEntry,
     originatingRoundId,
     originatingStageId,
-    chat
+    chat,
   );
 
   // Architecture fallback: if a Specialist candidate and its one repair are
@@ -1865,8 +1933,8 @@ async function handleChat(env, { game }) {
 
   if (result.published) {
     // Phase 3: use the manager to record the publish uniformly. This
-    // resets messagesSinceLastPublish (so the next 6 human messages
-    // are the next opportunity), increments publishedThisRound,
+    // resets messagesSinceLastPublish (retained as an Adaptive audit metric),
+    // increments publishedThisRound,
     // appends to interventionHistory, and updates lastRole. The
     // synthesiserFired flag is handled inside recordPublish based on
     // role alone (not on `forced`); callers that need to mark the

@@ -16,8 +16,8 @@ function isOpenAIGpt56Model(model) {
  * therefore truncate the JSON answer entirely. Use MiniMax's documented
  * reasoning envelope and completion-token field for M2, while preserving the
  * legacy request shape for models that still accept max_tokens. OpenAI GPT-5.6
- * Chat Completions models require max_completion_tokens without MiniMax's
- * reasoning_split extension or reasoning floor.
+ * Chat Completions models use max_completion_tokens and explicitly disable
+ * reasoning, without MiniMax's reasoning_split extension or reasoning floor.
  */
 export function buildChatCompletionPayload({
   model,
@@ -36,9 +36,38 @@ export function buildChatCompletionPayload({
     };
   }
   if (isOpenAIGpt56Model(model)) {
-    return { model, messages, max_completion_tokens: safeMax };
+    return {
+      model,
+      messages,
+      reasoning_effort: "none",
+      max_completion_tokens: safeMax,
+    };
   }
   return { model, messages, max_tokens: safeMax };
+}
+
+function finiteNumberOrNull(value) {
+  return Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Extract the small, non-sensitive subset of a Chat Completions response used
+ * for operational diagnosis and token accounting. The raw provider response
+ * is deliberately not retained.
+ */
+export function extractChatCompletionResponseMetadata(responseBody) {
+  const usage = responseBody?.usage;
+  return {
+    finish_reason: typeof responseBody?.choices?.[0]?.finish_reason === "string"
+      ? responseBody.choices[0].finish_reason
+      : null,
+    usage: {
+      prompt_tokens: finiteNumberOrNull(usage?.prompt_tokens),
+      completion_tokens: finiteNumberOrNull(usage?.completion_tokens),
+      total_tokens: finiteNumberOrNull(usage?.total_tokens),
+      reasoning_tokens: finiteNumberOrNull(usage?.completion_tokens_details?.reasoning_tokens),
+    },
+  };
 }
 
 function stripLeadingMiniMaxThinking(rawText) {
@@ -55,9 +84,9 @@ function stripLeadingMiniMaxThinking(rawText) {
  * fence. That envelope is not a transport failure and must not be rejected
  * before Generator/Assessor/Validator parsing and schema validation run.
  */
-export function buildSuccessfulLLMResult(rawText) {
+export function buildSuccessfulLLMResult(rawText, responseMetadata = null) {
   if (typeof rawText !== "string" || rawText.length === 0) {
-    return { success: false, error: "LLM response missing message content" };
+    return { success: false, error: "LLM response missing message content", responseMetadata };
   }
   // `reasoning_split` should keep thinking out of `content`. This exact,
   // anchored fallback protects strict downstream JSON parsing if a compatible
@@ -65,7 +94,7 @@ export function buildSuccessfulLLMResult(rawText) {
   // and rejected by the schema-owning parser as before.
   const finalText = stripLeadingMiniMaxThinking(rawText);
   if (finalText.length === 0) {
-    return { success: false, error: "LLM response contained reasoning but no final message content" };
+    return { success: false, error: "LLM response contained reasoning but no final message content", responseMetadata };
   }
   const bestEffort = strictParseJsonObject(finalText);
   return {
@@ -73,5 +102,6 @@ export function buildSuccessfulLLMResult(rawText) {
     data: bestEffort.ok ? bestEffort.parsed : null,
     rawText: finalText,
     providerEnvelopeNormalized: finalText !== rawText,
+    responseMetadata,
   };
 }

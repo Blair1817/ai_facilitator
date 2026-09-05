@@ -10,7 +10,7 @@
  *
  * Each record captures:
  *   - timestamp (ISO 8601, server clock, UTC offset included)
- *   - requester (Cloudflare Access identity if available; otherwise "unknown")
+ *   - requester (the authenticated Export Basic Auth username)
  *   - sourceIp (best-effort; "unknown" if the proxy did not pass it)
  *   - userAgent (best-effort)
  *   - endpoint ("list-batches" | "list-games" | "questionnaire.csv" |

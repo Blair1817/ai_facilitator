@@ -372,9 +372,11 @@ export function TypingBubbles({ scrollerRef }) {
         (p) => p.id !== player?.id && p.get("isTyping")
     );
 
-    // Facilitator typing detection. The discussion / Task stages track the
-    // in-flight LLM request on `game.llmInFlight` (see server/src/callbacks.js
-    // `beginInFlight`). The icebreaker (Introduction) stage uses its own
+    // Facilitator typing detection. The discussion / Task stages keep the
+    // broader audit lifecycle on `game.llmInFlight`, but only entries whose
+    // visible-response generation has started should be participant-visible.
+    // Adaptive semantic assessment therefore remains invisible when it
+    // ultimately abstains. The icebreaker (Introduction) stage uses its own
     // `icebreakerFacilitatorHandledMessageIds` ledger with `status:
     // "pending"` while the LLM is generating a reply. Both must be honoured
     // so the dots appear during every chat that the Facilitator can post in.
@@ -382,6 +384,7 @@ export function TypingBubbles({ scrollerRef }) {
     const facilitatorTypingInFlight = Object.values(llmInFlight).some(
         (entry) => (
             entry?.outcome === "PENDING"
+            && entry?.visibleResponsePending === true
             && entry?.originatingRoundId === round?.id
             && entry?.originatingStageId === stage?.id
         )

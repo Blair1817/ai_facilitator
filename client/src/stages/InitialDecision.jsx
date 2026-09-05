@@ -3,6 +3,7 @@ import { usePlayer, usePlayers, useRound } from "@empirica/core/player/classic/r
 import { Loading } from "@empirica/core/player/react";
 import { Button } from "../components/Button";
 import { PlayerSpecificInfo } from "../components/PlayerSpecificInfo";
+import { Timer } from "../components/Timer";
 import { ConfidenceSlider, OptionChoice } from "../components/DecisionControls";
 import { clearDraftKeys, draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
 
@@ -45,6 +46,10 @@ export function InitialDecision() {
         <PlayerSpecificInfo className="h-[55vh] lg:sticky lg:top-6 lg:h-[calc(100vh-3rem)]" />
         <form onSubmit={submit} className="block min-w-0 w-full self-start rounded-lg border border-gray-200 bg-white p-5 shadow-sm sm:p-6">
           <h1 className="text-2xl font-bold text-gray-900">Initial Decision</h1>
+          <div className="mt-3 flex items-center gap-2 rounded-md bg-gray-100 px-3 py-2 text-gray-700" role="status">
+            <span className="font-semibold">Time remaining:</span>
+            <Timer />
+          </div>
           <p className="mt-2 text-sm text-gray-600">Review the Task Report independently. This answer is private.</p>
           <div className="mt-6"><OptionChoice legend="Which option do you initially consider most suitable?" options={options} value={choice} onChange={updateChoice} name="initialChoice" /></div>
           <ConfidenceSlider name="initialConfidence" label="How confident are you in your initial choice?" value={confidence} onChange={updateConfidence} />

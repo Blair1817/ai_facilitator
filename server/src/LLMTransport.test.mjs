@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildChatCompletionPayload,
   buildSuccessfulLLMResult,
+  extractChatCompletionResponseMetadata,
   isMiniMaxReasoningModel,
 } from "./LLMTransport.mjs";
 
@@ -16,6 +17,7 @@ test("request policy uses split reasoning and a sufficient completion budget for
   assert.equal(payload.reasoning_split, true);
   assert.equal(payload.max_completion_tokens, 4096);
   assert.equal("max_tokens" in payload, false);
+  assert.equal("reasoning_effort" in payload, false);
 });
 
 test("request policy preserves the legacy request shape for non-reasoning models", () => {
@@ -23,11 +25,13 @@ test("request policy preserves the legacy request shape for non-reasoning models
   assert.equal(payload.max_tokens, 500);
   assert.equal("reasoning_split" in payload, false);
   assert.equal("max_completion_tokens" in payload, false);
+  assert.equal("reasoning_effort" in payload, false);
 });
 
 for (const model of ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]) {
   test(`request policy uses max_completion_tokens for ${model}`, () => {
     const payload = buildChatCompletionPayload({ model, messages: [], maxTokens: 500 });
+    assert.equal(payload.reasoning_effort, "none");
     assert.equal(payload.max_completion_tokens, 500);
     assert.equal("max_tokens" in payload, false);
     assert.equal("reasoning_split" in payload, false);
@@ -38,6 +42,44 @@ test("request policy still uses max_tokens for a legacy OpenAI model", () => {
   const payload = buildChatCompletionPayload({ model: "gpt-4o", messages: [], maxTokens: 500 });
   assert.equal(payload.max_tokens, 500);
   assert.equal("max_completion_tokens" in payload, false);
+  assert.equal("reasoning_effort" in payload, false);
+});
+
+test("transport captures only the requested non-sensitive Chat Completions metadata", () => {
+  const metadata = extractChatCompletionResponseMetadata({
+    choices: [{ finish_reason: "length", message: { content: null } }],
+    usage: {
+      prompt_tokens: 321,
+      completion_tokens: 1000,
+      total_tokens: 1321,
+      completion_tokens_details: { reasoning_tokens: 998, accepted_prediction_tokens: 2 },
+    },
+    id: "not-persisted",
+    system_fingerprint: "not-persisted",
+  });
+  assert.deepEqual(metadata, {
+    finish_reason: "length",
+    usage: {
+      prompt_tokens: 321,
+      completion_tokens: 1000,
+      total_tokens: 1321,
+      reasoning_tokens: 998,
+    },
+  });
+  assert.equal("id" in metadata, false);
+  assert.equal("system_fingerprint" in metadata, false);
+});
+
+test("transport result retains response metadata for success and missing-content errors", () => {
+  const responseMetadata = {
+    finish_reason: "length",
+    usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30, reasoning_tokens: 20 },
+  };
+  const success = buildSuccessfulLLMResult("{}", responseMetadata);
+  assert.equal(success.responseMetadata, responseMetadata);
+  const missing = buildSuccessfulLLMResult("", responseMetadata);
+  assert.equal(missing.success, false);
+  assert.equal(missing.responseMetadata, responseMetadata);
 });
 
 test("transport preserves plain JSON for downstream validation", () => {

@@ -2,9 +2,9 @@
 //
 // Phase 3 tests for the unified Checkpoint Manager. Covers:
 //   - v2 design invariant: failed checkpoints do NOT consume opportunity
-//   - cooldown / cap / dedup / time floor / stage guard
+//   - cooldown / no-cap / dedup / time floor / stage guard
 //   - the 6-human-message opportunity gate
-//   - Static and Adaptive share the same trigger conditions
+//   - Static and Adaptive share the same automatic pacing
 //   - recordPublish resets opportunity + appends to interventionHistory
 //
 // Uses an in-memory `store` fake with .get/.set -- no Empirica, no I/O.
@@ -118,29 +118,6 @@ test("trigger = true exactly at 6th human message since the last publish", () =>
   const r = shouldEvaluateCheckpoint({ ...baseArgs({ store, humanMessageCount: 6 }), store });
   assert.equal(r.trigger, true, `expected true; reason was ${r.reason}`);
   assert.equal(r.reason, "ok");
-});
-
-// ── shouldEvaluateCheckpoint: cap ──────────────────────────────────────────
-
-test("trigger = false when intervention cap has been reached", () => {
-  const store = makeStore({
-    attemptedThisRound: T_DEFAULTS.interventionCapPerRound,
-    messagesSinceLastPublish: T_DEFAULTS.messagesBetweenInterventions,
-  });
-  const r = shouldEvaluateCheckpoint({ ...baseArgs({ store }), store });
-  assert.equal(r.trigger, false);
-  assert.match(r.reason, /cap_reached/);
-});
-
-test("cap counts attempts (success or fail), not just publishes", () => {
-  // 3 attempts (cap); a 4th message that meets the 6-human gate must NOT trigger.
-  const store = makeStore({
-    attemptedThisRound: 3,
-    messagesSinceLastPublish: 12,  // well past the 6-message gate
-  });
-  const r = shouldEvaluateCheckpoint({ ...baseArgs({ store, humanMessageCount: 12 }), store });
-  assert.equal(r.trigger, false);
-  assert.match(r.reason, /cap_reached/);
 });
 
 // ── shouldEvaluateCheckpoint: cooldown ─────────────────────────────────────
@@ -281,20 +258,53 @@ test("resetRoundState wipes all per-round state to defaults", () => {
   assert.equal(s.unresolvedNeed, null);
 });
 
-// ── v2 design invariants: Static and Adaptive share trigger conditions ─────
+// ── condition-shared checkpoint behavior ───────────────────────────────────
 
-test("Static and Adaptive have identical trigger conditions (the manager has no condition field)", () => {
-  // Same inputs -> same trigger. The post-trigger pipeline is what
-  // differs between Static and Adaptive (Static goes straight to
-  // its fixed policy; Adaptive runs the Semantic Assessor, Evidence
-  // Checker, Gate, and role selection). The trigger itself must be identical so the two
-  // conditions see the same number of opportunities.
-  const args = baseArgs({ humanMessageCount: 6, store: makeStore({ messagesSinceLastPublish: 6 }) });
-  const r1 = shouldEvaluateCheckpoint(args);
-  const r2 = shouldEvaluateCheckpoint({ ...args, store: makeStore({ messagesSinceLastPublish: 6 }) });
-  assert.equal(r1.trigger, true);
-  assert.equal(r2.trigger, true);
-  assert.equal(r1.reason, r2.reason);
+for (const condition of ["Static", "Adaptive"]) {
+  test(`${condition} requires the 6-message opportunity threshold`, () => {
+    const store = makeStore({ messagesSinceLastPublish: 5 });
+    const result = shouldEvaluateCheckpoint({ ...baseArgs({ store, humanMessageCount: 5 }), store });
+    assert.equal(result.trigger, false);
+    assert.match(result.reason, /opportunity_gate/);
+  });
+
+  test(`${condition} requires the 30-second automatic-attempt cooldown`, () => {
+    const store = makeStore({
+      lastAttemptTimestamp: NOW - 1,
+      messagesSinceLastPublish: 6,
+    });
+    const result = shouldEvaluateCheckpoint({ ...baseArgs({ store, humanMessageCount: 7 }), store });
+    assert.equal(result.trigger, false);
+    assert.match(result.reason, /cooldown/);
+  });
+
+  test(`${condition} can evaluate after 3 previous automatic attempts`, () => {
+    const store = makeStore({
+      attemptedThisRound: 3,
+      lastAttemptTimestamp: NOW - T_DEFAULTS.cooldownMs,
+      messagesSinceLastPublish: 6,
+    });
+    const result = shouldEvaluateCheckpoint({ ...baseArgs({ store, humanMessageCount: 24 }), store });
+    assert.equal(result.trigger, true, `expected no per-round cap; reason was ${result.reason}`);
+    assert.equal(result.reason, "ok");
+  });
+
+  test(`${condition} retains the final time floor`, () => {
+    const store = makeStore({ messagesSinceLastPublish: 6 });
+    const result = shouldEvaluateCheckpoint({
+      ...baseArgs({ store, remainingTimeMs: T_DEFAULTS.minTimeForInterventionMs }),
+      store,
+    });
+    assert.equal(result.trigger, false);
+    assert.match(result.reason, /time_floor/);
+  });
+}
+
+test("shared pacing retains per-message deduplication", () => {
+  const store = makeStore({ messagesSinceLastPublish: 6, lastHandledCheckpoint: 6 });
+  const result = shouldEvaluateCheckpoint({ ...baseArgs({ store, humanMessageCount: 6 }), store });
+  assert.equal(result.trigger, false);
+  assert.match(result.reason, /dedup/);
 });
 
 // ── Minimal-pair test: failure-doesn't-consume-opportunity (Q3) ──────────
@@ -322,23 +332,9 @@ test("Q3 invariant: a failed attempt does not consume the participant's next opp
   store.set("messagesSinceLastPublish", 12);
   const t2 = NOW + T_DEFAULTS.cooldownMs + 1_000;
   const r2 = shouldEvaluateCheckpoint({ ...baseArgs({ store, humanMessageCount: 12, now: t2 }), store });
-  // The 6-message gate is satisfied (12 >= 6), cap is 1/3, cooldown ok.
+  // The 6-message gate is satisfied (12 >= 6) and cooldown is complete.
   // The attempt can fire.
   assert.equal(r2.trigger, true, `expected second attempt to fire; reason was ${r2.reason}`);
-});
-
-// ── v2 design invariant: failed attempt counts against the cap ─────────────
-
-test("intervention cap is on attempts (success or fail), not just publishes", () => {
-  // 3 failed attempts -> 4th message that meets the opportunity gate
-  // must NOT trigger.
-  const store = makeStore({
-    attemptedThisRound: 3,
-    messagesSinceLastPublish: 12,
-  });
-  const r = shouldEvaluateCheckpoint({ ...baseArgs({ store, humanMessageCount: 12 }), store });
-  assert.equal(r.trigger, false);
-  assert.match(r.reason, /cap_reached/);
 });
 
 // ── Phase 6.4 (Q8 = "即时"): @-Facilitator mention bypasses pacing gates ───
@@ -407,7 +403,7 @@ test("isMentionCheckpoint=true: retains per-message dedup", () => {
   assert.match(r.reason, /dedup/);
 });
 
-test("isMentionCheckpoint=true: bypasses the automatic intervention cap", () => {
+test("isMentionCheckpoint=true: remains independent of the automatic attempt counter", () => {
   const store = makeStore({
     attemptedThisRound: 3,
     messagesSinceLastPublish: 1,

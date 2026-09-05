@@ -1,0 +1,18 @@
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	@exports path /exports /exports/*
+
+	handle @exports {
+		reverse_proxy 127.0.0.1:3001
+	}
+
+	handle {
+		reverse_proxy 127.0.0.1:3000 {
+			header_up -Authorization
+		}
+	}
+}

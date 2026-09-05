@@ -12,7 +12,7 @@ import process from "process";
 import { Tajriba } from "@empirica/tajriba";
 import { Empirica } from "./callbacks";
 import { ExportService } from "./ExportService.mjs";
-import { createExportServer } from "./ExportServer.mjs";
+import { createExportServer, listenExportServer, readExportServerConfig } from "./ExportServer.mjs";
 import { recordExportEvent } from "./ExportAudit.mjs";
 import { runStartupSelfCheck } from "./prompts/promptLoader.js";
 
@@ -74,31 +74,27 @@ if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "your-key-here
   // The server is bundled into the same `callbacks/index.js` archive
   // (esbuild's --bundle pulls it in via the import at the top of this
   // file), so a single `empirica bundle` produces both the callbacks
-  // process and the export surface. The export service binds to all
-  // interfaces (0.0.0.0) so that docker port-mapping on port 3001
-  // reaches the process; previously bound to 127.0.0.1 only, which
-  // broke the 192.168.0.109:3001 -> 172.17.0.2:3001 DNAT path
-  // (kernel sends RST because 172.17.0.2 != 127.0.0.1). The cloudflared
-  // tunnel routes the public `exports.<domain>` host to this port.
+  // process and the export surface. Export binds to loopback by default;
+  // Phase 2 will route authenticated /exports traffic to it internally.
   //
   // Disable with DELIBRA_DISABLE_EXPORT_SERVER=1 (e.g. during incident
   // response or if the audit file is on a read-only mount).
   if (process.env.DELIBRA_DISABLE_EXPORT_SERVER !== "1") {
     try {
-      const exportPort = Number(process.env.EXPORT_PORT || 3001);
-      const auditFile = process.env.EXPORT_AUDIT_FILE || "/data/export-audit.jsonl";
-      const tajUrl = process.env.TAJRIBA_URL || "http://127.0.0.1:3000/query";
-      const srtokenPath = process.env.TAJRIBA_CONFIG || "/run/secrets/empirica.toml";
+      const exportConfig = readExportServerConfig(process.env);
 
-      let srtoken = process.env.TAJRIBA_SRTOKEN;
+      let srtoken = exportConfig.tajribaSrToken;
       if (!srtoken) {
-        const configText = fs.readFileSync(srtokenPath, "utf8");
+        if (!exportConfig.tajribaConfig) {
+          throw new Error("TAJRIBA_CONFIG or TAJRIBA_SRTOKEN is required for ExportServer");
+        }
+        const configText = fs.readFileSync(exportConfig.tajribaConfig, "utf8");
         const m = configText.match(/^srtoken\s*=\s*"([^"]+)"$/m);
-        if (!m) throw new Error(`srtoken field missing in ${srtokenPath}`);
+        if (!m) throw new Error(`srtoken field missing in ${exportConfig.tajribaConfig}`);
         srtoken = m[1];
       }
 
-      const taj = await Tajriba.createAndAwait(tajUrl);
+      const taj = await Tajriba.createAndAwait(exportConfig.tajribaUrl);
       taj.useHTTP = true;
       const sessionToken = await taj.registerService("export-server", srtoken);
       const admin = await taj.sessionAdmin(sessionToken);
@@ -107,14 +103,21 @@ if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "your-key-here
           scopes: async (args) => admin.scopes(args),
           stop: () => taj.stop(),
         },
-        auditFile,
+        auditFile: exportConfig.auditFile,
       });
-      const exportServer = createExportServer({ service: exportService, auditFile });
-      await new Promise((resolve, reject) => {
-        exportServer.once("error", reject);
-        exportServer.listen(exportPort, "0.0.0.0", resolve);
+      const exportServer = createExportServer({
+        service: exportService,
+        auditFile: exportConfig.auditFile,
+        authUsername: exportConfig.authUsername,
+        authPassword: exportConfig.authPassword,
+        basePath: exportConfig.basePath,
+        allowRaw: exportConfig.allowRaw,
       });
-      info(`export-server: listening on http://127.0.0.1:${exportPort} (audit: ${auditFile})`);
+      await listenExportServer(exportServer, { port: exportConfig.port, host: exportConfig.host });
+      info(
+        `export-server: listening on http://${exportConfig.host}:${exportConfig.port}${exportConfig.basePath} ` +
+        `(audit: ${exportConfig.auditFile}, raw: ${exportConfig.allowRaw ? "enabled" : "disabled"})`,
+      );
     } catch (error) {
       // The export server is a research-data convenience; the callbacks
       // process must keep running even if it cannot start. Surface the
