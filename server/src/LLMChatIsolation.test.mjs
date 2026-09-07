@@ -23,11 +23,11 @@ test("formal LLM call sites receive only the sanitised shared task overview", ()
 });
 
 test("icebreaker and formal handlers use different transcript keys and context builders", () => {
-  assert.match(icebreakerHandle, /intro_round_/);
+  assert.match(icebreakerHandle, /PRACTICE_ICEBREAKER_TRANSCRIPT_KEY/);
   assert.match(icebreakerHandle, /buildIcebreakerLLMMessages\(chat\)/);
   assert.doesNotMatch(icebreakerHandle, /chat_round_|buildGeneratorContext|assessSemanticFactors|validateCandidate|generalInfo|decisionOptions|playerContent/);
   assert.match(formalHandle, /chat_round_/);
-  assert.doesNotMatch(formalHandle, /intro_round_|buildIcebreakerLLMMessages/);
+  assert.doesNotMatch(formalHandle, /practice_icebreaker_chat|buildIcebreakerLLMMessages/);
 });
 
 test("icebreaker boundary module imports no task or formal-pipeline source", () => {

@@ -6,6 +6,9 @@ export const MESSAGE_TYPES = Object.freeze({
   TIMER_REMINDER: "timer_reminder",
 });
 
+export const PRACTICE_ICEBREAKER_STAGE_NAME = "PracticeIcebreaker";
+export const PRACTICE_ICEBREAKER_TRANSCRIPT_KEY = "practice_icebreaker_chat";
+
 export const BREAK_READY_WINDOW_MS = 45_000;
 export const NO_GROUP_FINAL_DECISION = "NO_GROUP_FINAL_DECISION";
 
@@ -124,7 +127,7 @@ export function reviewHumanMessageRequest({
   if (request.stageId !== currentStageId) return { accepted: false, reason: "stale_stage" };
 
   const isDiscussion = currentStageName === "Task" || currentStageName === "Discussion";
-  const isIceBreaker = currentStageName === "Introduction";
+  const isIceBreaker = currentStageName === PRACTICE_ICEBREAKER_STAGE_NAME;
   if (!isDiscussion && !isIceBreaker) return { accepted: false, reason: "wrong_stage" };
   if (isDiscussion && (!Number.isFinite(deadline) || now >= deadline)) {
     return { accepted: false, reason: "discussion_closed" };
@@ -135,7 +138,7 @@ export function reviewHumanMessageRequest({
     reason: "accepted",
     requestId: request.requestId,
     messageId: `${playerId}-${request.requestId}`,
-    attribute: isDiscussion ? `chat_round_${currentRoundIndex}` : `intro_round_${currentRoundIndex}`,
+    attribute: isDiscussion ? `chat_round_${currentRoundIndex}` : PRACTICE_ICEBREAKER_TRANSCRIPT_KEY,
     stage: isDiscussion ? "Discussion" : "IceBreaker",
     content: request.content.trim(),
   };

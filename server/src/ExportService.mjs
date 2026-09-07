@@ -235,8 +235,10 @@ export class ExportService {
       const allRounds = await this.allScopes({ kinds: ["round"] });
       const rScopes = allRounds.filter((s) => s.id === roundId);
       if (rScopes.length === 0) continue;
-      rounds.push(await this.readRound(rScopes[0], players));
+      const round = await this.readRound(rScopes[0], players);
+      if (isFormalResearchRound(round)) rounds.push(round);
     }
+    rounds.sort((a, b) => a.taskIndex - b.taskIndex);
 
     const llmLog = await this.readLlmLog(gameId);
 
@@ -246,13 +248,13 @@ export class ExportService {
   async readGame(scope) {
     const attrs = await this.scopeAttributesOf(scope);
     const roundIDs = await this.gameRoundIDs(scope.id);
-    // Include chat_round_<i> so renderTranscriptMd can render the
+    // Include chat_round_<taskIndex> so renderTranscriptMd can render the
     // participant + facilitator transcript without re-querying.
     //
-    // chat_round_<i> is a Tajriba *vector* attribute (written via
+    // chat_round_<taskIndex> is a Tajriba *vector* attribute (written via
     // `game.append`), so scopeAttributes returns each appended message
-    // as an indexed key `chat_round_<i>:<j>` — NOT as a single
-    // `chat_round_<i>` array. Reassemble the ordered list here. The
+    // as an indexed key `chat_round_<taskIndex>:<messageIndex>` — NOT as a
+    // single `chat_round_<taskIndex>` array. Reassemble the ordered list here. The
     // non-indexed single-array shape is still accepted for the
     // test fixture and any pre-vector store.
     const chat = {};
@@ -307,8 +309,9 @@ export class ExportService {
 
   async readRound(scope, players) {
     const attrs = await this.scopeAttributesOf(scope);
-    const index = numberOrZero(attrs.index);
-    const taskIndex = numberOrZero(attrs.taskIndex);
+    const nativeIndex = numberOrNull(attrs.index);
+    const taskIndex = numberOrNull(attrs.taskIndex);
+    const isPractice = pickBool(attrs.isPractice) === true;
     const taskVersion = attrs.taskVersion || null;
     const facilitation = attrs.facilitation || null;
     const perPlayer = {};
@@ -326,8 +329,13 @@ export class ExportService {
     }
     return {
       id: scope.id,
-      index,
+      // Keep the export's existing `index` field as formal identity. The raw
+      // Empirica lifecycle position is retained separately and must never be
+      // used to select formal transcript or questionnaire data.
+      index: taskIndex,
+      nativeIndex,
       taskIndex,
+      isPractice,
       taskVersion,
       facilitation,
       perPlayer,
@@ -426,7 +434,8 @@ export class ExportService {
       players: redacted.players.map((p) => ({ id: p.id, name: p.name })),
       rounds: redacted.rounds.map((r) => ({
         id: r.id,
-        index: r.index,
+        index: r.taskIndex,
+        nativeIndex: r.nativeIndex,
         taskIndex: r.taskIndex,
         taskVersion: r.taskVersion,
         facilitation: r.facilitation,
@@ -589,7 +598,7 @@ export function renderQuestionnaireCsv(bundle) {
   const perPlayerRow = (player, round, slot) => {
     const data = round.perPlayer[player.id] || {};
     return {
-      round_index: round.index,
+      round_index: round.taskIndex,
       task_index: round.taskIndex,
       task_version: round.taskVersion,
       facilitation: round.facilitation,
@@ -728,7 +737,7 @@ export function renderTranscriptMd(bundle) {
   lines.push("");
 
   for (const round of rounds) {
-    lines.push(`## Round ${round.index + 1} · Task ${round.taskIndex + 1} (version ${round.taskVersion || "?"}) · ${round.facilitation || "?"}`);
+    lines.push(`## Round ${round.taskIndex + 1} · Task ${round.taskIndex + 1} (version ${round.taskVersion || "?"}) · ${round.facilitation || "?"}`);
     lines.push("");
     const messages = collectRoundMessages(round, bundle, game);
     if (messages.length === 0) {
@@ -768,7 +777,7 @@ export function renderTranscriptMd(bundle) {
 }
 
 function collectRoundMessages(round, bundle, game) {
-  const key = `chat_round_${round.index}`;
+  const key = `chat_round_${round.taskIndex}`;
   const chat = game?.chat?.[key];
   if (!Array.isArray(chat)) return [];
   return chat.map((m) => {
@@ -866,6 +875,16 @@ function gameTreatmentName(attrs = {}) {
 function numberOrZero(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
+}
+
+function numberOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function isFormalResearchRound(round) {
+  return round?.isPractice !== true && (round?.taskIndex === 0 || round?.taskIndex === 1);
 }
 
 function pickBool(value) {

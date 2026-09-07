@@ -9,6 +9,7 @@ import { MentionsInput, Mention } from 'react-mentions';
 import ReactMentionsStyling from "./ReactMentionsStyling.jsx";
 import reactStringReplace from "react-string-replace";
 import { draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
+import { PRACTICE_ICEBREAKER_STAGE_NAME } from "../experimentStructure.js";
 
 
 
@@ -216,7 +217,7 @@ function Input({ onNewMessage, requestResult }) {
         display: player.get("name"),
     }));
 
-    if (stage?.get("name") === "Introduction" || (facilitation != "none" && facilitation != "human")) {
+    if (stage?.get("name") === PRACTICE_ICEBREAKER_STAGE_NAME || (facilitation != "none" && facilitation != "human")) {
         mentionUsers.push({
             id: "ai",
             display: "Facilitator",
@@ -376,7 +377,7 @@ export function TypingBubbles({ scrollerRef }) {
     // broader audit lifecycle on `game.llmInFlight`, but only entries whose
     // visible-response generation has started should be participant-visible.
     // Adaptive semantic assessment therefore remains invisible when it
-    // ultimately abstains. The icebreaker (Introduction) stage uses its own
+    // ultimately abstains. The PracticeIcebreaker stage uses its own
     // `icebreakerFacilitatorHandledMessageIds` ledger with `status:
     // "pending"` while the LLM is generating a reply. Both must be honoured
     // so the dots appear during every chat that the Facilitator can post in.
@@ -391,7 +392,7 @@ export function TypingBubbles({ scrollerRef }) {
     );
 
     const icebreakerHandled = game.get("icebreakerFacilitatorHandledMessageIds") || {};
-    const facilitatorTypingInIcebreaker = stageName === "Introduction"
+    const facilitatorTypingInIcebreaker = stageName === PRACTICE_ICEBREAKER_STAGE_NAME
         && Object.values(icebreakerHandled).some((entry) => entry?.status === "pending");
 
     const facilitatorTyping = facilitatorTypingInFlight || facilitatorTypingInIcebreaker;

@@ -110,7 +110,8 @@ function makeScope(id, kind, builder = () => {}) {
 const T = (v) => JSON.stringify(v);
 
 /**
- * Realistic fixture: one batch, one game, three players, two rounds.
+ * Realistic post-migration fixture: one batch, one game, three players, one
+ * technical Practice / Orientation round, and two formal research rounds.
  * Players have submitted initial / final decisions, a per-round TLX and
  * subjective survey, the end-of-game final questions, and a chat log
  * with a facilitator intervention. The game also has a bounded llmLog
@@ -151,6 +152,15 @@ function fixture() {
       { text: "I think we should focus on cost first.", sender: { id: "p1", name: "Red" }, ts: 1723705200000 },
       { text: "Why cost?", sender: { id: "p2", name: "Pink" }, ts: 1723705210000 },
       { text: "Consider the trade-offs across all options.", sender: { id: "ai", name: "Facilitator" }, ts: 1723705220000, role: "Expander" },
+    ]);
+    attr(s, "chat_round_1", [
+      { text: "Formal Round 2 evidence.", sender: { id: "p3", name: "Blue" }, ts: 1723705600000 },
+    ]);
+    attr(s, "chat_round_2", [
+      { text: "POISON NATIVE-INDEX TRANSCRIPT", sender: { id: "p2", name: "Pink" }, ts: 1723705700000 },
+    ]);
+    attr(s, "practice_icebreaker_chat", [
+      { text: "Practice-only answer.", sender: { id: "p1", name: "Red" }, ts: 1723705000000 },
     ]);
   });
   const players = [
@@ -195,9 +205,14 @@ function fixture() {
     }),
   ];
   const rounds = [
-    makeScope("R0", "round", (s) => {
+    makeScope("PRACTICE", "round", (s) => {
       attr(s, "gameID", T("GAME1"));
       attr(s, "index", 0);
+      attr(s, "isPractice", true);
+    }),
+    makeScope("R0", "round", (s) => {
+      attr(s, "gameID", T("GAME1"));
+      attr(s, "index", 1);
       attr(s, "taskIndex", 0);
       attr(s, "taskVersion", "A");
       attr(s, "facilitation", "adaptive");
@@ -209,7 +224,7 @@ function fixture() {
     }),
     makeScope("R1", "round", (s) => {
       attr(s, "gameID", T("GAME1"));
-      attr(s, "index", 1);
+      attr(s, "index", 2);
       attr(s, "taskIndex", 1);
       attr(s, "taskVersion", "B");
       attr(s, "facilitation", "static");
@@ -217,8 +232,20 @@ function fixture() {
       attr(s, "subjectiveSurvey", "shared-shape-not-per-player");
     }),
   ];
-  const scopes = { [batch.id]: batch, [game.id]: game, [rounds[0].id]: rounds[0], [rounds[1].id]: rounds[1], [players[0].id]: players[0], [players[1].id]: players[1], [players[2].id]: players[2] };
+  const scopes = Object.fromEntries([batch, game, ...rounds, ...players].map((scope) => [scope.id, scope]));
   return { scopes, game, batch, players, rounds };
+}
+
+function legacyTwoRoundFixture() {
+  const fx = fixture();
+  delete fx.scopes.PRACTICE;
+  fx.rounds = fx.rounds.slice(1);
+  fx.rounds.forEach((round, index) => {
+    const indexAttribute = round.attributes.find((attribute) => attribute.key === "index");
+    indexAttribute.value = JSON.stringify(index);
+  });
+  fx.game.attributes = fx.game.attributes.filter((attribute) => attribute.key !== "practice_icebreaker_chat");
+  return fx;
 }
 
 function service({ scopes, auditFile } = {}) {
@@ -252,7 +279,8 @@ test("listGames filters by treatment and respects limit/offset", async () => {
 });
 
 test("getGameBundle assembles players, rounds, and the bounded LLM log", async () => {
-  const svc = service();
+  const fx = fixture();
+  const svc = service({ scopes: fx.scopes });
   const bundle = await svc.getGameBundle("GAME1");
   assert.equal(bundle.game.id, "GAME1");
   assert.equal(bundle.game.batchId, "BATCH1");
@@ -260,9 +288,21 @@ test("getGameBundle assembles players, rounds, and the bounded LLM log", async (
   assert.equal(bundle.players.length, 3);
   assert.equal(bundle.players[0].name, "Blue", "players should be sorted by name");
   assert.equal(bundle.rounds.length, 2);
+  assert.deepEqual(await svc.gameRoundIDs("GAME1"), ["PRACTICE", "R0", "R1"], "technical reconstruction remains ordered by native index");
+  const reconstructedPractice = await svc.readRound(fx.rounds[0], bundle.players);
+  assert.equal(reconstructedPractice.nativeIndex, 0);
+  assert.equal(reconstructedPractice.taskIndex, null, "a missing practice taskIndex must remain absent");
+  assert.equal(reconstructedPractice.index, null, "practice must not acquire formal Round 1 identity");
+  assert.equal(reconstructedPractice.isPractice, true);
   assert.equal(bundle.rounds[0].index, 0);
+  assert.equal(bundle.rounds[0].nativeIndex, 1);
+  assert.equal(bundle.rounds[0].taskIndex, 0);
   assert.equal(bundle.rounds[0].facilitation, "adaptive");
+  assert.equal(bundle.rounds[1].index, 1);
+  assert.equal(bundle.rounds[1].nativeIndex, 2);
+  assert.equal(bundle.rounds[1].taskIndex, 1);
   assert.equal(bundle.rounds[1].facilitation, "static");
+  assert.ok(bundle.rounds.every((round) => round.id !== "PRACTICE"));
   assert.equal(bundle.llmLog.length, 2);
   assert.equal(bundle.llmLog[0].auditRequestId, "R1");
   assert.equal(bundle.llmLog[1].outcome, "INTERRUPTED_CALLBACKS_RESTART");
@@ -288,6 +328,16 @@ test("renderQuestionnaireCsv produces one row per player per round plus an end-o
   assert.ok(!csv.includes("researcher@example.com"));
   // No raw LLM prompt should appear in the CSV (it lives in the bundle zip only).
   assert.ok(!csv.includes("internal-only-payload"));
+  assert.ok(!csv.includes("PRACTICE"));
+  const csvLines = csv.trimEnd().split("\n");
+  const roundIndexColumn = columns.indexOf("round_index");
+  const slotColumn = columns.indexOf("slot");
+  const perRoundIndexes = csvLines.slice(1)
+    .map((line) => line.split(","))
+    .filter((cells) => cells[slotColumn] === "per_round")
+    .map((cells) => cells[roundIndexColumn]);
+  assert.deepEqual([...new Set(perRoundIndexes)].sort(), ["0", "1"]);
+  assert.equal(perRoundIndexes.length, 6, "three participants must each have exactly two formal questionnaire rows");
   for (const line of csv.trimEnd().split("\n").slice(1)) {
     const [gameId, batchId, treatment, sequenceId, startedAt, endedAt] = line.split(",", 6);
     assert.equal(gameId, "GAME1");
@@ -314,13 +364,29 @@ test("renderTranscriptMd emits one section per round and a final LLM audit log s
   assert.doesNotMatch(markdown, /- Ended: \(in progress\)/);
   assert.match(markdown, /## Round 1 · Task 1/);
   assert.match(markdown, /## Round 2 · Task 2/);
+  assert.doesNotMatch(markdown, /## Round 3|Practice \/ Orientation|Practice-only answer/);
+  assert.doesNotMatch(markdown, /POISON NATIVE-INDEX TRANSCRIPT/);
   assert.match(markdown, /## LLM audit log \(2 entries\)/);
   assert.match(markdown, /Red.*focus on cost first/);
   assert.match(markdown, /Facilitator.*Expander/);
+  assert.match(markdown, /Blue.*Formal Round 2 evidence/);
   // Default redact must strip the email from the expFeedback mention
   // when it ends up in the bundle (transcript does not embed
   // expFeedback today, so this is a defensive check).
   assert.ok(!markdown.includes("researcher@example.com"));
+});
+
+test("legacy games containing only two formal rounds retain their existing export identities", async () => {
+  const fx = legacyTwoRoundFixture();
+  const svc = service({ scopes: fx.scopes });
+  const bundle = await svc.getGameBundle("GAME1");
+  assert.deepEqual(bundle.rounds.map(({ index, nativeIndex, taskIndex }) => ({ index, nativeIndex, taskIndex })), [
+    { index: 0, nativeIndex: 0, taskIndex: 0 },
+    { index: 1, nativeIndex: 1, taskIndex: 1 },
+  ]);
+  const { markdown } = await svc.renderTranscriptMd("GAME1", { redact: true });
+  assert.match(markdown, /Red.*focus on cost first/);
+  assert.match(markdown, /Blue.*Formal Round 2 evidence/);
 });
 
 test("renderTranscriptMd reconstructs vector chat_round_N from indexed attributes", async () => {
@@ -387,6 +453,10 @@ test("ExportService writeGameBundle produces a valid ZIP and records the audit e
   assert.deepEqual(files, ["questionnaire.csv", "transcript.md", "meta.json", "llm-audit.jsonl"]);
   const meta = JSON.parse(execFileSync("unzip", ["-p", outFile, "meta.json"], { encoding: "utf8" }));
   assert.equal(meta.batchId, "BATCH1");
+  assert.deepEqual(meta.rounds.map(({ id, index, nativeIndex, taskIndex }) => ({ id, index, nativeIndex, taskIndex })), [
+    { id: "R0", index: 0, nativeIndex: 1, taskIndex: 0 },
+    { id: "R1", index: 1, nativeIndex: 2, taskIndex: 1 },
+  ]);
 
   // The service is request-context-free; the caller (HTTP server / CLI)
   // writes the audit record. Simulate that here and verify the line.

@@ -120,19 +120,16 @@ test("taskVersion selection fails closed for every non-canonical value", () => {
 });
 
 test("both Rounds implement the approved task lifecycle in order", () => {
-  assert.equal([...callbacksSource.matchAll(/addReviewQuizStage\(round1\)/g)].length, 1);
-  assert.equal([...callbacksSource.matchAll(/addReviewQuizStage\(round2\)/g)].length, 1);
+  assert.equal([...callbacksSource.matchAll(/round1\.addStage\(\{ name: "ReviewQuiz"/g)].length, 1);
+  assert.equal([...callbacksSource.matchAll(/round2\.addStage\(\{ name: "ReviewQuiz"/g)].length, 1);
+  assert.doesNotMatch(callbacksSource, /function addReviewQuizStage|addReviewQuizStage\(/);
 
   const round1Stages = callbacksSource.slice(callbacksSource.indexOf('round1.addStage({ name: "TaskInformation"'), callbacksSource.indexOf("const round2 = game.addRound("));
   const round2Stages = callbacksSource.slice(callbacksSource.indexOf('round2.addStage({ name: "TaskInformation"'), callbacksSource.indexOf("// MIGRATED from old 2nd (TEMP-BE-007"));
   for (const stages of [round1Stages, round2Stages]) {
     const orderedTokens = [
       'name: "TaskInformation"',
-      'name: "Walkthrough"',
-      "addReviewQuizStage(",
-      'name: "IceBreakerStartCountdown"',
-      'name: "Introduction"',
-      'name: "IceBreakerEndCountdown"',
+      'name: "ReviewQuiz"',
       'name: "InitialDecision"',
       'name: "Task"',
       'name: "FinalDecision"',
@@ -146,6 +143,7 @@ test("both Rounds implement the approved task lifecycle in order", () => {
       assert.ok(index > previousIndex, `${token} must occur in lifecycle order`);
       previousIndex = index;
     }
+    assert.doesNotMatch(stages, /Walkthrough|IceBreaker|PracticeIcebreaker|Introduction/);
   }
 
   assert.equal([...callbacksSource.matchAll(/name: "Break"/g)].length, 1);
@@ -188,7 +186,9 @@ test("global intro keeps only one-time global steps and round screens use round 
   assert.match(introductionSource, /<RenderMarkdown markdownText=\{taskBackground\}/);
   assert.match(introductionSource, /round\?\.get\("taskVersion"\)/);
   assert.doesNotMatch(introductionSource, /IntroContent/);
-  assert.equal([...callbacksSource.matchAll(/name: "Walkthrough"/g)].length, 2);
+  assert.equal([...callbacksSource.matchAll(/name: "Walkthrough"/g)].length, 1);
+  const practiceStages = callbacksSource.slice(callbacksSource.indexOf("const practiceRound = game.addRound("), callbacksSource.indexOf("const round1 = game.addRound("));
+  assert.match(practiceStages, /practiceRound\.addStage\(\{ name: "Walkthrough"/);
   assert.doesNotMatch(userInterfaceSource, /facilitation\s*=/);
 });
 

@@ -6,6 +6,8 @@ import {
   classifyFinalDecision,
   MESSAGE_TYPES,
   NO_GROUP_FINAL_DECISION,
+  PRACTICE_ICEBREAKER_STAGE_NAME,
+  PRACTICE_ICEBREAKER_TRANSCRIPT_KEY,
   allocateSequencePosition,
   buildCanonicalMessage,
   normalizeMessageContent,
@@ -71,22 +73,43 @@ test("R9-R10: authoritative message review accepts before deadline and rejects c
   assert.equal(reviewHumanMessageRequest({ ...baseRequestContext, request, currentStageName: "TLX" }).reason, "wrong_stage");
 });
 
-test("R9/R13: IceBreaker uses the same reviewed request boundary with isolated classification", () => {
-  const result = reviewHumanMessageRequest({ ...baseRequestContext, request, currentStageName: "Introduction", deadline: undefined });
+test("R9/R13: the one practice Icebreaker uses the reviewed request boundary and canonical transcript", () => {
+  const result = reviewHumanMessageRequest({ ...baseRequestContext, request, currentRoundIndex: undefined, currentStageName: PRACTICE_ICEBREAKER_STAGE_NAME, deadline: undefined });
   assert.equal(result.accepted, true);
-  assert.equal(result.attribute, "intro_round_0");
+  assert.equal(result.attribute, PRACTICE_ICEBREAKER_TRANSCRIPT_KEY);
   assert.equal(result.stage, "IceBreaker");
 
-  const secondRound = reviewHumanMessageRequest({
+  const samePracticeNamespace = reviewHumanMessageRequest({
     ...baseRequestContext,
     request: { ...request, roundId: "r2" },
     currentRoundId: "r2",
     currentRoundIndex: 1,
-    currentStageName: "Introduction",
+    currentStageName: PRACTICE_ICEBREAKER_STAGE_NAME,
     deadline: undefined,
   });
-  assert.equal(secondRound.attribute, "intro_round_1");
-  assert.notEqual(secondRound.attribute, result.attribute);
+  assert.equal(samePracticeNamespace.attribute, PRACTICE_ICEBREAKER_TRANSCRIPT_KEY);
+  assert.equal(samePracticeNamespace.attribute, result.attribute);
+});
+
+test("formal Round 2 remains isolated in chat_round_1 and practice never enters a formal transcript", () => {
+  const formalRound2 = reviewHumanMessageRequest({
+    ...baseRequestContext,
+    request: { ...request, roundId: "r2" },
+    currentRoundId: "r2",
+    currentRoundIndex: 1,
+  });
+  assert.equal(formalRound2.attribute, "chat_round_1");
+
+  const practice = reviewHumanMessageRequest({
+    ...baseRequestContext,
+    request,
+    currentRoundIndex: 0,
+    currentStageName: PRACTICE_ICEBREAKER_STAGE_NAME,
+    deadline: undefined,
+  });
+  assert.equal(practice.attribute, PRACTICE_ICEBREAKER_TRANSCRIPT_KEY);
+  assert.notEqual(practice.attribute, "chat_round_0");
+  assert.notEqual(practice.attribute, "chat_round_1");
 });
 
 test("R11-R12/G2: stable IDs deduplicate by request and server allocator is unique and monotonic", () => {
