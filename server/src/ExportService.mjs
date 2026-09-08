@@ -23,10 +23,13 @@
  *                chat_round_0, chat_round_1,
  *                llmLog.<auditRequestId>, llmLogIndex,
  *                operationalEvents.<id>, operationalEventsIndex
- *       player   name, introDone, ended, finalQuestions, expFeedback
- *       round    tlxSurvey (per player), subjectiveSurvey (per player),
- *                initialDecision, finalDecision, finalDecisionConfirmed,
- *                finalDecisionOutcome, reviewQuizPassed
+ *       player   name, introDone, ended, finalQuestions, expFeedback,
+ *                playerRoundID-<roundId>
+ *       round    taskIndex, taskVersion, facilitation and authoritative
+ *                shared final-decision state
+ *       playerRound
+ *                reviewQuizPassed, initialDecision, finalDecision,
+ *                individual assessment, tlxSurvey, subjectiveSurvey
  *       batch    treatment, status
  *
  *   - The Tajriba admin connection is established in `connect()` using
@@ -220,22 +223,29 @@ export class ExportService {
     const game = await this.readGame(gameScopes[0]);
 
     const playerIDs = await this.gamePlayerIDs(gameId);
+    const allPlayerScopes = await this.allScopes({ kinds: ["player"] });
+    const playerScopesById = new Map(allPlayerScopes.map((scope) => [scope.id, scope]));
     const players = [];
     for (const pid of playerIDs) {
-      const allPlayers = await this.allScopes({ kinds: ["player"] });
-      const pScopes = allPlayers.filter((s) => s.id === pid);
-      if (pScopes.length === 0) continue;
-      players.push(await this.readPlayer(pScopes[0], gameId));
+      const playerScope = playerScopesById.get(pid);
+      if (!playerScope) continue;
+      players.push(await this.readPlayer(playerScope, gameId));
     }
     players.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
+    // Real Empirica writes `player.round.set(...)` attributes to playerRound
+    // scopes. Load them once and resolve each one only through the authoritative
+    // playerRoundID-<roundId> link on the player; never pair by creation order.
+    const allPlayerRounds = await this.allScopes({ kinds: ["playerRound"] });
+    const playerRoundScopesById = new Map(allPlayerRounds.map((scope) => [scope.id, scope]));
+    const allRoundScopes = await this.allScopes({ kinds: ["round"] });
+    const roundScopesById = new Map(allRoundScopes.map((scope) => [scope.id, scope]));
     const rounds = [];
     for (let idx = 0; idx < (game.rounds || []).length; idx += 1) {
       const roundId = game.rounds[idx];
-      const allRounds = await this.allScopes({ kinds: ["round"] });
-      const rScopes = allRounds.filter((s) => s.id === roundId);
-      if (rScopes.length === 0) continue;
-      const round = await this.readRound(rScopes[0], players);
+      const roundScope = roundScopesById.get(roundId);
+      if (!roundScope) continue;
+      const round = await this.readRound(roundScope, players, playerRoundScopesById);
       if (isFormalResearchRound(round)) rounds.push(round);
     }
     rounds.sort((a, b) => a.taskIndex - b.taskIndex);
@@ -296,6 +306,12 @@ export class ExportService {
 
   async readPlayer(scope, gameId) {
     const attrs = await this.scopeAttributesOf(scope);
+    const playerRoundIds = {};
+    for (const [key, value] of Object.entries(attrs)) {
+      const match = /^playerRoundID-(.+)$/.exec(key);
+      if (!match || typeof value !== "string" || value.length === 0) continue;
+      playerRoundIds[match[1]] = value;
+    }
     return {
       id: scope.id,
       gameId,
@@ -304,10 +320,11 @@ export class ExportService {
       ended: attrs.ended || null,
       finalQuestions: attrs.finalQuestions || null,
       expFeedback: attrs.expFeedback || null,
+      playerRoundIds,
     };
   }
 
-  async readRound(scope, players) {
+  async readRound(scope, players, playerRoundScopesById = new Map()) {
     const attrs = await this.scopeAttributesOf(scope);
     const nativeIndex = numberOrNull(attrs.index);
     const taskIndex = numberOrNull(attrs.taskIndex);
@@ -316,15 +333,32 @@ export class ExportService {
     const facilitation = attrs.facilitation || null;
     const perPlayer = {};
     for (const p of players) {
+      const playerRoundId = p.playerRoundIds?.[scope.id] || null;
+      const playerRoundScope = playerRoundId ? playerRoundScopesById.get(playerRoundId) : null;
+      const playerAttrs = playerRoundScope
+        ? await this.scopeAttributesOf(playerRoundScope)
+        : {};
+      // Do not fall back to similarly named shared-round attributes. There is
+      // no runtime evidence that Empirica ever stored player.round data there;
+      // the old shape existed only in test fixtures and could mix participants.
       perPlayer[p.id] = {
-        tlxSurvey: attrs[`tlxSurvey:${p.id}`] || attrs.tlxSurvey || null,
-        subjectiveSurvey: attrs[`subjectiveSurvey:${p.id}`] || attrs.subjectiveSurvey || null,
-        initialChoice: attrs[`initialChoice:${p.id}`] || null,
-        initialConfidence: attrs[`initialConfidence:${p.id}`] || null,
-        initialDecision: attrs[`initialDecision:${p.id}`] || attrs.initialDecision || null,
-        finalDecision: attrs[`finalDecision:${p.id}`] || attrs.finalDecision || null,
-        finalDecisionDraft: attrs[`finalDecisionDraft:${p.id}`] || null,
-        reviewQuizPassed: pickBool(attrs[`reviewQuizPassed:${p.id}`] ?? attrs.reviewQuizPassed),
+        playerRoundId,
+        tlxSurvey: playerAttrs.tlxSurvey || null,
+        subjectiveSurvey: playerAttrs.subjectiveSurvey || null,
+        initialChoice: playerAttrs.initialChoice ?? null,
+        initialConfidence: playerAttrs.initialConfidence ?? null,
+        initialDecision: playerAttrs.initialDecision || null,
+        finalDecision: playerAttrs.finalDecision || null,
+        finalDecisionDraft: playerAttrs.finalDecisionDraft || null,
+        groupFinalChoice: playerAttrs.groupFinalChoice ?? null,
+        groupChoiceConfidence: playerAttrs.groupChoiceConfidence ?? null,
+        groupFinalConfirmedChoice: playerAttrs.groupFinalConfirmedChoice ?? null,
+        groupFinalConfirmedAt: playerAttrs.groupFinalConfirmedAt ?? null,
+        finalPersonalChoice: playerAttrs.finalPersonalChoice ?? null,
+        finalPersonalChoiceConfidence: playerAttrs.finalPersonalChoiceConfidence ?? null,
+        finalPersonalChoiceRationale: playerAttrs.finalPersonalChoiceRationale ?? null,
+        agreesWithGroupChoice: playerAttrs.agreesWithGroupChoice ?? null,
+        reviewQuizPassed: pickBool(playerAttrs.reviewQuizPassed),
       };
     }
     return {
@@ -338,6 +372,10 @@ export class ExportService {
       isPractice,
       taskVersion,
       facilitation,
+      finalDecisionOutcome: attrs.finalDecisionOutcome ?? null,
+      finalDecisionMatchedChoice: attrs.finalDecisionMatchedChoice ?? null,
+      finalDecisionConfirmed: pickBool(attrs.finalDecisionConfirmed),
+      finalDecisionFinalizedAt: attrs.finalDecisionFinalizedAt ?? null,
       perPlayer,
     };
   }
@@ -577,6 +615,7 @@ export function redactGameBundle(bundle) {
     const perPlayer = {};
     for (const [pid, data] of Object.entries(r.perPlayer || {})) {
       perPlayer[pid] = {
+        playerRoundId: data.playerRoundId,
         tlxSurvey: data.tlxSurvey ? redactDeep(data.tlxSurvey) : null,
         subjectiveSurvey: data.subjectiveSurvey ? redactDeep(data.subjectiveSurvey) : null,
         initialDecision: data.initialDecision ? redactDeep(data.initialDecision) : null,
@@ -584,6 +623,16 @@ export function redactGameBundle(bundle) {
         finalDecisionDraft: data.finalDecisionDraft ? redactDeep(data.finalDecisionDraft) : null,
         initialChoice: data.initialChoice,
         initialConfidence: data.initialConfidence,
+        groupFinalChoice: data.groupFinalChoice,
+        groupChoiceConfidence: data.groupChoiceConfidence,
+        groupFinalConfirmedChoice: data.groupFinalConfirmedChoice,
+        groupFinalConfirmedAt: data.groupFinalConfirmedAt,
+        finalPersonalChoice: data.finalPersonalChoice,
+        finalPersonalChoiceConfidence: data.finalPersonalChoiceConfidence,
+        finalPersonalChoiceRationale: data.finalPersonalChoiceRationale
+          ? redactDeep(data.finalPersonalChoiceRationale)
+          : null,
+        agreesWithGroupChoice: data.agreesWithGroupChoice,
         reviewQuizPassed: data.reviewQuizPassed,
       };
     }
@@ -628,7 +677,10 @@ export function renderQuestionnaireCsv(bundle) {
       subjective_facilitator_option_push: data.subjectiveSurvey?.facilitatorOptionPush ?? "",
       final_decision_choice: data.finalDecision?.choice ?? "",
       final_decision_confidence: data.finalDecision?.confidence ?? "",
-      final_decision_outcome: data.finalDecision?.outcome ?? "",
+      final_decision_outcome: round.finalDecisionOutcome
+        ?? data.finalDecision?.finalDecisionOutcome
+        ?? data.finalDecision?.outcome
+        ?? "",
       final_decision_submitted_at: data.finalDecision?.submittedAt ?? "",
       slot,
     };
