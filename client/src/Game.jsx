@@ -14,6 +14,10 @@ import { TLX } from "./intro-exit/TLX.jsx";
 import { SubjectiveSurvey } from "./intro-exit/SubjectiveSurvey.jsx";
 import { IndividualAssessment } from "./stages/IndividualAssessment.jsx";
 import { Break } from "./stages/Break.jsx";
+import {
+  PRACTICE_ICEBREAKER_STAGE_NAME,
+  PRACTICE_ICEBREAKER_TRANSCRIPT_KEY,
+} from "./experimentStructure.js";
 
 // Formal stage names used by the current design include round-level task
 // information, walkthrough, questionnaire, and decision/discussion screens.
@@ -94,7 +98,7 @@ export function Game() {
     return <Break key={roundStageKey} />
   }
 
-  if (stageName == "Introduction") {
+  if (stageName == PRACTICE_ICEBREAKER_STAGE_NAME) {
     return (
       <div className="h-full w-full flex">
         <div className="h-full flex flex-col" style={{ width: '50%' }}>
@@ -109,9 +113,9 @@ export function Game() {
           </div>
           <div className="w-full flex-grow overflow-y-auto overflow-x-hidden">
             <Chat
-              key={`intro-chat-${round?.id}`}
+              key="practice-icebreaker-chat"
               scope={game}
-              attribute={`intro_round_${round?.get("index")}`}
+              attribute={PRACTICE_ICEBREAKER_TRANSCRIPT_KEY}
             />
           </div>
         </div>

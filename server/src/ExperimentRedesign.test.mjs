@@ -23,8 +23,9 @@ const playerSpecificInfo = await read("client/src/components/PlayerSpecificInfo.
 const timer = await read("client/src/components/Timer.jsx");
 const indexCss = await read("client/src/index.css");
 const policies = await read("server/src/ExperimentPolicies.mjs");
+const clientStructure = await read("client/src/experimentStructure.js");
 
-test("T1-T7: locked two-round routing includes full Walkthrough and IndividualAssessment", () => {
+test("T1-T7: locked routing includes one pre-round Walkthrough and formal IndividualAssessment stages", () => {
   for (const [id, facilitation, tasks] of [["S1", '["static", "adaptive"]', '["A", "B"]'],["S2", '["adaptive", "static"]', '["A", "B"]'],["S3", '["static", "adaptive"]', '["B", "A"]'],["S4", '["adaptive", "static"]', '["B", "A"]']]) {
     const block = callbacks.slice(callbacks.indexOf(`${id}:`), callbacks.indexOf(`${id}:`) + 260);
     assert.match(block, new RegExp(facilitation.replace(/[\[\]"]/g, "\\$&")));
@@ -32,9 +33,33 @@ test("T1-T7: locked two-round routing includes full Walkthrough and IndividualAs
   }
   assert.match(callbacks, /taskIndex:\s+0/);
   assert.match(callbacks, /taskIndex:\s+1/);
-  assert.equal((callbacks.match(/name: "Walkthrough"/g) ?? []).length, 2);
+  assert.equal((callbacks.match(/name: "Walkthrough"/g) ?? []).length, 1);
   assert.equal((callbacks.match(/name: "IndividualAssessment"/g) ?? []).length, 2);
   assert.match(game, /stageName == "IndividualAssessment"/);
+});
+
+test("one practice container precedes two Icebreaker-free formal rounds and Round 1 resets formal state", () => {
+  const practiceStart = callbacks.indexOf('const practiceRound = game.addRound({');
+  const round1Start = callbacks.indexOf('const round1 = game.addRound({');
+  const round2Start = callbacks.indexOf('const round2 = game.addRound({');
+  const roundStartHandler = callbacks.indexOf('Empirica.onRoundStart(({ round }) => {');
+  assert.ok(practiceStart >= 0 && practiceStart < round1Start && round1Start < round2Start);
+
+  const practiceBlock = callbacks.slice(practiceStart, round1Start);
+  const round1Block = callbacks.slice(round1Start, round2Start);
+  const round2Block = callbacks.slice(round2Start, callbacks.indexOf('// Restore the original stable colour aliases'));
+  assert.match(practiceBlock, /name: "Practice \/ Orientation"/);
+  assert.match(practiceBlock, /isPractice: true/);
+  assert.match(practiceBlock, /name: "Walkthrough"[\s\S]*name: "IceBreakerStartCountdown"[\s\S]*PRACTICE_ICEBREAKER_STAGE_NAME[\s\S]*name: "IceBreakerEndCountdown"/);
+  assert.equal((practiceBlock.match(/PRACTICE_ICEBREAKER_STAGE_NAME/g) ?? []).length, 1);
+  for (const formalBlock of [round1Block, round2Block]) {
+    assert.doesNotMatch(formalBlock, /Walkthrough|IceBreaker|PracticeIcebreaker|Introduction/);
+  }
+
+  const onRoundStartBlock = callbacks.slice(roundStartHandler, callbacks.indexOf('// ── onStageStart'));
+  assert.match(onRoundStartBlock, /if \(round\.get\("isPractice"\) === true\) return;/);
+  assert.ok(onRoundStartBlock.indexOf('if (round.get("isPractice") === true) return;') < onRoundStartBlock.indexOf('resetRoundState(game);'));
+  assert.match(onRoundStartBlock, /resetRoundState\(game\)/);
 });
 
 test("Walkthrough uses the approved four-step instructions and stable card layout", () => {
@@ -64,7 +89,7 @@ test("only screens that require scrolling show bold scroll reminders", () => {
   assert.match(playerSpecificInfo, /font-bold[^>]*>Scroll down within the report to review all information\./);
   assert.doesNotMatch(taskInformation, /Scroll down to review all task information/);
   assert.match(walkthrough, /<strong>Scroll down to review the full walkthrough\.<\/strong>/);
-  assert.equal((stage.match(/\*\*Scroll down to review all IceBreaker instructions\.\*\*/g) ?? []).length, 2);
+  assert.equal((stage.match(/\*\*Scroll down to review all IceBreaker instructions\.\*\*/g) ?? []).length, 1);
   assert.match(reviewQuiz, /font-bold[^>]*>Scroll down to answer all five questions\./);
   assert.match(individual, /font-bold[^>]*>Scroll down to complete all questions\./);
   assert.match(tlx, /font-bold[^>]*>Scroll down to complete all questions\./);
@@ -95,24 +120,25 @@ test("Discussion countdown falls back to the server-owned deadline when the Empi
   assert.match(callbacks, /game\.set\("deadline",\s+now \+ gameDuration \* 60 \* 1000\)/);
 });
 
-test("IceBreaker instructions assign one neutral English game to each task", () => {
-  assert.match(stage, /round\?\.get\("taskVersion"\)/);
-  assert.match(stage, /taskVersion === "A"/);
+test("the temporary practice Icebreaker preserves one neutral activity without formal task selection", () => {
+  assert.doesNotMatch(stage, /get\("taskVersion"\)|taskVersion ===/);
   assert.match(stage, /IceBreaker: Would You Rather\.\.\.\?/);
   assert.match(stage, /speak every language fluently or play every musical instrument expertly/);
-  assert.match(stage, /IceBreaker: Word Chain/);
-  assert.match(stage, /Starting word:\*\* Rocket/);
-  assert.match(stage, /Rocket → Tiger → River → Rainbow/);
-  assert.equal((stage.match(/Practise tagging a group member/g) ?? []).length, 2);
+  assert.doesNotMatch(stage, /IceBreaker: Word Chain|Starting word:\*\* Rocket/);
+  assert.equal((stage.match(/Practise tagging a group member/g) ?? []).length, 1);
   assert.match(stage, /type \\`@\\`, select their nickname/);
   assert.doesNotMatch(stage, /chicken-sized horses|pause time or rewind time|Coffee.*Bean.*Green.*Tea/);
 });
 
-test("each round has an isolated IceBreaker transcript", () => {
-  assert.match(game, /attribute=\{`intro_round_\$\{round\?\.get\("index"\)\}`\}/);
-  assert.match(policies, /`intro_round_\$\{currentRoundIndex\}`/);
-  assert.match(callbacks, /const introChatKey = `intro_round_\$\{stage\.round\.get\("index"\)\}`/);
-  assert.doesNotMatch(game, /attribute="intro"/);
+test("one practice transcript is isolated from both formal round transcripts", () => {
+  for (const source of [game, policies, callbacks, clientStructure]) assert.match(source, /practice_icebreaker_chat|PRACTICE_ICEBREAKER_TRANSCRIPT_KEY/);
+  assert.match(clientStructure, /PRACTICE_ICEBREAKER_STAGE_NAME = "PracticeIcebreaker"/);
+  assert.match(clientStructure, /PRACTICE_ICEBREAKER_TRANSCRIPT_KEY = "practice_icebreaker_chat"/);
+  for (const source of [game, policies, callbacks]) assert.doesNotMatch(source, /intro_round_[01]|`intro_round_/);
+  assert.match(callbacks, /Empirica\.on\("game", PRACTICE_ICEBREAKER_TRANSCRIPT_KEY, handleIcebreakerChat\)/);
+  assert.equal((callbacks.match(/handleIcebreakerChat\);/g) ?? []).length, 1);
+  assert.match(callbacks, /Empirica\.on\("game", "chat_round_0", handleChat\)/);
+  assert.match(callbacks, /Empirica\.on\("game", "chat_round_1", handleChat\)/);
 });
 
 test("TLX and SubjectiveSurvey use the same incomplete-survey warning", () => {
@@ -132,8 +158,8 @@ test("timer reminders flush immediately without waiting for a human chat message
 });
 
 test("IceBreaker is wrapped by the approved ten-second countdown screens", () => {
-  assert.equal((callbacks.match(/name: "IceBreakerStartCountdown"/g) ?? []).length, 2);
-  assert.equal((callbacks.match(/name: "IceBreakerEndCountdown"/g) ?? []).length, 2);
+  assert.equal((callbacks.match(/name: "IceBreakerStartCountdown"/g) ?? []).length, 1);
+  assert.equal((callbacks.match(/name: "IceBreakerEndCountdown"/g) ?? []).length, 1);
   assert.match(game, /<IceBreakerTransition key=\{roundStageKey\} position="before"/);
   assert.match(game, /<IceBreakerTransition key=\{roundStageKey\} position="after"/);
   assert.match(stage, /Get ready to meet your group in a quick icebreaker!/);

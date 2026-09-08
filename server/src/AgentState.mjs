@@ -130,7 +130,7 @@ export function buildAgentState(game, round, chat, opts = {}) {
   return {
     // -- identity / scope
     currentRoundId: round.id,
-    currentRoundIndex: round.get("index"),
+    currentRoundIndex: round.get("taskIndex") ?? round.get("index"),
     currentStageName: game.currentStage?.get("name") ?? null,
     facilitation: round.get("facilitation") ?? null,
     generalInfo: round.get("generalInfo") ?? "",

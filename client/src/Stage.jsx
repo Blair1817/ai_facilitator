@@ -1,8 +1,6 @@
 import {
   usePlayer,
-  usePlayers,
-  useRound,
-  useStage
+  usePlayers
 } from "@empirica/core/player/classic/react";
 import { Loading } from "@empirica/core/player/react";
 import React from "react";
@@ -26,17 +24,16 @@ export function IceBreakerTransition({ position }) {
   );
 }
 
-// Renders the "Introduction" (icebreaker) stage only. InitialDecision,
+// Renders the one-time practice Icebreaker stage only. InitialDecision,
 // Discussion, and FinalDecision are now dedicated top-level components (see
 // client/src/stages/) rendered directly by Game.jsx, not through this file.
 export function Stage() {
   const player = usePlayer();
   const players = usePlayers();
-  const round = useRound();
-  const stage = useStage();
-  const taskVersion = round?.get("taskVersion");
-  const introInstructions = taskVersion === "A"
-    ? `## IceBreaker: Would You Rather...?
+  // Temporary content preserved from the former Task A Icebreaker until the
+  // team supplies the future practice mini-task. It is intentionally not
+  // selected from either formal round's taskVersion.
+  const introInstructions = `## IceBreaker: Would You Rather...?
 
 **Scroll down to review all IceBreaker instructions.**
 
@@ -51,23 +48,7 @@ export function Stage() {
 
 **Example of the format:** “I would choose the musical instruments because making music would be a fun way to connect with people.”
 
-This activity is unrelated to the task candidates and Task Report. Please give every group member an opportunity to answer. The timer shows when the IceBreaker will end and the Initial Decision will begin.`
-    : `## IceBreaker: Word Chain
-
-**Scroll down to review all IceBreaker instructions.**
-
-**Starting word:** Rocket
-
-### How to play
-
-1. The next word must begin with the final letter of the previous word.
-2. Post only one word at a time, then let another participant continue the chain.
-3. Avoid repeating a word that has already appeared.
-4. Practise tagging a group member: type \`@\`, select their nickname, and invite them to post the next word.
-
-**Example chain:** Rocket → Tiger → River → Rainbow
-
-Start with **Rocket** in the chat and build the longest chain you can together. This activity is unrelated to the task candidates and Task Report. The timer shows when the IceBreaker will end and the Initial Decision will begin.`;
+This activity is unrelated to the task candidates and Task Report. Please give every group member an opportunity to answer. The timer shows when the IceBreaker will end and the first formal task will begin.`;
 
   if (player.stage.get("submit")) {
     if (players.length === 1) {

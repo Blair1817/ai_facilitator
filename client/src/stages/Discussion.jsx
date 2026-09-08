@@ -29,12 +29,9 @@ export function Discussion() {
   // HPTConfig.json schema), not plain strings -- see the .map/.join below.
   const decisionOptions = round?.get("decisionOptions") ?? game.get("decisionOptions");
   const totalRounds = game.get("totalRounds") ?? 2;
-  // round.get("index") is the single source of truth for round ordering:
-  // proven framework-set (Empirica's own addRound(), see
-  // chunk-CA6WWEPS.js, sets an immutable 0-based "index" on every round it
-  // creates -- independent of callbacks.js), 0-based. roundNumber is the
-  // 1-based value derived from it for "Round X of N" display.
-  const roundIndex = round?.get("index") ?? null;
+  // taskIndex remains the formal 0-based exposure identity even though a
+  // technical practice/orientation Round precedes the two formal rounds.
+  const roundIndex = round?.get("taskIndex") ?? null;
   const roundNumber = typeof roundIndex === "number" ? roundIndex + 1 : null;
 
   return (
@@ -83,7 +80,7 @@ export function Discussion() {
               game-scoped chat storage, and server/src/callbacks.js's
               AI-trigger listener also reads/writes at the game level -- it
               isolates rounds via the attribute NAME instead (chat_round_0 /
-              chat_round_1), keyed off the round's own index. This must match
+              chat_round_1), keyed off the formal round's taskIndex. This must match
               callbacks.js's `chatKey = \`chat_round_${roundIndex}\`` exactly,
               or participant messages and the AI-trigger listener silently
               stop seeing each other. Without this fix, this stayed on the

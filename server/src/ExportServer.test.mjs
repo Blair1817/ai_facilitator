@@ -51,6 +51,7 @@ function fixture() {
   const player = makeScope("p1", "player", (s) => {
     attr(s, "gameID", T("GAME1"));
     attr(s, "name", "Red");
+    attr(s, "playerRoundID-R0", T("PR-R0-p1"));
     attr(s, "introDone", true);
     attr(s, "ended", "debriefing");
     attr(s, "finalQuestions", {
@@ -68,11 +69,20 @@ function fixture() {
     attr(s, "taskIndex", 0);
     attr(s, "taskVersion", "A");
     attr(s, "facilitation", "adaptive");
+    attr(s, "finalDecisionOutcome", "consensus_choice");
+  });
+  const playerRound = makeScope("PR-R0-p1", "playerRound", (s) => {
+    attr(s, "gameID", T("GAME1"));
+    attr(s, "roundID", T("R0"));
+    attr(s, "playerID", T("p1"));
     attr(s, "tlxSurvey", { tlxMentalDemand: 5, tlxPhysicalDemand: 2, tlxTemporalDemand: 7, tlxPerformance: 4, tlxEffort: 6, tlxFrustration: 3, submittedAt: 1 });
     attr(s, "initialChoice", "A");
+    attr(s, "initialConfidence", 75);
+    attr(s, "initialDecision", { choice: "A", confidence: 75, submittedAt: 1 });
+    attr(s, "finalDecision", { choice: "A", confidence: 80, submittedAt: 2, finalDecisionOutcome: "consensus_choice" });
     attr(s, "reviewQuizPassed", true);
   });
-  return [batch, game, player, round];
+  return [batch, game, player, round, playerRound];
 }
 
 function makeMockAdmin(scopes) {

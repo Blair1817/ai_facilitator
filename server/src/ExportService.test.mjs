@@ -110,7 +110,8 @@ function makeScope(id, kind, builder = () => {}) {
 const T = (v) => JSON.stringify(v);
 
 /**
- * Realistic fixture: one batch, one game, three players, two rounds.
+ * Realistic post-migration fixture: one batch, one game, three players, one
+ * technical Practice / Orientation round, and two formal research rounds.
  * Players have submitted initial / final decisions, a per-round TLX and
  * subjective survey, the end-of-game final questions, and a chat log
  * with a facilitator intervention. The game also has a bounded llmLog
@@ -152,73 +153,181 @@ function fixture() {
       { text: "Why cost?", sender: { id: "p2", name: "Pink" }, ts: 1723705210000 },
       { text: "Consider the trade-offs across all options.", sender: { id: "ai", name: "Facilitator" }, ts: 1723705220000, role: "Expander" },
     ]);
+    attr(s, "chat_round_1", [
+      { text: "Formal Round 2 evidence.", sender: { id: "p3", name: "Blue" }, ts: 1723705600000 },
+    ]);
+    attr(s, "chat_round_2", [
+      { text: "POISON NATIVE-INDEX TRANSCRIPT", sender: { id: "p2", name: "Pink" }, ts: 1723705700000 },
+    ]);
+    attr(s, "practice_icebreaker_chat", [
+      { text: "Practice-only answer.", sender: { id: "p1", name: "Red" }, ts: 1723705000000 },
+    ]);
   });
-  const players = [
-    makeScope("p1", "player", (s) => {
+  const participantSpecs = [
+    { id: "p1", name: "Red", initialOffset: 1 },
+    { id: "p2", name: "Pink", initialOffset: 2 },
+    { id: "p3", name: "Blue", initialOffset: 3 },
+  ];
+  const players = participantSpecs.map(({ id, name }) =>
+    makeScope(id, "player", (s) => {
       attr(s, "gameID", T("GAME1"));
-      attr(s, "name", "Red");
+      attr(s, "name", name);
       attr(s, "introDone", true);
       attr(s, "ended", "debriefing");
+      attr(s, `playerRoundID-PRACTICE`, T(`PR-PRACTICE-${id}`));
+      attr(s, `playerRoundID-R0`, T(`PR-R0-${id}`));
+      attr(s, `playerRoundID-R1`, T(`PR-R1-${id}`));
       attr(s, "finalQuestions", {
-        submissionId: "p1:1723705900000",
-        firstTaskCarryover: "yes",
-        firstTaskCarryoverDescription: "I noticed Red focused on cost; that shaped my second task.",
-        facilitatorDifference: 5,
-        preferredFacilitator: "second_task",
+        submissionId: `${id}:1723705900000`,
+        firstTaskCarryover: id === "p1" ? "yes" : "no",
+        firstTaskCarryoverDescription: id === "p1"
+          ? "I noticed Red focused on cost; that shaped my second task."
+          : "",
+        facilitatorDifference: id === "p1" ? 5 : 3,
+        preferredFacilitator: id === "p1" ? "second_task" : "first_task",
         submittedAt: 1723705900000,
       });
       attr(s, "expFeedback", {
-        submissionId: "p1:1723705950000",
-        expFeedback: "Study was clear; my email is researcher@example.com if you need more.",
+        submissionId: `${id}:1723705950000`,
+        expFeedback: id === "p1"
+          ? "Study was clear; my email is researcher@example.com if you need more."
+          : `${id} feedback`,
         submittedAt: 1723705950000,
       });
     }),
-    makeScope("p2", "player", (s) => {
+  );
+  const playerRounds = [];
+  for (const { id, initialOffset } of participantSpecs) {
+    playerRounds.push(makeScope(`PR-PRACTICE-${id}`, "playerRound", (s) => {
       attr(s, "gameID", T("GAME1"));
-      attr(s, "name", "Pink");
-      attr(s, "introDone", true);
-      attr(s, "ended", "debriefing");
-      attr(s, "finalQuestions", {
-        submissionId: "p2:1723705910000",
-        firstTaskCarryover: "no",
-        firstTaskCarryoverDescription: "",
-        facilitatorDifference: 3,
-        preferredFacilitator: "first_task",
-        submittedAt: 1723705910000,
+      attr(s, "roundID", T("PRACTICE"));
+      attr(s, "playerID", T(id));
+      attr(s, "initialChoice", `POISON-PRACTICE-${id}`);
+      attr(s, "tlxSurvey", { tlxMentalDemand: 99 });
+      attr(s, "subjectiveSurvey", { groupFreeText: `POISON-PRACTICE-${id}` });
+    }));
+    playerRounds.push(makeScope(`PR-R0-${id}`, "playerRound", (s) => {
+      attr(s, "gameID", T("GAME1"));
+      attr(s, "roundID", T("R0"));
+      attr(s, "playerID", T(id));
+      attr(s, "reviewQuizPassed", true);
+      attr(s, "initialChoice", `${id}-r0-choice`);
+      attr(s, "initialConfidence", 60 + initialOffset);
+      attr(s, "initialDecision", { choice: `${id}-r0-choice`, confidence: 60 + initialOffset, submittedAt: 1000 + initialOffset });
+      attr(s, "finalDecision", { choice: "OPT1", confidence: 70 + initialOffset, submittedAt: 2000 + initialOffset, finalDecisionOutcome: "consensus_choice" });
+      attr(s, "groupFinalChoice", "OPT1");
+      attr(s, "groupChoiceConfidence", 70 + initialOffset);
+      attr(s, "groupFinalConfirmedChoice", "OPT1");
+      attr(s, "tlxSurvey", {
+        tlxMentalDemand: 10 + initialOffset,
+        tlxPhysicalDemand: 20 + initialOffset,
+        tlxTemporalDemand: 30 + initialOffset,
+        tlxPerformance: 40 + initialOffset,
+        tlxEffort: 50 + initialOffset,
+        tlxFrustration: 60 + initialOffset,
+        submittedAt: 3000 + initialOffset,
       });
-    }),
-    makeScope("p3", "player", (s) => {
+      attr(s, "subjectiveSurvey", {
+        groupFreeText: `${id}-r0-subjective`,
+        groupContribution: String(initialOffset),
+        groupInfluence: "3",
+        groupProductive: "4",
+        groupStructured: "5",
+        groupCohesion: "same",
+        facilitatorGroupFreetext: `${id}-r0-facilitator`,
+        facilitatorSharing: "4",
+        facilitatorDistracting: "2",
+        facilitatorSynthesis: "4",
+        facilitatorFocus: "5",
+        facilitatorNeedFit: "4",
+        facilitatorTimingAppropriateness: "4",
+        facilitatorOptionPush: "1",
+      });
+    }));
+    playerRounds.push(makeScope(`PR-R1-${id}`, "playerRound", (s) => {
       attr(s, "gameID", T("GAME1"));
-      attr(s, "name", "Blue");
-      attr(s, "introDone", true);
-      attr(s, "ended", "debriefing");
-    }),
-  ];
+      attr(s, "roundID", T("R1"));
+      attr(s, "playerID", T(id));
+      attr(s, "reviewQuizPassed", true);
+      attr(s, "initialChoice", `${id}-r1-choice`);
+      attr(s, "initialConfidence", 80 + initialOffset);
+      attr(s, "initialDecision", { choice: `${id}-r1-choice`, confidence: 80 + initialOffset, submittedAt: 4000 + initialOffset });
+      attr(s, "finalDecision", { choice: "NO_GROUP_FINAL_DECISION", confidence: 50 + initialOffset, submittedAt: 5000 + initialOffset, finalDecisionOutcome: "declared_fail" });
+      attr(s, "groupFinalChoice", "NO_GROUP_FINAL_DECISION");
+      attr(s, "groupChoiceConfidence", 50 + initialOffset);
+      attr(s, "groupFinalConfirmedChoice", "NO_GROUP_FINAL_DECISION");
+      attr(s, "finalPersonalChoice", `${id}-r1-personal`);
+      attr(s, "finalPersonalChoiceConfidence", 90 + initialOffset);
+      attr(s, "finalPersonalChoiceRationale", `${id}-r1-rationale`);
+      attr(s, "agreesWithGroupChoice", null);
+      attr(s, "tlxSurvey", {
+        tlxMentalDemand: 70 + initialOffset,
+        tlxPhysicalDemand: 71 + initialOffset,
+        tlxTemporalDemand: 72 + initialOffset,
+        tlxPerformance: 73 + initialOffset,
+        tlxEffort: 74 + initialOffset,
+        tlxFrustration: 75 + initialOffset,
+        submittedAt: 6000 + initialOffset,
+      });
+      attr(s, "subjectiveSurvey", {
+        groupFreeText: `${id}-r1-subjective`,
+        groupContribution: String(initialOffset + 1),
+        groupInfluence: "2",
+        groupProductive: "3",
+        groupStructured: "4",
+        groupCohesion: "random",
+        facilitatorGroupFreetext: `${id}-r1-facilitator`,
+        facilitatorSharing: "3",
+        facilitatorDistracting: "1",
+        facilitatorSynthesis: "3",
+        facilitatorFocus: "4",
+        facilitatorNeedFit: "3",
+        facilitatorTimingAppropriateness: "3",
+        facilitatorOptionPush: "2",
+      });
+    }));
+  }
   const rounds = [
-    makeScope("R0", "round", (s) => {
+    makeScope("PRACTICE", "round", (s) => {
       attr(s, "gameID", T("GAME1"));
       attr(s, "index", 0);
+      attr(s, "isPractice", true);
+    }),
+    makeScope("R0", "round", (s) => {
+      attr(s, "gameID", T("GAME1"));
+      attr(s, "index", 1);
       attr(s, "taskIndex", 0);
       attr(s, "taskVersion", "A");
       attr(s, "facilitation", "adaptive");
-      attr(s, "tlxSurvey", "shared-shape-not-per-player");
-      attr(s, "subjectiveSurvey", "shared-shape-not-per-player");
-      attr(s, "initialChoice", "cost");
-      attr(s, "initialConfidence", 4);
-      attr(s, "reviewQuizPassed", true);
+      attr(s, "finalDecisionOutcome", "consensus_choice");
+      attr(s, "finalDecisionMatchedChoice", "OPT1");
+      attr(s, "finalDecisionConfirmed", true);
     }),
     makeScope("R1", "round", (s) => {
       attr(s, "gameID", T("GAME1"));
-      attr(s, "index", 1);
+      attr(s, "index", 2);
       attr(s, "taskIndex", 1);
       attr(s, "taskVersion", "B");
       attr(s, "facilitation", "static");
-      attr(s, "tlxSurvey", "shared-shape-not-per-player");
-      attr(s, "subjectiveSurvey", "shared-shape-not-per-player");
+      attr(s, "finalDecisionOutcome", "declared_fail");
+      attr(s, "finalDecisionMatchedChoice", "NO_GROUP_FINAL_DECISION");
+      attr(s, "finalDecisionConfirmed", true);
     }),
   ];
-  const scopes = { [batch.id]: batch, [game.id]: game, [rounds[0].id]: rounds[0], [rounds[1].id]: rounds[1], [players[0].id]: players[0], [players[1].id]: players[1], [players[2].id]: players[2] };
-  return { scopes, game, batch, players, rounds };
+  const scopes = Object.fromEntries([batch, game, ...rounds, ...players, ...playerRounds].map((scope) => [scope.id, scope]));
+  return { scopes, game, batch, players, rounds, playerRounds };
+}
+
+function legacyTwoRoundFixture() {
+  const fx = fixture();
+  delete fx.scopes.PRACTICE;
+  fx.rounds = fx.rounds.slice(1);
+  fx.rounds.forEach((round, index) => {
+    const indexAttribute = round.attributes.find((attribute) => attribute.key === "index");
+    indexAttribute.value = JSON.stringify(index);
+  });
+  fx.game.attributes = fx.game.attributes.filter((attribute) => attribute.key !== "practice_icebreaker_chat");
+  return fx;
 }
 
 function service({ scopes, auditFile } = {}) {
@@ -252,7 +361,8 @@ test("listGames filters by treatment and respects limit/offset", async () => {
 });
 
 test("getGameBundle assembles players, rounds, and the bounded LLM log", async () => {
-  const svc = service();
+  const fx = fixture();
+  const svc = service({ scopes: fx.scopes });
   const bundle = await svc.getGameBundle("GAME1");
   assert.equal(bundle.game.id, "GAME1");
   assert.equal(bundle.game.batchId, "BATCH1");
@@ -260,12 +370,61 @@ test("getGameBundle assembles players, rounds, and the bounded LLM log", async (
   assert.equal(bundle.players.length, 3);
   assert.equal(bundle.players[0].name, "Blue", "players should be sorted by name");
   assert.equal(bundle.rounds.length, 2);
+  assert.deepEqual(await svc.gameRoundIDs("GAME1"), ["PRACTICE", "R0", "R1"], "technical reconstruction remains ordered by native index");
+  const reconstructedPractice = await svc.readRound(fx.rounds[0], bundle.players);
+  assert.equal(reconstructedPractice.nativeIndex, 0);
+  assert.equal(reconstructedPractice.taskIndex, null, "a missing practice taskIndex must remain absent");
+  assert.equal(reconstructedPractice.index, null, "practice must not acquire formal Round 1 identity");
+  assert.equal(reconstructedPractice.isPractice, true);
   assert.equal(bundle.rounds[0].index, 0);
+  assert.equal(bundle.rounds[0].nativeIndex, 1);
+  assert.equal(bundle.rounds[0].taskIndex, 0);
   assert.equal(bundle.rounds[0].facilitation, "adaptive");
+  assert.equal(bundle.rounds[1].index, 1);
+  assert.equal(bundle.rounds[1].nativeIndex, 2);
+  assert.equal(bundle.rounds[1].taskIndex, 1);
   assert.equal(bundle.rounds[1].facilitation, "static");
+  assert.ok(bundle.rounds.every((round) => round.id !== "PRACTICE"));
+  assert.equal(bundle.rounds[0].finalDecisionOutcome, "consensus_choice");
+  assert.equal(bundle.rounds[1].finalDecisionOutcome, "declared_fail");
   assert.equal(bundle.llmLog.length, 2);
   assert.equal(bundle.llmLog[0].auditRequestId, "R1");
   assert.equal(bundle.llmLog[1].outcome, "INTERRUPTED_CALLBACKS_RESTART");
+});
+
+test("getGameBundle resolves each formal response through the player's exact playerRound link", async () => {
+  const fx = fixture();
+  const bundle = await service({ scopes: fx.scopes }).getGameBundle("GAME1");
+  const [round0, round1] = bundle.rounds;
+
+  for (const playerId of ["p1", "p2", "p3"]) {
+    assert.equal(round0.perPlayer[playerId].playerRoundId, `PR-R0-${playerId}`);
+    assert.equal(round1.perPlayer[playerId].playerRoundId, `PR-R1-${playerId}`);
+    assert.equal(round0.perPlayer[playerId].initialChoice, `${playerId}-r0-choice`);
+    assert.equal(round1.perPlayer[playerId].initialChoice, `${playerId}-r1-choice`);
+    assert.equal(round0.perPlayer[playerId].subjectiveSurvey.groupFreeText, `${playerId}-r0-subjective`);
+    assert.equal(round1.perPlayer[playerId].subjectiveSurvey.groupFreeText, `${playerId}-r1-subjective`);
+    assert.equal(round0.perPlayer[playerId].finalDecision.finalDecisionOutcome, "consensus_choice");
+    assert.equal(round1.perPlayer[playerId].finalDecision.finalDecisionOutcome, "declared_fail");
+    assert.equal(round1.perPlayer[playerId].finalPersonalChoice, `${playerId}-r1-personal`);
+    assert.equal(round1.perPlayer[playerId].finalPersonalChoiceRationale, `${playerId}-r1-rationale`);
+  }
+
+  assert.ok(!JSON.stringify(bundle.rounds).includes("POISON-PRACTICE"));
+});
+
+test("a missing playerRound link produces missing data without borrowing another response", async () => {
+  const fx = fixture();
+  fx.scopes.p2.attributes = fx.scopes.p2.attributes.filter((attribute) => attribute.key !== "playerRoundID-R1");
+  const bundle = await service({ scopes: fx.scopes }).getGameBundle("GAME1");
+  const round1 = bundle.rounds.find((round) => round.taskIndex === 1);
+  assert.equal(round1.perPlayer.p2.playerRoundId, null);
+  assert.equal(round1.perPlayer.p2.initialChoice, null);
+  assert.equal(round1.perPlayer.p2.tlxSurvey, null);
+  assert.equal(round1.perPlayer.p2.subjectiveSurvey, null);
+  assert.equal(round1.perPlayer.p2.finalDecision, null);
+  assert.equal(round1.perPlayer.p1.initialChoice, "p1-r1-choice");
+  assert.equal(round1.perPlayer.p3.initialChoice, "p3-r1-choice");
 });
 
 test("getGameBundle throws ExportNotFoundError for an unknown game", async () => {
@@ -288,6 +447,46 @@ test("renderQuestionnaireCsv produces one row per player per round plus an end-o
   assert.ok(!csv.includes("researcher@example.com"));
   // No raw LLM prompt should appear in the CSV (it lives in the bundle zip only).
   assert.ok(!csv.includes("internal-only-payload"));
+  assert.ok(!csv.includes("PRACTICE"));
+  const csvLines = csv.trimEnd().split("\n");
+  const roundIndexColumn = columns.indexOf("round_index");
+  const slotColumn = columns.indexOf("slot");
+  const perRoundIndexes = csvLines.slice(1)
+    .map((line) => line.split(","))
+    .filter((cells) => cells[slotColumn] === "per_round")
+    .map((cells) => cells[roundIndexColumn]);
+  assert.deepEqual([...new Set(perRoundIndexes)].sort(), ["0", "1"]);
+  assert.equal(perRoundIndexes.length, 6, "three participants must each have exactly two formal questionnaire rows");
+  const playerColumn = columns.indexOf("player_id");
+  const taskIndexColumn = columns.indexOf("task_index");
+  const initialChoiceColumn = columns.indexOf("initial_choice");
+  const tlxMentalColumn = columns.indexOf("tlx_mental");
+  const subjectiveTextColumn = columns.indexOf("subjective_group_free_text");
+  const finalChoiceColumn = columns.indexOf("final_decision_choice");
+  const finalOutcomeColumn = columns.indexOf("final_decision_outcome");
+  const parsedPerRoundRows = csvLines.slice(1)
+    .map((line) => line.split(","))
+    .filter((cells) => cells[slotColumn] === "per_round");
+  const rowFor = (playerId, taskIndex) => parsedPerRoundRows.find(
+    (cells) => cells[playerColumn] === playerId && cells[taskIndexColumn] === String(taskIndex),
+  );
+  for (const playerId of ["p1", "p2", "p3"]) {
+    const round0 = rowFor(playerId, 0);
+    const round1 = rowFor(playerId, 1);
+    assert.equal(round0[initialChoiceColumn], `${playerId}-r0-choice`);
+    assert.equal(round1[initialChoiceColumn], `${playerId}-r1-choice`);
+    assert.ok(round0[tlxMentalColumn]);
+    assert.ok(round1[tlxMentalColumn]);
+    assert.equal(round0[subjectiveTextColumn], `${playerId}-r0-subjective`);
+    assert.equal(round1[subjectiveTextColumn], `${playerId}-r1-subjective`);
+    assert.equal(round0[finalChoiceColumn], "OPT1");
+    assert.equal(round1[finalChoiceColumn], "NO_GROUP_FINAL_DECISION");
+    assert.equal(round0[finalOutcomeColumn], "consensus_choice");
+    assert.equal(round1[finalOutcomeColumn], "declared_fail");
+  }
+  assert.ok(!csv.includes("POISON-PRACTICE"));
+  assert.match(csv, /I noticed Red focused on cost/);
+  assert.match(csv, /p2 feedback/);
   for (const line of csv.trimEnd().split("\n").slice(1)) {
     const [gameId, batchId, treatment, sequenceId, startedAt, endedAt] = line.split(",", 6);
     assert.equal(gameId, "GAME1");
@@ -314,13 +513,29 @@ test("renderTranscriptMd emits one section per round and a final LLM audit log s
   assert.doesNotMatch(markdown, /- Ended: \(in progress\)/);
   assert.match(markdown, /## Round 1 · Task 1/);
   assert.match(markdown, /## Round 2 · Task 2/);
+  assert.doesNotMatch(markdown, /## Round 3|Practice \/ Orientation|Practice-only answer/);
+  assert.doesNotMatch(markdown, /POISON NATIVE-INDEX TRANSCRIPT/);
   assert.match(markdown, /## LLM audit log \(2 entries\)/);
   assert.match(markdown, /Red.*focus on cost first/);
   assert.match(markdown, /Facilitator.*Expander/);
+  assert.match(markdown, /Blue.*Formal Round 2 evidence/);
   // Default redact must strip the email from the expFeedback mention
   // when it ends up in the bundle (transcript does not embed
   // expFeedback today, so this is a defensive check).
   assert.ok(!markdown.includes("researcher@example.com"));
+});
+
+test("legacy games containing only two formal rounds retain their existing export identities", async () => {
+  const fx = legacyTwoRoundFixture();
+  const svc = service({ scopes: fx.scopes });
+  const bundle = await svc.getGameBundle("GAME1");
+  assert.deepEqual(bundle.rounds.map(({ index, nativeIndex, taskIndex }) => ({ index, nativeIndex, taskIndex })), [
+    { index: 0, nativeIndex: 0, taskIndex: 0 },
+    { index: 1, nativeIndex: 1, taskIndex: 1 },
+  ]);
+  const { markdown } = await svc.renderTranscriptMd("GAME1", { redact: true });
+  assert.match(markdown, /Red.*focus on cost first/);
+  assert.match(markdown, /Blue.*Formal Round 2 evidence/);
 });
 
 test("renderTranscriptMd reconstructs vector chat_round_N from indexed attributes", async () => {
@@ -387,6 +602,10 @@ test("ExportService writeGameBundle produces a valid ZIP and records the audit e
   assert.deepEqual(files, ["questionnaire.csv", "transcript.md", "meta.json", "llm-audit.jsonl"]);
   const meta = JSON.parse(execFileSync("unzip", ["-p", outFile, "meta.json"], { encoding: "utf8" }));
   assert.equal(meta.batchId, "BATCH1");
+  assert.deepEqual(meta.rounds.map(({ id, index, nativeIndex, taskIndex }) => ({ id, index, nativeIndex, taskIndex })), [
+    { id: "R0", index: 0, nativeIndex: 1, taskIndex: 0 },
+    { id: "R1", index: 1, nativeIndex: 2, taskIndex: 1 },
+  ]);
 
   // The service is request-context-free; the caller (HTTP server / CLI)
   // writes the audit record. Simulate that here and verify the line.

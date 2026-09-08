@@ -50,6 +50,8 @@ import {
   classifyFinalDecision,
   MESSAGE_TYPES,
   NO_GROUP_FINAL_DECISION,
+  PRACTICE_ICEBREAKER_STAGE_NAME,
+  PRACTICE_ICEBREAKER_TRANSCRIPT_KEY,
   allocateSequencePosition,
   buildCanonicalMessage,
   reviewHumanMessageRequest,
@@ -82,14 +84,15 @@ function finalizeAuditLog(store, entry) {
   finalizeAuditLogBase(store, entry);
   const round = store.currentRound;
   if (!round) return;
-  const chat = store.get(`chat_round_${round.get("index")}`) || [];
+  const formalRoundIndex = round.get("taskIndex");
+  const chat = store.get(`chat_round_${formalRoundIndex}`) || [];
   const completed = { ...entry, auditCompletedAt: Date.now() };
   queueResearchMirror("intervention", async () => {
     const persistence = researchPersistence();
     for (const message of chat) {
       await persistence.upsertMessage(buildMessageRow({
         gameId: store.id, roundId: round.id,
-        transcriptKey: `chat_round_${round.get("index")}`, message,
+        transcriptKey: `chat_round_${formalRoundIndex}`, message,
       }));
     }
     await persistence.mirrorIntervention(buildInterventionMirror({
@@ -676,10 +679,6 @@ const SUBJECTIVE_SURVEY_DURATION_SECONDS = 10 * 60;
 const BREAK_DURATION_SECONDS = 300;
 const INDIVIDUAL_ASSESSMENT_DURATION_SECONDS = 10 * 60;
 
-function addReviewQuizStage(round) {
-  round.addStage({ name: "ReviewQuiz", duration: REVIEW_QUIZ_SAFETY_DURATION_SECONDS });
-}
-
 // ── Restart-safe randomized-block S1-S4 allocation (one claim per Game) ─────
 //
 // Every 4 Games get a shuffled permutation of {S1,S2,S3,S4} (a permuted
@@ -816,6 +815,19 @@ Empirica.onGameStart(({ game }) => {
   // taskIndex is the zero-based exposure position (Round 1 = 0, Round 2 = 1).
   // taskVersion is the independent Task A/B material identity selected by the
   // sequence; it must not be inferred from taskIndex or facilitation.
+  // Empirica Classic synchronous multiplayer stages must live in a Round.
+  // This container is explicitly non-formal: it has no taskVersion,
+  // facilitation, or taskIndex, and exists only to synchronize the one shared
+  // practice Icebreaker before the two experimental rounds.
+  const practiceRound = game.addRound({
+    name: "Practice / Orientation",
+    isPractice: true,
+  });
+  practiceRound.addStage({ name: "Walkthrough", duration: WALKTHROUGH_DURATION_SECONDS });
+  practiceRound.addStage({ name: "IceBreakerStartCountdown", duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
+  practiceRound.addStage({ name: PRACTICE_ICEBREAKER_STAGE_NAME, duration: introDuration * 60 });
+  practiceRound.addStage({ name: "IceBreakerEndCountdown", duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
+
   const round1 = game.addRound({
     name: "Round 1",
     facilitation: sequence.facilitationOrder[0],
@@ -823,11 +835,7 @@ Empirica.onGameStart(({ game }) => {
     taskVersion:  sequence.taskVersionOrder[0],
   });
   round1.addStage({ name: "TaskInformation",          duration: TASK_INFORMATION_DURATION_SECONDS });
-  round1.addStage({ name: "Walkthrough",              duration: WALKTHROUGH_DURATION_SECONDS });
-  addReviewQuizStage(round1);
-  round1.addStage({ name: "IceBreakerStartCountdown", duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
-  round1.addStage({ name: "Introduction",             duration: introDuration * 60 });
-  round1.addStage({ name: "IceBreakerEndCountdown",   duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
+  round1.addStage({ name: "ReviewQuiz",               duration: REVIEW_QUIZ_SAFETY_DURATION_SECONDS });
   round1.addStage({ name: "InitialDecision",          duration: INITIAL_DECISION_DURATION_SECONDS });
   round1.addStage({ name: "Task",                     duration: gameDuration * 60 });
   round1.addStage({ name: "FinalDecision",            duration: 90 });
@@ -843,11 +851,7 @@ Empirica.onGameStart(({ game }) => {
     taskVersion:  sequence.taskVersionOrder[1],
   });
   round2.addStage({ name: "TaskInformation",          duration: TASK_INFORMATION_DURATION_SECONDS });
-  round2.addStage({ name: "Walkthrough",              duration: WALKTHROUGH_DURATION_SECONDS });
-  addReviewQuizStage(round2);
-  round2.addStage({ name: "IceBreakerStartCountdown", duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
-  round2.addStage({ name: "Introduction",             duration: introDuration * 60 });
-  round2.addStage({ name: "IceBreakerEndCountdown",   duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
+  round2.addStage({ name: "ReviewQuiz",               duration: REVIEW_QUIZ_SAFETY_DURATION_SECONDS });
   round2.addStage({ name: "InitialDecision",          duration: INITIAL_DECISION_DURATION_SECONDS });
   round2.addStage({ name: "Task",                     duration: gameDuration * 60 });
   round2.addStage({ name: "FinalDecision",            duration: 90 });
@@ -907,6 +911,7 @@ Empirica.onRoundStart(({ round }) => {
   const game = round.currentGame;
   round.set("callbacksInitializedAt", Date.now());
   round.set("callbacksInstanceId", CALLBACKS_INSTANCE_ID);
+  if (round.get("isPractice") === true) return;
   const taskIndex = round.get("taskIndex");
   const taskVersion = round.get("taskVersion");
   const matchingTasks = taskConfig.tasks.filter((candidate) => candidate.taskVersion === taskVersion);
@@ -1059,7 +1064,10 @@ function appendCanonicalMessage(game, attribute, fields) {
   const message = buildCanonicalMessage({ ...fields, sequencePosition });
   game.append(attribute, message);
   const round = game.currentRound;
-  if (round) {
+  // The existing research.rounds schema deliberately contains only the two
+  // formal task rounds. Practice remains durably stored in Tajriba on the
+  // Game transcript without being misclassified as a formal Supabase round.
+  if (round && round.get("isPractice") !== true) {
     queueResearchMirror("message", () => researchPersistence().upsertMessage(buildMessageRow({
       gameId: game.id, roundId: round.id, transcriptKey: attribute, message,
     })));
@@ -1075,7 +1083,7 @@ function appendTimedMessage(stage, attribute, content, messageType = MESSAGE_TYP
     messageId: `${messageType}-${stage.id}-${timestamp}`,
     groupId: game.id,
     speakerId: `system-${messageType}`,
-    roundIndex: stage.round.get("index"),
+    roundIndex: stage.round.get("taskIndex") ?? stage.round.get("index"),
     stage: stage.get("name") === "Task" ? "Discussion" : "IceBreaker",
     messageType,
     speakerType: messageType,
@@ -1090,11 +1098,10 @@ function appendTimedMessage(stage, attribute, content, messageType = MESSAGE_TYP
   return true;
 }
 
-function icebreakerActivityPrompt(taskVersion) {
-  if (taskVersion === "A") {
-    return "For this activity, choose whether you would rather speak every language fluently or play every musical instrument expertly, share a short reason, and invite a teammate to answer.";
-  }
-  return "For this activity, build a word chain starting with Rocket: each new word begins with the last letter of the previous word, one word per turn, with no repeats.";
+function icebreakerActivityPrompt() {
+  // Temporary content preserved from the previous Task A Icebreaker until the
+  // team designs the future practice mini-task. It is no longer task-selected.
+  return "For this activity, choose whether you would rather speak every language fluently or play every musical instrument expertly, share a short reason, and invite a teammate to answer.";
 }
 
 function appendIcebreakerOpening(stage, introChatKey) {
@@ -1113,7 +1120,7 @@ function appendIcebreakerOpening(stage, introChatKey) {
     timestamp,
     content: buildIcebreakerOpening({
       participantNames: game.players.map((participant) => participant.get("name")),
-      activityPrompt: icebreakerActivityPrompt(stage.round.get("taskVersion")),
+      activityPrompt: icebreakerActivityPrompt(),
     }),
     sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
   });
@@ -1139,16 +1146,15 @@ Empirica.onStageStart(({ stage }) => {
     }
     game.set("taskStartTime", now);
     game.set("deadline",      now + gameDuration * 60 * 1000);
-    const chatKey = `chat_round_${stage.round.get("index")}`;
+    const chatKey = `chat_round_${stage.round.get("taskIndex")}`;
     const durationMs = gameDuration * 60 * 1000;
     setTimeout(() => appendTimedMessage(stage, chatKey, `${Math.ceil(gameDuration / 2)} minutes remain in the discussion.`), durationMs / 2);
     if (durationMs > 60_000) setTimeout(() => appendTimedMessage(stage, chatKey, "One minute remains in the discussion."), durationMs - 60_000);
   }
-  if (stageName === "Introduction") {
+  if (stageName === PRACTICE_ICEBREAKER_STAGE_NAME) {
     const durationMs = stage.get("duration") * 1000;
-    const introChatKey = `intro_round_${stage.round.get("index")}`;
-    appendIcebreakerOpening(stage, introChatKey);
-    if (durationMs > 30_000) setTimeout(() => appendTimedMessage(stage, introChatKey, "Thirty seconds remain in the IceBreaker."), durationMs - 30_000);
+    appendIcebreakerOpening(stage, PRACTICE_ICEBREAKER_TRANSCRIPT_KEY);
+    if (durationMs > 30_000) setTimeout(() => appendTimedMessage(stage, PRACTICE_ICEBREAKER_TRANSCRIPT_KEY, "Thirty seconds remain in the IceBreaker."), durationMs - 30_000);
     Empirica.flush();
   }
   if (stageName === "FinalDecision") {
@@ -1320,7 +1326,7 @@ Empirica.on("player", "humanMessageRequest", (_ctx, { player, humanMessageReques
     request,
     playerId: player.id,
     currentRoundId: round.id,
-    currentRoundIndex: round.get("index"),
+    currentRoundIndex: round.get("taskIndex"),
     currentStageId: stage.id,
     currentStageName: stage.get("name"),
     deadline: game.get("deadline"),
@@ -1332,7 +1338,7 @@ Empirica.on("player", "humanMessageRequest", (_ctx, { player, humanMessageReques
       messageId: reviewed.messageId,
       groupId: game.id,
       participantId: player.id,
-      roundIndex: round.get("index"),
+      roundIndex: round.get("taskIndex") ?? round.get("index"),
       stage: reviewed.stage,
       messageType: MESSAGE_TYPES.HUMAN,
       speakerType: MESSAGE_TYPES.HUMAN,
@@ -1353,15 +1359,14 @@ Empirica.on("player", "humanMessageRequest", (_ctx, { player, humanMessageReques
 
 // ── Icebreaker-only @Facilitator path ───────────────────────────────────────
 // This listener cannot enter the formal detector/generator/validator pipeline.
-// Its context builder accepts only the isolated intro_round_N transcript.
+// Its context builder accepts only the isolated practice transcript.
 async function handleIcebreakerChat(_env, { game }) {
   const round = game.currentRound;
   const stage = game.currentStage;
-  if (!round || !stage || stage.get("name") !== "Introduction") return;
+  if (!round || !stage || stage.get("name") !== PRACTICE_ICEBREAKER_STAGE_NAME) return;
 
   const roundIndex = round.get("index");
-  const introChatKey = `intro_round_${roundIndex}`;
-  const chat = game.get(introChatKey) || [];
+  const chat = game.get(PRACTICE_ICEBREAKER_TRANSCRIPT_KEY) || [];
   const lastMessage = chat[chat.length - 1];
   if (
     !lastMessage
@@ -1387,14 +1392,14 @@ async function handleIcebreakerChat(_env, { game }) {
   if (
     game.currentRound?.id !== originatingRoundId
     || game.currentStage?.id !== originatingStageId
-    || game.currentStage?.get("name") !== "Introduction"
+    || game.currentStage?.get("name") !== PRACTICE_ICEBREAKER_STAGE_NAME
   ) return;
 
   const content = parsed.ok
     ? parsed.message
     : "I can help using only what has been shared in this icebreaker chat. Please rephrase your question or ask about the icebreaker activity.";
   const timestamp = Date.now();
-  appendCanonicalMessage(game, introChatKey, {
+  appendCanonicalMessage(game, PRACTICE_ICEBREAKER_TRANSCRIPT_KEY, {
     messageId: `icebreaker-facilitator-${originatingStageId}-${timestamp}`,
     groupId: game.id,
     speakerId: "icebreaker-ai",
@@ -1426,8 +1431,7 @@ async function handleIcebreakerChat(_env, { game }) {
   Empirica.flush();
 }
 
-Empirica.on("game", "intro_round_0", handleIcebreakerChat);
-Empirica.on("game", "intro_round_1", handleIcebreakerChat);
+Empirica.on("game", PRACTICE_ICEBREAKER_TRANSCRIPT_KEY, handleIcebreakerChat);
 
 // ── on("game", "chat_round_N") ────────────────────────────────────────────────
 
@@ -1451,7 +1455,7 @@ function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole, logE
       messageId: `facilitator-${game.currentRound?.id}-${publishedAt}`,
       groupId: game.id,
       speakerId: "ai",
-      roundIndex: game.currentRound?.get("index"),
+      roundIndex: game.currentRound?.get("taskIndex"),
       stage: "Discussion",
       messageType: MESSAGE_TYPES.FACILITATOR,
       speakerType: MESSAGE_TYPES.FACILITATOR,
@@ -1477,7 +1481,7 @@ function postParticipantRequestFallback(game, chatKey, logEntry) {
       messageId: `facilitator-fallback-${game.currentRound?.id}-${publishedAt}`,
       groupId: game.id,
       speakerId: "ai",
-      roundIndex: game.currentRound?.get("index"),
+      roundIndex: game.currentRound?.get("taskIndex"),
       stage: "Discussion",
       messageType: MESSAGE_TYPES.FACILITATOR,
       speakerType: MESSAGE_TYPES.FACILITATOR,
@@ -1510,7 +1514,7 @@ async function handleChat(env, { game }) {
     game.set("activeCallbacksInstanceId", CALLBACKS_INSTANCE_ID);
   }
   const currentRound = game.currentRound;
-  const roundIndex   = currentRound?.get("index");
+  const roundIndex   = currentRound?.get("taskIndex");
   const chatKey      = `chat_round_${roundIndex}`;
 
   // Guard: make sure the chatKey matches what triggered this listener
@@ -1998,6 +2002,7 @@ Empirica.onStageEnded(({ stage }) => {
 
 Empirica.onRoundEnded(({ round }) => {
   const game = round.currentGame;
+  if (round.get("isPractice") === true) return;
   const endedAt = new Date().toISOString();
   queueResearchMirror("round_ended", async () => {
     const persistence = researchPersistence();

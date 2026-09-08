@@ -49,7 +49,12 @@ const gamesFullSource = readFileSync(
   "utf8",
 );
 
-test("R1-R2: both rounds wrap the IceBreaker in ten-second transition countdowns", () => {
+test("one technical practice container wraps the shared Icebreaker and formal rounds contain none", () => {
+
+  const practiceStages = callbacksSource.slice(
+    callbacksSource.indexOf('const practiceRound = game.addRound({'),
+    callbacksSource.indexOf('const round1 = game.addRound({'),
+  );
 
   const round1Stages = callbacksSource.slice(
     callbacksSource.indexOf('round1.addStage({ name: "TaskInformation"'),
@@ -59,14 +64,13 @@ test("R1-R2: both rounds wrap the IceBreaker in ten-second transition countdowns
     callbacksSource.indexOf('round2.addStage({ name: "TaskInformation"'),
     callbacksSource.indexOf("// MIGRATED from old 2nd (TEMP-BE-007"),
   );
-  for (const stages of [round1Stages, round2Stages]) {
-    assert.match(
-      stages,
-      /addReviewQuizStage\([^)]+\);[\s\S]*name: "IceBreakerStartCountdown"[\s\S]*name: "Introduction"[\s\S]*name: "IceBreakerEndCountdown"[\s\S]*name: "InitialDecision"/,
-    );
-  }
+  assert.match(practiceStages, /isPractice: true/);
+  assert.match(practiceStages, /name: "Walkthrough"[\s\S]*name: "IceBreakerStartCountdown"[\s\S]*PRACTICE_ICEBREAKER_STAGE_NAME[\s\S]*name: "IceBreakerEndCountdown"/);
+  for (const stages of [round1Stages, round2Stages]) assert.doesNotMatch(stages, /Walkthrough|IceBreaker|PracticeIcebreaker|Introduction/);
 
   assert.match(callbacksSource, /const ICEBREAKER_TRANSITION_DURATION_SECONDS = 10;/);
+  assert.equal((callbacksSource.match(/name: "IceBreakerStartCountdown"/g) ?? []).length, 1);
+  assert.equal((callbacksSource.match(/name: "IceBreakerEndCountdown"/g) ?? []).length, 1);
   assert.match(gameSource, /stageName == "IceBreakerStartCountdown"/);
   assert.match(gameSource, /stageName == "IceBreakerEndCountdown"/);
   assert.match(reviewQuizSource, /player\.stage\.set\("submit", true\)/);
@@ -102,7 +106,7 @@ test("R3-R7/R19: participant pages use normal stage submission, including the va
   assert.match(breakSource, /player\.stage\.set\("submit", true\)/);
   assert.match(callbacksSource, /name: "TaskInformation",\s+duration: TASK_INFORMATION_DURATION_SECONDS/);
   assert.match(callbacksSource, /name: "Walkthrough",\s+duration: WALKTHROUGH_DURATION_SECONDS/);
-  assert.match(callbacksSource, /name: "ReviewQuiz", duration: REVIEW_QUIZ_SAFETY_DURATION_SECONDS/);
+  assert.match(callbacksSource, /name: "ReviewQuiz",\s+duration: REVIEW_QUIZ_SAFETY_DURATION_SECONDS/);
   for (const key of [
     "taskInformationStartedAt", "taskInformationCompletedAt", "taskInformationCompletionDurationMs",
     "walkthroughStartedAt", "walkthroughCompletedAt", "walkthroughCompletionDurationMs",

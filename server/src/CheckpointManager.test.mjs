@@ -85,7 +85,7 @@ test("trigger = false when chat is not present yet", () => {
 });
 
 test("trigger = false when current stage is not 'Task' (TLX, Survey, Quiz, ...)", () => {
-  for (const stage of ["Introduction", "Walkthrough", "TLX", "SubjectiveSurvey", "FinalDecision", "ReviewQuiz"]) {
+  for (const stage of ["PracticeIcebreaker", "Walkthrough", "TLX", "SubjectiveSurvey", "FinalDecision", "ReviewQuiz"]) {
     const r = shouldEvaluateCheckpoint(baseArgs({ currentStageName: stage }));
     assert.equal(r.trigger, false, `expected false for stage ${stage}`);
     assert.match(r.reason, /stage_not_task/);
