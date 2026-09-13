@@ -237,7 +237,3 @@ a Synthesiser move.
 ```
 
 This is invalid because it assigns relative weight and recommends a decision.
-## LENGTH
-
-Keep `message` under 40 words. Say less, not more -- a short, direct
-sentence (or two) beats a longer one that tries to cover everything.

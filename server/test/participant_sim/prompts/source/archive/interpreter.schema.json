@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Feature Interpreter Output Schema (PROVISIONAL — 待确认)",
+  "description": "本 Schema 是暂定版本，基于'情况 B'的假设编写：Feature Interpreter 接收 Controller 已算好的 feature 数值，解读并给出角色建议。若最终确认属于'情况 A'（即无独立 LLM 判断，Interpreter 不存在），本文件应整体删除，相关内容并入 generation.schema.json 的输入说明。recommendedRole 是否为最终决定，或仅供 Controller 参考后可被覆盖，需与你确认（见 Spec '待确认的关键问题'）。",
+  "type": "object",
+  "properties": {
+    "recommendedRole": {
+      "type": ["string", "null"],
+      "enum": [
+        "INFORMATION_EXPANDER",
+        "EVIDENCE_CHALLENGER",
+        "INFORMATION_SYNTHESISER",
+        null
+      ],
+      "description": "基于 FEATURE_PARAMETERS 解读后给出的角色建议；null 表示当前无明显需要干预的信号。是否为最终决定，还是仅供 Controller 参考、可被规则覆盖，待确认。"
+    },
+    "stateSummary": {
+      "type": "string",
+      "maxLength": 300,
+      "description": "对当前讨论状态的简短结构化描述（非面向参与者，仅供 Generator 内部使用），说明为什么给出上述角色建议。不得包含 private-profile 信息，因为 Interpreter 不读取原始 transcript，只接触已量化的 feature 数值。"
+    },
+    "basedOnFeatures": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "本次判断依据的 feature 名称列表（如 participationGini、justificationRatio），用于日志和可审计性，便于事后检查该判断是否合理来自输入参数而非编造。"
+    }
+  },
+  "required": ["recommendedRole", "stateSummary", "basedOnFeatures"],
+  "additionalProperties": false
+}

@@ -478,6 +478,12 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       aiOrSystemMessageIds: built.aiOrSystemMessageIds,
       recentAiMessageTexts: built.recentAiMessageTexts,
       allowedGroundingIds: built.allowedGroundingIds,
+      // Word cap applies to every automatically triggered facilitator path
+      // (Static + Adaptive Generalist/Specialist). It is deliberately not
+      // applied to the participant-requested (@Facilitator) bundle, which
+      // is tagged triggerType: "PARTICIPANT_REQUEST" in its prompt metadata
+      // -- that role needs more room to ground a substantive answer.
+      maxWords: built.metadata.triggerType === "PARTICIPANT_REQUEST" ? null : 40,
       // 2026-08-13: pipe the per-checkpoint participant roster into
       // the deterministic `@[Name]` mention check (GeneratorContract).
       // StaticContext.mjs / DynamicContext.mjs always populate this;
@@ -492,10 +498,45 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       return {
         silent: true,
         reason: `Generator output failed validation: ${deterministicResult.failedCriteria.join(", ")}`,
+        // Carried so the caller can offer a single, narrowly-scoped repair
+        // retry when the ONLY failure was the 40-word cap (see
+        // isWordLimitOnlyFailure / buildWordLimitRepairUserContent below).
+        // Any other deterministic failure (ROLE_MISMATCH, MARKDOWN_DETECTED,
+        // UNKNOWN_GROUNDING_ID, ...) still fails silently on attempt 1, same
+        // as before -- those indicate a broken candidate, not just a
+        // trimmable one, so blindly retrying them is not safe.
+        deterministicFailedCriteria: deterministicResult.failedCriteria,
+        priorCandidate: parseResult.parsed,
       };
     }
 
     return { ok: true, candidate: parseResult.parsed };
+  }
+
+  // True only when the 40-word cap was the SOLE deterministic failure.
+  // Scoped deliberately narrow: a message that is otherwise fully valid and
+  // merely ran long is safe to ask the model to shorten; a message that
+  // also failed grounding/role/markdown checks is not -- that goes silent
+  // exactly as before.
+  function isWordLimitOnlyFailure(failedCriteria) {
+    return (
+      Array.isArray(failedCriteria) &&
+      failedCriteria.length === 1 &&
+      failedCriteria[0] === "MESSAGE_EXCEEDS_WORD_LIMIT"
+    );
+  }
+
+  // Build the repair-attempt user content for a word-limit-only rejection.
+  // Distinct from buildRepairUserContent (semantic Validator repair, defined
+  // below) because the feedback here is deterministic and mechanical: keep
+  // the same content/intent, just shorten it.
+  function buildWordLimitRepairUserContent(priorCandidate) {
+    const priorJson = JSON.stringify(
+      { role: priorCandidate.role, message: priorCandidate.message, groundingMessageIds: priorCandidate.groundingMessageIds },
+      null,
+      2
+    );
+    return `${built.userContent}\n\n---\n\n[PRIOR_FAILED_CRITERIA]\nThe previous candidate at this checkpoint was rejected for exceeding the 40-word limit on \`message\`.\nPrevious candidate (do NOT repeat it verbatim -- shorten the SAME idea/intent to under 40 words):\n${priorJson}\nRegenerate a candidate with the same intent and role, under 40 words.`;
   }
 
   // Build the user-content append for the repair attempt. The
@@ -555,12 +596,29 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   }
 
   // ── Attempt 1: Generator + Validator ──────────────────────────────────
-  const a1 = await attemptGeneration();
+  let a1 = await attemptGeneration();
   if (a1.discarded) {
     logEntry.reason = "Discarded stale AI result after the originating Discussion stage ended";
     logEntry.outcome = "SILENT";
     return { published: false };
   }
+
+  // Single, narrowly-scoped repair retry for a word-limit-only rejection
+  // (see isWordLimitOnlyFailure above). Reuses attemptGeneration() itself,
+  // so the retry goes through the exact same schema/deterministic checks --
+  // if it is still too long, or now fails on something else, it falls
+  // through to the ordinary silent handling immediately below, unchanged.
+  if (a1.silent && isWordLimitOnlyFailure(a1.deterministicFailedCriteria)) {
+    logEntry.wordLimitRepairAttempted = true;
+    const wordLimitRepair = await attemptGeneration(buildWordLimitRepairUserContent(a1.priorCandidate));
+    if (wordLimitRepair.discarded) {
+      logEntry.reason = "Discarded stale AI result after the originating Discussion stage ended";
+      logEntry.outcome = "SILENT";
+      return { published: false };
+    }
+    a1 = wordLimitRepair;
+  }
+
   if (a1.silent) {
     logEntry.reason = a1.reason;
     if (a1.logField) Object.assign(logEntry, a1.logField);
@@ -1098,6 +1156,114 @@ function appendTimedMessage(stage, attribute, content, messageType = MESSAGE_TYP
   return true;
 }
 
+// One-shot facilitator-authored nudge (opening message / cold-discussion
+// prompt). Mirrors appendTimedMessage's stage-liveness guard exactly, but
+// publishes under the Facilitator identity (matches the existing
+// postParticipantRequestFallback sender shape) instead of the Timer
+// identity, and is guarded by a per-attribute `game` flag so a duplicate
+// scheduling call can never post the same nudge twice. Does not touch
+// CheckpointManager state (humanMessageCount, messagesSinceLastPublish,
+// lastRole, etc.) or llmLog -- same "outside the checkpoint pipeline"
+// treatment as the opening message historically had (see
+// IMPLEMENTATION_LOGIC.md section 8) and as the "minutes remain" timer
+// reminders already get.
+function appendFacilitatorNudge(stage, attribute, content, onceFlagKey) {
+  if (!stage?.isCurrent?.()) return false;
+  const game = stage.currentGame;
+  if (onceFlagKey && game.get(onceFlagKey)) return false;
+  const timestamp = Date.now();
+  appendCanonicalMessage(game, attribute, {
+    messageId: `facilitator-nudge-${stage.id}-${timestamp}`,
+    groupId: game.id,
+    speakerId: "ai",
+    roundIndex: stage.round.get("taskIndex") ?? stage.round.get("index"),
+    stage: "Discussion",
+    messageType: MESSAGE_TYPES.FACILITATOR,
+    speakerType: MESSAGE_TYPES.FACILITATOR,
+    timestamp,
+    content,
+    sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
+  });
+  if (onceFlagKey) game.set(onceFlagKey, true);
+  // Timer/nudge callbacks run outside a player mutation, same reasoning as
+  // appendTimedMessage: flush immediately so the message is delivered at
+  // its scheduled time instead of waiting for the next state change.
+  Empirica.flush();
+  return true;
+}
+
+// Fixed, human-reviewable text -- same review discipline as
+// opening_message.md / the icebreaker opening previously had. No LLM call,
+// no Generator/Validator, no option-specific or task-specific content, so
+// it carries no steering risk regardless of round/treatment.
+const TASK_OPENING_MESSAGE =
+  "Welcome! I\u2019m the Facilitator for this discussion. I won\u2019t make the decision for you, but I\u2019m here to help make sure everyone is heard and to help you keep track of what\u2019s been discussed. Feel free to start sharing what you each know about the options \u2014 and you can address me anytime by typing @ and selecting Facilitator.";
+
+// Two fixed, non-LLM nudge variants for the SAME silence watchdog (see
+// armSilenceWatchdog below) -- distinguished only by whether the group has
+// ever sent a message yet at the moment the watchdog fires:
+//   - nobody has spoken at all yet (a dead-silent opening)
+//   - the group HAD been talking and has now gone quiet for the same delay
+// Wording differs because "jump in" reads oddly once people have already
+// been participating.
+const SILENCE_NUDGE_OPENING =
+  "Whenever you\u2019re ready, feel free to jump in \u2014 sharing what you each know about the options is a good place to start.";
+
+const SILENCE_NUDGE_LULL =
+  "No rush \u2014 feel free to keep sharing your thoughts whenever you\u2019re ready.";
+
+// Placeholder, not calibrated against real discussion pacing -- see
+// IMPLEMENTATION_LOGIC.md's convention of flagging uncalibrated constants
+// explicitly rather than presenting them as tuned values. Confirm with the
+// research team before a real pilot.
+const SILENCE_NUDGE_DELAY_MS = 90_000;
+
+// Per-game/round silence-watchdog timer handles. Not persisted -- same
+// non-restart-safe nature as every other setTimeout-based reminder in this
+// file (appendTimedMessage, the "minutes remain" reminders, etc): a server
+// restart mid-round loses the pending timer, same as those. Keyed by
+// `${game.id}:${chatKey}` so concurrent games/rounds never collide.
+const silenceWatchdogTimers = new Map();
+
+// (Re)arm a single-shot watchdog: if SILENCE_NUDGE_DELAY_MS passes with no
+// further call to this function (i.e. no new human message, see the
+// handleChat call site below), post exactly one nudge, choosing the
+// opening/lull wording based on whether the group has ever spoken yet.
+// Called once at Task-stage start (covers a dead-silent opening) and again
+// on every real human message (covers a lull after the group has already
+// been talking) -- the same mechanism naturally covers both cases, since
+// each call cancels and replaces any still-pending timer for this
+// game+round. Does not consume/interact with CheckpointManager state, same
+// isolation as appendFacilitatorNudge's other callers.
+function armSilenceWatchdog(stage, chatKey) {
+  if (!stage?.isCurrent?.()) return;
+  const game = stage.currentGame;
+  const timerKey = `${game.id}:${chatKey}`;
+  const existing = silenceWatchdogTimers.get(timerKey);
+  if (existing) clearTimeout(existing);
+  const handle = setTimeout(() => {
+    silenceWatchdogTimers.delete(timerKey);
+    if (!stage.isCurrent()) return;
+    const hasTalked = (stage.currentGame.get("humanMessageCount") || 0) > 0;
+    const content = hasTalked ? SILENCE_NUDGE_LULL : SILENCE_NUDGE_OPENING;
+    // No once-flag: a fresh silence episode (rearmed after the group talks
+    // again) is allowed to post another nudge later in the same round.
+    appendFacilitatorNudge(stage, chatKey, content, null);
+  }, SILENCE_NUDGE_DELAY_MS);
+  silenceWatchdogTimers.set(timerKey, handle);
+}
+
+// Cancel a pending watchdog (round/stage ending). Safe to call even if no
+// timer is currently pending.
+function clearSilenceWatchdog(gameId, chatKey) {
+  const timerKey = `${gameId}:${chatKey}`;
+  const existing = silenceWatchdogTimers.get(timerKey);
+  if (existing) {
+    clearTimeout(existing);
+    silenceWatchdogTimers.delete(timerKey);
+  }
+}
+
 function icebreakerActivityPrompt() {
   // Temporary content preserved from the previous Task A Icebreaker until the
   // team designs the future practice mini-task. It is no longer task-selected.
@@ -1150,6 +1316,19 @@ Empirica.onStageStart(({ stage }) => {
     const durationMs = gameDuration * 60 * 1000;
     setTimeout(() => appendTimedMessage(stage, chatKey, `${Math.ceil(gameDuration / 2)} minutes remain in the discussion.`), durationMs / 2);
     if (durationMs > 60_000) setTimeout(() => appendTimedMessage(stage, chatKey, "One minute remains in the discussion."), durationMs - 60_000);
+
+    // Opening message: one fixed, non-LLM Facilitator message at the very
+    // start of every Task-stage discussion. Independent of the checkpoint
+    // pipeline (no Generator/Validator call, no CheckpointManager state).
+    appendFacilitatorNudge(stage, chatKey, TASK_OPENING_MESSAGE, `openingPosted_${chatKey}`);
+
+    // Silence watchdog: covers both a dead-silent opening AND a later lull
+    // after the group has already been talking (see armSilenceWatchdog).
+    // Only schedules when the round is long enough for the delay to make
+    // sense.
+    if (durationMs > SILENCE_NUDGE_DELAY_MS + THRESHOLDS.gate.min_time_for_intervention_seconds * 1000) {
+      armSilenceWatchdog(stage, chatKey);
+    }
   }
   if (stageName === PRACTICE_ICEBREAKER_STAGE_NAME) {
     const durationMs = stage.get("duration") * 1000;
@@ -1486,7 +1665,7 @@ function postParticipantRequestFallback(game, chatKey, logEntry) {
       messageType: MESSAGE_TYPES.FACILITATOR,
       speakerType: MESSAGE_TYPES.FACILITATOR,
       timestamp: publishedAt,
-      content: "I couldn’t produce a verified answer using the shared task information and public discussion. Please rephrase your question or point to the public option, criterion, claim, or message you want me to address.",
+      content: "I can’t tell you which option is correct — that’s for your group to decide — but I’m glad to help organize or clarify what’s already been discussed. Could you point me to the specific option, claim, or message you’d like help with?",
       sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
     });
     logEntry.messageAdded = true;
@@ -1556,6 +1735,11 @@ async function handleChat(env, { game }) {
   // we already early-returned above if the last message is from AI). ──
   const humanMessageCount = (game.get("humanMessageCount") || 0) + 1;
   game.set("humanMessageCount", humanMessageCount);
+
+  // A real human message breaks any silence -- rearm the watchdog so a
+  // LATER lull (the group goes quiet again after this) can still be
+  // caught, same delay as the opening case.
+  armSilenceWatchdog(game.currentStage, chatKey);
 
   // ── Increment the opportunity counter (Phase 3: also tracked as
   // messagesSinceLastPublish; the legacy messagesSinceLastIntervention
@@ -1964,6 +2148,9 @@ Empirica.onStageEnded(({ stage }) => {
   const stageName = stage.get("name");
   if (["Task", "InitialDecision", "FinalDecision", "IndividualAssessment"].includes(stageName)) {
     round.set(`${stageName}EndedAt`, Date.now());
+  }
+  if (stageName === "Task") {
+    clearSilenceWatchdog(game.id, `chat_round_${round.get("taskIndex")}`);
   }
 
   if (stageName === "FinalDecision") {

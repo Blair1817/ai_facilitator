@@ -108,7 +108,3 @@ sentences; `groundingMessageIds` must follow base.md's grounding
 rules (a general prompt with no transcript-specific factual claim
 may use `groundingMessageIds: []`). Do not add any other fields. Do
 not output code fences, explanations, or commentary around the JSON.
-## LENGTH
-
-Keep `message` under 40 words. Say less, not more -- a short, direct
-sentence (or two) beats a longer one that tries to cover everything.

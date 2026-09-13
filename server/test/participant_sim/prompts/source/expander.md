@@ -200,7 +200,3 @@ directs the group to produce invented content.
 
 This is invalid because the facilitator introduces a criterion that is not
 grounded in an authorised public participant message.
-## LENGTH
-
-Keep `message` under 40 words. Say less, not more -- a short, direct
-sentence (or two) beats a longer one that tries to cover everything.

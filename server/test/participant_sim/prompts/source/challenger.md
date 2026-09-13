@@ -232,7 +232,3 @@ question.
 ```
 
 This is invalid because it attacks participants and recommends an outcome.
-## LENGTH
-
-Keep `message` under 40 words. Say less, not more -- a short, direct
-sentence (or two) beats a longer one that tries to cover everything.

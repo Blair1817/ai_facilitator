@@ -530,10 +530,13 @@ test("routing regression: LLM detector classification thresholds are explicit", 
   // 0.2 margin cases the 2026-08-13 mention-pilot surfaced). 0.2 still
   // lets a clear (>= 0.3) win go to the higher score, so this only
   // affects the cases the design intended.
+  // 2026-09-12: lowered from 0.35/0.6/0.6 to 0.30/0.5/0.5 -- live pilot
+  // testing showed Adaptive rarely selected a Specialist role even when a
+  // real need was visible. See utils.js THRESHOLDS comment.
   assert.deepEqual(THRESHOLDS, {
-    expander: { threshold: 0.35 },
-    challenger: { threshold: 0.6 },
-    synthesiser: { threshold: 0.6, forced_trigger_seconds: 20 },
+    expander: { threshold: 0.30 },
+    challenger: { threshold: 0.5 },
+    synthesiser: { threshold: 0.5, forced_trigger_seconds: 20 },
     gate: { min_time_for_intervention_seconds: 10, margin: 0.20 },
   });
 });

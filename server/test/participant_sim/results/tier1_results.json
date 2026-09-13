@@ -1,0 +1,566 @@
+[
+  {
+    "tier": 1,
+    "id": 1,
+    "name": "Time floor: <10s remaining -> Abstain (evaluateGate)",
+    "status": "PASS",
+    "expected": "decision=abstain, abstentionKind=time_floor",
+    "observed": {
+      "decision": "abstain",
+      "reason": "Insufficient time remaining (8000ms <= 10s floor) for a meaningful intervention-response cycle",
+      "scores": {},
+      "eligibleRoles": [],
+      "hardGatedRoles": [],
+      "perRole": {},
+      "abstentionKind": "time_floor"
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": "1b",
+    "name": "Time floor: <10s remaining -> shouldEvaluateCheckpoint blocks (CheckpointManager)",
+    "status": "PASS",
+    "expected": "trigger=false, reason starts with time_floor",
+    "observed": {
+      "trigger": false,
+      "state": {
+        "humanMessageCount": 0,
+        "messagesSinceLastPublish": 6,
+        "lastAttemptTimestamp": 0,
+        "lastHandledCheckpoint": 0,
+        "attemptedThisRound": 0,
+        "publishedThisRound": 0,
+        "lastRole": null,
+        "lastCheckedFactors": null,
+        "synthesiserFired": false,
+        "interventionHistory": [],
+        "postInterventionUptake": 0,
+        "unresolvedNeed": null
+      },
+      "reason": "time_floor (remaining=9000ms <= 10000ms)"
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": 2,
+    "name": "Attempt cap: 4th automatic attempt after 3 already attempted -> blocked",
+    "status": "FAIL",
+    "expected": "4th trigger=false, reason starts with cap_reached",
+    "observed": {
+      "trigger": true,
+      "state": {
+        "humanMessageCount": 0,
+        "messagesSinceLastPublish": 6,
+        "lastAttemptTimestamp": 300000,
+        "lastHandledCheckpoint": 3,
+        "attemptedThisRound": 3,
+        "publishedThisRound": 0,
+        "lastRole": null,
+        "lastCheckedFactors": null,
+        "synthesiserFired": false,
+        "interventionHistory": [],
+        "postInterventionUptake": 0,
+        "unresolvedNeed": null
+      },
+      "reason": "ok"
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": 3,
+    "name": "Cooldown: two triggers within 30s -> second Abstains",
+    "status": "PASS",
+    "expected": "first trigger=true, second trigger=false reason cooldown",
+    "observed": {
+      "first": {
+        "trigger": true,
+        "state": {
+          "humanMessageCount": 0,
+          "messagesSinceLastPublish": 6,
+          "lastAttemptTimestamp": 0,
+          "lastHandledCheckpoint": 0,
+          "attemptedThisRound": 0,
+          "publishedThisRound": 0,
+          "lastRole": null,
+          "lastCheckedFactors": null,
+          "synthesiserFired": false,
+          "interventionHistory": [],
+          "postInterventionUptake": 0,
+          "unresolvedNeed": null
+        },
+        "reason": "ok"
+      },
+      "second": {
+        "trigger": false,
+        "state": {
+          "humanMessageCount": 0,
+          "messagesSinceLastPublish": 6,
+          "lastAttemptTimestamp": 1000000,
+          "lastHandledCheckpoint": 1,
+          "attemptedThisRound": 1,
+          "publishedThisRound": 0,
+          "lastRole": null,
+          "lastCheckedFactors": null,
+          "synthesiserFired": false,
+          "interventionHistory": [],
+          "postInterventionUptake": 0,
+          "unresolvedNeed": null
+        },
+        "reason": "cooldown (elapsed=5000ms < 30000ms)"
+      }
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": 4,
+    "name": "Opportunity gate: <6 msgs since last publish -> Abstain; failed attempt does not reset the counter",
+    "status": "PASS",
+    "expected": "both blocked by opportunity_gate; messagesSinceLastPublish stays 3 after a failed (non-published) attempt",
+    "observed": {
+      "blocked": {
+        "trigger": false,
+        "state": {
+          "humanMessageCount": 0,
+          "messagesSinceLastPublish": 3,
+          "lastAttemptTimestamp": 0,
+          "lastHandledCheckpoint": 0,
+          "attemptedThisRound": 0,
+          "publishedThisRound": 0,
+          "lastRole": null,
+          "lastCheckedFactors": null,
+          "synthesiserFired": false,
+          "interventionHistory": [],
+          "postInterventionUptake": 0,
+          "unresolvedNeed": null
+        },
+        "reason": "opportunity_gate (since_last_publish=3 < 6)"
+      },
+      "stillBlocked": {
+        "trigger": false,
+        "state": {
+          "humanMessageCount": 0,
+          "messagesSinceLastPublish": 3,
+          "lastAttemptTimestamp": 0,
+          "lastHandledCheckpoint": 1,
+          "attemptedThisRound": 1,
+          "publishedThisRound": 0,
+          "lastRole": null,
+          "lastCheckedFactors": null,
+          "synthesiserFired": false,
+          "interventionHistory": [],
+          "postInterventionUptake": 0,
+          "unresolvedNeed": null
+        },
+        "reason": "opportunity_gate (since_last_publish=3 < 6)"
+      },
+      "messagesSinceLastPublishAfterFail": 3
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": 5,
+    "name": "Dedup: same checkpoint (humanMessageCount) evaluated twice -> no double-fire",
+    "status": "PASS",
+    "expected": "first trigger=true, re-evaluation of same humanMessageCount trigger=false reason dedup",
+    "observed": {
+      "first": {
+        "trigger": true,
+        "state": {
+          "humanMessageCount": 0,
+          "messagesSinceLastPublish": 6,
+          "lastAttemptTimestamp": 0,
+          "lastHandledCheckpoint": 0,
+          "attemptedThisRound": 0,
+          "publishedThisRound": 0,
+          "lastRole": null,
+          "lastCheckedFactors": null,
+          "synthesiserFired": false,
+          "interventionHistory": [],
+          "postInterventionUptake": 0,
+          "unresolvedNeed": null
+        },
+        "reason": "ok"
+      },
+      "dupe": {
+        "trigger": false,
+        "state": {
+          "humanMessageCount": 0,
+          "messagesSinceLastPublish": 6,
+          "lastAttemptTimestamp": 0,
+          "lastHandledCheckpoint": 5,
+          "attemptedThisRound": 1,
+          "publishedThisRound": 0,
+          "lastRole": null,
+          "lastCheckedFactors": null,
+          "synthesiserFired": false,
+          "interventionHistory": [],
+          "postInterventionUptake": 0,
+          "unresolvedNeed": null
+        },
+        "reason": "dedup (lastHandled=5 === 5)"
+      }
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": 6,
+    "name": "@-mention bypasses time floor/cap/cooldown/opportunity-gate but NOT dedup",
+    "status": "PASS",
+    "expected": "a/b/c/d all trigger=true under otherwise-blocking conditions; e (dedup) still trigger=false",
+    "observed": {
+      "markerDetected": true,
+      "noMarker": false,
+      "a": {
+        "trigger": true,
+        "state": {
+          "humanMessageCount": 0,
+          "messagesSinceLastPublish": 0,
+          "lastAttemptTimestamp": 0,
+          "lastHandledCheckpoint": 0,
+          "attemptedThisRound": 0,
+          "publishedThisRound": 0,
+          "lastRole": null,
+          "lastCheckedFactors": null,
+          "synthesiserFired": false,
+          "interventionHistory": [],
+          "postInterventionUptake": 0,
+          "unresolvedNeed": null
+        },
+        "reason": "participant_request"
+      },
+      "b": {
+        "trigger": true,
+        "state": {
+          "humanMessageCount": 0,
+          "messagesSinceLastPublish": 0,
+          "lastAttemptTimestamp": 3,
+          "lastHandledCheckpoint": 3,
+          "attemptedThisRound": 3,
+          "publishedThisRound": 0,
+          "lastRole": null,
+          "lastCheckedFactors": null,
+          "synthesiserFired": false,
+          "interventionHistory": [],
+          "postInterventionUptake": 0,
+          "unresolvedNeed": null
+        },
+        "reason": "participant_request"
+      },
+      "c": {
+        "trigger": true,
+        "state": {
+          "humanMessageCount": 0,
+          "messagesSinceLastPublish": 0,
+          "lastAttemptTimestamp": 1000,
+          "lastHandledCheckpoint": 1,
+          "attemptedThisRound": 1,
+          "publishedThisRound": 0,
+          "lastRole": null,
+          "lastCheckedFactors": null,
+          "synthesiserFired": false,
+          "interventionHistory": [],
+          "postInterventionUptake": 0,
+          "unresolvedNeed": null
+        },
+        "reason": "participant_request"
+      },
+      "d": {
+        "trigger": true,
+        "state": {
+          "humanMessageCount": 0,
+          "messagesSinceLastPublish": 1,
+          "lastAttemptTimestamp": 0,
+          "lastHandledCheckpoint": 0,
+          "attemptedThisRound": 0,
+          "publishedThisRound": 0,
+          "lastRole": null,
+          "lastCheckedFactors": null,
+          "synthesiserFired": false,
+          "interventionHistory": [],
+          "postInterventionUptake": 0,
+          "unresolvedNeed": null
+        },
+        "reason": "participant_request"
+      },
+      "e": {
+        "trigger": false,
+        "state": {
+          "humanMessageCount": 0,
+          "messagesSinceLastPublish": 6,
+          "lastAttemptTimestamp": 0,
+          "lastHandledCheckpoint": 9,
+          "attemptedThisRound": 1,
+          "publishedThisRound": 0,
+          "lastRole": null,
+          "lastCheckedFactors": null,
+          "synthesiserFired": false,
+          "interventionHistory": [],
+          "postInterventionUptake": 0,
+          "unresolvedNeed": null
+        },
+        "reason": "dedup (lastHandled=9 === 9)"
+      }
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": 7,
+    "name": "Threshold boundaries: expander@0.35, challenger/synthesiser@0.6",
+    "status": "FAIL",
+    "expected": "below threshold != specialist; at/above threshold == specialist, for all three roles",
+    "observed": {
+      "expander": [
+        "specialist",
+        "specialist",
+        "specialist"
+      ],
+      "challenger": [
+        "specialist",
+        "specialist",
+        "specialist"
+      ],
+      "synthesiser": [
+        "specialist",
+        "specialist",
+        "specialist"
+      ],
+      "THRESHOLDS": {
+        "expander": {
+          "threshold": 0.3
+        },
+        "challenger": {
+          "threshold": 0.5
+        },
+        "synthesiser": {
+          "threshold": 0.5,
+          "forced_trigger_seconds": 20
+        },
+        "gate": {
+          "min_time_for_intervention_seconds": 10,
+          "margin": 0.2
+        }
+      }
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": 8,
+    "name": "Tie-break: within 0.20 margin -> priority order wins; outside margin -> raw top score wins",
+    "status": "PASS",
+    "expected": "in-band gap(0.08)->challenger (priority beats higher-scoring expander); out-of-band gap(0.25)->expander (raw top score, no priority override)",
+    "observed": {
+      "inBand": {
+        "chosenRole": "challenger",
+        "scores": {
+          "expander": 0.7,
+          "challenger": 0.62
+        }
+      },
+      "outOfBand": {
+        "chosenRole": "expander",
+        "scores": {
+          "expander": 0.9,
+          "synthesiser": 0.65
+        }
+      },
+      "margin": 0.2,
+      "priority": [
+        "challenger",
+        "synthesiser",
+        "expander"
+      ]
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": 9,
+    "name": "Self-correction discount flips an otherwise-clear specialist decision to Generalist/Abstain",
+    "status": "PASS",
+    "expected": "same raw breadth_deficiency=0.5 is 'specialist' alone but drops below threshold (and gate decision changes) once self_correction=0.9 discounts it",
+    "observed": {
+      "withoutDiscount": "specialist",
+      "withDiscount": "generalist",
+      "discountedStrength": 0.275,
+      "discountFlag": true
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": 10,
+    "name": "Forced wrap-up nudge (<=20s): fires only when Synthesiser independently eligible; cannot override an Abstain (regression)",
+    "status": "PASS",
+    "expected": "synthesiser-eligible case -> forced synthesiser; synthesiser-ineligible case -> no forced synthesiser; chooseRole() on an Abstain gate throws rather than emitting a role",
+    "observed": {
+      "chosenA": {
+        "role": "synthesiser",
+        "forced": true,
+        "reasoning": "Forced synthesiser nudge near deadline; independently eligible from LLM detector (score=0.650)"
+      },
+      "chosenB": {
+        "role": "expander",
+        "forced": false,
+        "reasoning": "expander selected from LLM detector score=0.900"
+      },
+      "abstainThrew": true
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": 11,
+    "name": "Fail-closed: malformed/missing Assessor output -> Abstain, never crashes, never fabricates a role",
+    "status": "PASS",
+    "expected": "null/undefined checkedFactors -> abstain; API/parse/schema failures all return success:false; abstain never proposes a role",
+    "observed": {
+      "badGateNull": "abstain",
+      "badGateUndefined": "abstain",
+      "apiErr": "ASSESSOR_API_ERROR",
+      "parseErr": "ASSESSOR_PARSE_FAILURE",
+      "schemaErr": "ASSESSOR_SCHEMA_FAILURE"
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": 12,
+    "name": "Evidence Checker: fabricated/non-verbatim span -> downgraded to uncertain, role selection reflects it",
+    "status": "PASS",
+    "expected": "status=uncertain, downgradedReason=SPAN_NOT_FOUND_IN_CITED_MESSAGES, strength=0, and evaluateGate no longer treats it as specialist-eligible",
+    "observed": {
+      "checkedFactor": {
+        "status": "uncertain",
+        "strength": 0,
+        "message_ids": [],
+        "span": "",
+        "downgradedReason": "SPAN_NOT_FOUND_IN_CITED_MESSAGES"
+      },
+      "gateDecision": "abstain"
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": 13,
+    "name": "Evidence Checker: group_preference cited from the same participant twice -> rejected, not counted",
+    "status": "PASS",
+    "expected": "status=uncertain, downgradedReason=GROUP_PREFERENCE_SINGLE_PARTICIPANT_ONLY",
+    "observed": {
+      "status": "uncertain",
+      "strength": 0,
+      "message_ids": [],
+      "span": "",
+      "downgradedReason": "GROUP_PREFERENCE_SINGLE_PARTICIPANT_ONLY"
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": "2-confirm",
+    "name": "Attempt cap enforced by the real handleChat(): 4th attempt (after 3) is blocked",
+    "status": "FAIL",
+    "expected": "attemptedThisRound stops at 3 even though a 4th checkpoint was offered (cooldown deliberately defeated so only the cap is being measured)",
+    "observed": {
+      "attemptedThisRound": 0,
+      "checkpointErrorsThisScenario": 0
+    },
+    "evidence": null,
+    "notes": "The 3 blocked-by-cap-or-not attempts that did NOT trigger hit the known audit-log bug (Bug #1) internally; attemptedThisRound is read from committed store state written before that crash, so this assertion is unaffected by it.",
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": 40,
+    "name": "Rapid burst: 5 messages within ~2s real time -> exactly ONE checkpoint evaluated",
+    "status": "FAIL",
+    "expected": "attemptedThisRound === 1 (the message that fills the 6-message gate triggers; the next 4, milliseconds later, are cooldown-blocked)",
+    "observed": {
+      "attemptedThisRound": 0,
+      "lastAttemptTimestamp": 0
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": 41,
+    "name": "Strong-trigger content at 8s remaining -> Abstain on time regardless of content",
+    "status": "PASS",
+    "expected": "attemptedThisRound stays 0 -- the time floor blocks before any content is ever read by a detector, even though the opportunity gate would otherwise have just been satisfied",
+    "observed": {
+      "attemptedThisRound": 0,
+      "remainingMsAtTrigger": 8000
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": 42,
+    "name": "10s after a fresh publish: ordinary message blocked by opportunity-gate/cooldown; @-mention bypasses it",
+    "status": "FAIL",
+    "expected": "ordinary follow-up: attemptedThisRound stays 0 (blocked); @-mention follow-up: a real (triggered) llmLog entry is written",
+    "observed": {
+      "attemptedThisRoundAfterOrdinary": 0,
+      "llmLogEntriesBefore": 0,
+      "llmLogEntriesAfterMention": 0
+    },
+    "evidence": null,
+    "notes": null,
+    "exception": null
+  },
+  {
+    "tier": 1,
+    "id": 43,
+    "name": "Empty/whitespace-only message never reaches checkpoint logic",
+    "status": "OBSERVED",
+    "expected": "the real message-construction path (buildCanonicalMessage) refuses empty content outright, so no real client can ever get an empty message into the chat array in the first place",
+    "observed": {
+      "canonicalBuilderRejectsEmptyContent": true,
+      "humanMessageCountBefore": 0,
+      "humanMessageCountAfterRawEmptyAppend": 0
+    },
+    "evidence": null,
+    "notes": "handleChat itself also declined to treat the raw empty message as a formal human message (no additional gap found).",
+    "exception": null
+  }
+]

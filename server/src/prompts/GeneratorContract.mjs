@@ -290,6 +290,17 @@ export function runDeterministicValidation(
     // role's prompt. Omit to disable the check (only intended for
     // tests of the check itself, not for the live pipeline).
     activeParticipantNames = null,
+    // 2026-XX addition: hard word-count ceiling for the automatically
+    // triggered facilitator paths (Static's fixed policy + Adaptive's
+    // Generalist/Expander/Challenger/Synthesiser). Deliberately NOT
+    // applied to the participant-requested (@Facilitator) path -- that
+    // role is documented (server/real-adaptive-evaluation.mjs / the
+    // 2026-08-21 schema-cap regression test in GeneratorContract.test.mjs)
+    // to naturally need more room to ground an answer in several prior
+    // messages. Callers pass null/omit to disable the check entirely
+    // (default), so every existing call site and test is unaffected
+    // unless it opts in.
+    maxWords = null,
   } = {}
 ) {
   const failedCriteria = [];
@@ -309,6 +320,12 @@ export function runDeterministicValidation(
     }
     if (MARKDOWN_PATTERN.test(message)) {
       failedCriteria.push("MARKDOWN_DETECTED");
+    }
+    if (typeof maxWords === "number") {
+      const wordCount = message.trim().split(/\s+/).filter(Boolean).length;
+      if (wordCount > maxWords) {
+        failedCriteria.push("MESSAGE_EXCEEDS_WORD_LIMIT");
+      }
     }
   }
 

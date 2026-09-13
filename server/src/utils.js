@@ -21,9 +21,17 @@ export const ROLES = ["expander", "challenger", "synthesiser"];
 export const ROLE_PRIORITY = ["challenger", "synthesiser", "expander"];
 
 export const THRESHOLDS = {
-  expander: { threshold: 0.35 },
-  challenger: { threshold: 0.6 },
-  synthesiser: { threshold: 0.6, forced_trigger_seconds: 20 },
+  // 2026-09-12: lowered from 0.35/0.6/0.6 -- live pilot testing showed the
+  // Adaptive condition rarely selected a Specialist role (frequently fell
+  // through to Generalist/no-need instead), even when a real deliberative
+  // need was visible in the transcript. This is a moderate, ~15-17%
+  // reduction that preserves the original relative ordering (Expander
+  // easiest, Challenger/Synthesiser equally harder) while making a real
+  // but not overwhelming detected need more likely to clear the bar.
+  // Revisit with real session data once more pilots have run.
+  expander: { threshold: 0.30 },
+  challenger: { threshold: 0.5 },
+  synthesiser: { threshold: 0.5, forced_trigger_seconds: 20 },
   gate: {
     min_time_for_intervention_seconds: 10,
     // 2026-08-13 widening from 0.05 to 0.20. The frozen deliberative

@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Semantic Assessor Output Schema",
+  "description": "LLM-only discussion-state detector output. The detector assesses all eight semantic factors at every checkpoint; no hand-engineered feature or Candidate Gate is used. Each present factor carries a 0-1 LLM strength and exact transcript evidence. EvidenceChecker verifies citations before deterministic role classification.",
+  "type": "object",
+  "properties": {
+    "breadth_deficiency": { "$ref": "#/definitions/factor" },
+    "group_preference": { "$ref": "#/definitions/factor" },
+    "justification_deficiency": { "$ref": "#/definitions/factor" },
+    "integration_deficiency": { "$ref": "#/definitions/factor" },
+    "unresolved_counterevidence": { "$ref": "#/definitions/factor" },
+    "claim_evidence_linkage": { "$ref": "#/definitions/factor" },
+    "self_correction": { "$ref": "#/definitions/factor" },
+    "reasoning_uptake": { "$ref": "#/definitions/factor" },
+    "evidenceRelations": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/evidenceRelation" },
+      "description": "Delibra spec §3 Node 3: per-message evidence-relations tracking. Each entry records which of the 6 states (mentioned / attributed / evaluated / compared / countered / integrated) the evidence in that message is in. Required: present but may be empty if no participant message has been evidence-tracked yet (early checkpoints). Stored on AgentState.checkpoint.evidenceRelations and used by the Controller to drive role decisions (e.g. 'mentioned but not compared' → Synthesiser). Verified by EvidenceChecker.js for valid messageIds.",
+      "default": []
+    }
+  },
+  "required": [
+    "breadth_deficiency",
+    "group_preference",
+    "justification_deficiency",
+    "integration_deficiency",
+    "unresolved_counterevidence",
+    "claim_evidence_linkage",
+    "self_correction",
+    "reasoning_uptake",
+    "evidenceRelations"
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "factor": {
+      "type": "object",
+      "description": "单个语义因子的判断结果。",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["present", "absent", "uncertain"],
+          "description": "present=该因子在当前讨论中确实存在；absent=不存在；uncertain=证据不足以判断，不得因为'不确定'就默认为present。"
+        },
+        "strength": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "status='present'时的强度估计；status='absent'或'uncertain'时必须为0。"
+        },
+        "message_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true,
+          "description": "支撑该判断的消息ID列表；仅在status='present'时必填。"
+        },
+        "span": {
+          "type": "string",
+          "description": "支撑该判断的原文引用（逐字，不得改写或概括）；仅在status='present'时必填。EvidenceChecker.js会核验这段文字是否真的出现在transcript中。"
+        }
+      },
+      "required": ["status", "strength"],
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "status": { "const": "present" }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "required": ["status", "strength", "message_ids", "span"]
+      }
+    },
+    "evidenceRelation": {
+      "type": "object",
+      "description": "Delibra spec §3 Node 3: 追踪公开证据是否被 mentioned / attributed / evaluated / compared / countered / integrated. 每个 messageId 一条；不在关系判断范围内的消息可以省略。",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "the participant message whose evidence is being tracked. Must be one of the message IDs supplied with the public discussion."
+        },
+        "mentioned": {
+          "type": "boolean",
+          "description": "true 表示该 message 的 evidence 在讨论中被任一参与者提到（引用、复述、暗示）。"
+        },
+        "attributed": {
+          "type": "boolean",
+          "description": "true 表示 evidence 被明确归因到某个选项 / 标准 / 立场（'X says Y about Z'、'the data shows ...'）。"
+        },
+        "evaluated": {
+          "type": "boolean",
+          "description": "true 表示 evidence 被评估了可信度 / 相关性 / 充分性（'this is convincing', 'we should question ...', 'this doesn't address ...'）。"
+        },
+        "compared": {
+          "type": "boolean",
+          "description": "true 表示 evidence 跟其他证据 / 选项 / 立场进行了显式比较（'X vs Y', 'unlike Z, this ...'）。"
+        },
+        "countered": {
+          "type": "boolean",
+          "description": "true 表示有反证 / 反驳针对该 evidence（'but actually', 'this contradicts ...'）。"
+        },
+        "integrated": {
+          "type": "boolean",
+          "description": "true 表示该 evidence 已经被纳入小组的最终判断 / 共识 / 决策中（'we'll go with X based on this'）。"
+        }
+      },
+      "required": ["messageId", "mentioned", "attributed", "evaluated", "compared", "countered", "integrated"],
+      "additionalProperties": false
+    }
+  }
+}
