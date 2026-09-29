@@ -9,7 +9,7 @@ export function taskBackgroundOnly(markdown) {
   return firstCandidateSection >= 0 ? markdown.slice(0, firstCandidateSection) : markdown;
 }
 
-export function Introduction() {
+export function Introduction({ onNext, deadline } = {}) {
   const player = usePlayer();
   const round = useRound();
   const generalInfo = round?.get("generalInfo");
@@ -44,7 +44,7 @@ export function Introduction() {
       </p>
       <RenderMarkdown markdownText={taskBackground} />
       <div className="mt-8 text-right">
-        <Button handleClick={() => player.stage.set("submit", true)}>
+        <Button handleClick={() => onNext ? onNext() : player.stage.set("submit", true)}>
           <p>Continue</p>
         </Button>
       </div>

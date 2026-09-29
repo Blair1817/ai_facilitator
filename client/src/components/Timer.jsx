@@ -5,12 +5,12 @@ import {
 } from "@empirica/core/player/classic/react";
 import React, { useEffect, useState } from "react";
 
-export function Timer() {
+export function Timer({ deadline } = {}) {
   const timer = useStageTimer();
   const game = useGame();
   const stage = useStage();
   const stageName = stage?.get("name");
-  const discussionDeadline = ["Task", "Discussion"].includes(stageName)
+  const discussionDeadline = Number.isFinite(deadline) ? deadline : ["Task", "Discussion"].includes(stageName)
     ? game?.get("deadline")
     : null;
   const [now, setNow] = useState(Date.now());
@@ -27,7 +27,9 @@ export function Timer() {
   }, [discussionDeadline]);
 
   let remaining;
-  if (timer?.remaining || timer?.remaining === 0) {
+  if (Number.isFinite(deadline)) {
+    remaining = Math.max(0, Math.ceil((deadline - now) / 1000));
+  } else if (timer?.remaining || timer?.remaining === 0) {
     remaining = Math.round(timer?.remaining / 1000);
   } else if (Number.isFinite(discussionDeadline)) {
     remaining = Math.max(0, Math.ceil((discussionDeadline - now) / 1000));

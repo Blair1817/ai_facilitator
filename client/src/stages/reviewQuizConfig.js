@@ -13,7 +13,7 @@ export const REVIEW_QUIZZES = Object.freeze({
       },
       discussionDuration: {
         title: "Discussion period",
-        content: "You will have a total of 10 minutes to discuss the decision as a group.",
+        content: "You will have a total of 15 minutes to discuss the decision as a group.",
       },
       objective: {
         title: "Task objective",
@@ -55,7 +55,7 @@ export const REVIEW_QUIZZES = Object.freeze({
         remediationKey: "discussionDuration",
         type: "number",
         prompt: "How long is the discussion period?",
-        correctAnswer: "10",
+        correctAnswer: "15",
       },
       {
         id: "objective",
@@ -86,7 +86,7 @@ export const REVIEW_QUIZZES = Object.freeze({
       },
       discussionDuration: {
         title: "Discussion period",
-        content: "You will have a total of 10 minutes to discuss the decision as a group.",
+        content: "You will have a total of 15 minutes to discuss the decision as a group.",
       },
       objective: {
         title: "Task objective",
@@ -128,7 +128,7 @@ export const REVIEW_QUIZZES = Object.freeze({
         remediationKey: "discussionDuration",
         type: "number",
         prompt: "How long is the discussion period?",
-        correctAnswer: "10",
+        correctAnswer: "15",
       },
       {
         id: "objective",

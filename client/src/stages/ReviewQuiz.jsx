@@ -14,7 +14,7 @@ import {
   getReviewQuizRemediation,
 } from "./reviewQuizConfig";
 
-export function ReviewQuiz() {
+export function ReviewQuiz({ onNext, deadline } = {}) {
   const player = usePlayer();
   const players = usePlayers();
   const round = useRound();
@@ -74,7 +74,7 @@ export function ReviewQuiz() {
     if (evaluation.allCorrect) {
       player.round.set("reviewQuizPassed", true);
       clearDraftKeys([answersDraftKey]);
-      player.stage.set("submit", true);
+      if (onNext) onNext(); else player.stage.set("submit", true);
       return;
     }
 

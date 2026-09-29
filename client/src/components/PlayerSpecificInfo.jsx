@@ -53,6 +53,10 @@ export function PlayerSpecificInfo({ className = "", mode = "full" }) {
     participantContent: player.round?.get("playerContent"),
     playerName,
   });
+  const practice = round?.get("isPractice") === true;
+  const displayedReport = practice
+    ? `${generalInfo || ""}\n\n# Your Additional Information\n\n${player.round?.get("playerContent") || ""}`
+    : reportMarkdown;
   const compact = mode === "compact";
   const lastCountedScroll = useRef(0);
 
@@ -74,7 +78,7 @@ export function PlayerSpecificInfo({ className = "", mode = "full" }) {
       </header>
       <div className={`min-h-0 flex-1 overflow-y-auto rounded-b-lg border-x-2 border-b-2 border-gray-300 text-left leading-relaxed ${compact ? "px-6 py-5 text-base" : "px-8 py-6 text-base"}`} data-testid="task-report-scroll-panel" onScroll={recordScroll}>
         <p className="mb-4 text-sm font-bold text-gray-700">Scroll down within the report to review all information.</p>
-        <RenderMarkdown markdownText={reportMarkdown} />
+        <RenderMarkdown markdownText={displayedReport} />
       </div>
     </section>
   );

@@ -24,8 +24,9 @@ const timer = await read("client/src/components/Timer.jsx");
 const indexCss = await read("client/src/index.css");
 const policies = await read("server/src/ExperimentPolicies.mjs");
 const clientStructure = await read("client/src/experimentStructure.js");
+const personalFlowShared = await read("shared/personalFlow.mjs");
 
-test("T1-T7: locked routing includes one pre-round Walkthrough and formal IndividualAssessment stages", () => {
+test("T1-T7: locked routing includes one pre-round practice container and per-round personal-flow stages", () => {
   for (const [id, facilitation, tasks] of [["S1", '["static", "adaptive"]', '["A", "B"]'],["S2", '["adaptive", "static"]', '["A", "B"]'],["S3", '["static", "adaptive"]', '["B", "A"]'],["S4", '["adaptive", "static"]', '["B", "A"]']]) {
     const block = callbacks.slice(callbacks.indexOf(`${id}:`), callbacks.indexOf(`${id}:`) + 260);
     assert.match(block, new RegExp(facilitation.replace(/[\[\]"]/g, "\\$&")));
@@ -33,13 +34,20 @@ test("T1-T7: locked routing includes one pre-round Walkthrough and formal Indivi
   }
   assert.match(callbacks, /taskIndex:\s+0/);
   assert.match(callbacks, /taskIndex:\s+1/);
-  assert.equal((callbacks.match(/name: "Walkthrough"/g) ?? []).length, 1);
-  assert.equal((callbacks.match(/name: "IndividualAssessment"/g) ?? []).length, 2);
-  assert.match(game, /stageName == "IndividualAssessment"/);
+  assert.match(callbacks, /addPracticeRound\(game\)/);
+  // The former per-page stages collapsed into two untimed personal-flow
+  // stages per round (Preparation / Followup); IndividualAssessment is now
+  // a Followup page, not a stage.
+  assert.equal((callbacks.match(/name: "IndividualAssessment"/g) ?? []).length, 0);
+  assert.equal((callbacks.match(/name: "Preparation", duration: 1e9/g) ?? []).length, 2);
+  assert.equal((callbacks.match(/name: "Followup", duration: 1e9/g) ?? []).length, 2);
+  assert.match(personalFlowShared, /PREPARATION_PAGES = \["TaskInformation", "ReviewQuiz", "InitialDecision"\]/);
+  assert.match(personalFlowShared, /"IndividualAssessment", "TLX", "SubjectiveSurvey"/);
+  assert.match(game, /\["Preparation", "Followup"\]\.includes\(stageName\)\) return <PersonalFlow/);
 });
 
 test("one practice container precedes two Icebreaker-free formal rounds and Round 1 resets formal state", () => {
-  const practiceStart = callbacks.indexOf('const practiceRound = game.addRound({');
+  const practiceStart = callbacks.indexOf('addPracticeRound(game);');
   const round1Start = callbacks.indexOf('const round1 = game.addRound({');
   const round2Start = callbacks.indexOf('const round2 = game.addRound({');
   const roundStartHandler = callbacks.indexOf('Empirica.onRoundStart(({ round }) => {');
@@ -48,17 +56,14 @@ test("one practice container precedes two Icebreaker-free formal rounds and Roun
   const practiceBlock = callbacks.slice(practiceStart, round1Start);
   const round1Block = callbacks.slice(round1Start, round2Start);
   const round2Block = callbacks.slice(round2Start, callbacks.indexOf('// Restore the original stable colour aliases'));
-  assert.match(practiceBlock, /name: "Practice \/ Orientation"/);
-  assert.match(practiceBlock, /isPractice: true/);
-  assert.match(practiceBlock, /name: "Walkthrough"[\s\S]*name: "IceBreakerStartCountdown"[\s\S]*PRACTICE_ICEBREAKER_STAGE_NAME[\s\S]*name: "IceBreakerEndCountdown"/);
-  assert.equal((practiceBlock.match(/PRACTICE_ICEBREAKER_STAGE_NAME/g) ?? []).length, 1);
+  assert.match(practiceBlock, /addPracticeRound\(game\)/);
   for (const formalBlock of [round1Block, round2Block]) {
     assert.doesNotMatch(formalBlock, /Walkthrough|IceBreaker|PracticeIcebreaker|Introduction/);
   }
 
   const onRoundStartBlock = callbacks.slice(roundStartHandler, callbacks.indexOf('// ── onStageStart'));
-  assert.match(onRoundStartBlock, /if \(round\.get\("isPractice"\) === true\) return;/);
-  assert.ok(onRoundStartBlock.indexOf('if (round.get("isPractice") === true) return;') < onRoundStartBlock.indexOf('resetRoundState(game);'));
+  assert.match(onRoundStartBlock, /initialisePractice\(round\);\s*return;/);
+  assert.ok(onRoundStartBlock.indexOf('initialisePractice(round);') < onRoundStartBlock.indexOf('resetRoundState(game);'));
   assert.match(onRoundStartBlock, /resetRoundState\(game\)/);
 });
 
@@ -70,7 +75,7 @@ test("Walkthrough uses the approved four-step instructions and stable card layou
     "2. Make an initial decision",
     "Choose the option you currently think is most appropriate and rate your confidence from 0 to 100. This response is private.",
     "3. Discuss with your group",
-    "After a short icebreaker, you will discuss the task for 10 minutes. Your Task Report will remain visible beside the chat.",
+    "After a short icebreaker, you will discuss the task for 15 minutes. Your Task Report will remain visible beside the chat.",
     "Use the chat to discuss information from the task materials and the available options. You may tag a group member by typing",
     "followed by their nickname. The AI facilitator may also post brief messages during the discussion.",
     "4. Record the final decision",
@@ -157,14 +162,10 @@ test("timer reminders flush immediately without waiting for a human chat message
   assert.match(callbacks, /Thirty seconds remain in the IceBreaker\./);
 });
 
-test("IceBreaker is wrapped by the approved ten-second countdown screens", () => {
-  assert.equal((callbacks.match(/name: "IceBreakerStartCountdown"/g) ?? []).length, 1);
-  assert.equal((callbacks.match(/name: "IceBreakerEndCountdown"/g) ?? []).length, 1);
-  assert.match(game, /<IceBreakerTransition key=\{roundStageKey\} position="before"/);
-  assert.match(game, /<IceBreakerTransition key=\{roundStageKey\} position="after"/);
-  assert.match(stage, /Get ready to meet your group in a quick icebreaker!/);
-  assert.match(stage, /Now that we’re all acquainted, get ready for the task!/);
-  assert.match(stage, /<Timer \/>/);
+test("new games enter the interactive practice instead of legacy IceBreaker countdowns", () => {
+  assert.doesNotMatch(callbacks, /addStage\(\{ name: "IceBreaker(Start|End)Countdown"/);
+  assert.match(game, /round\?\.get\("isPractice"\)/);
+  assert.match(game, /<PracticeOnboarding key=\{roundStageKey\}/);
 });
 
 test("T13-T14/T48: three stages reuse the original report component with compact Discussion presentation", () => {

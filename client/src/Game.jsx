@@ -14,6 +14,8 @@ import { TLX } from "./intro-exit/TLX.jsx";
 import { SubjectiveSurvey } from "./intro-exit/SubjectiveSurvey.jsx";
 import { IndividualAssessment } from "./stages/IndividualAssessment.jsx";
 import { Break } from "./stages/Break.jsx";
+import { PracticeOnboarding } from "./practice/PracticeOnboarding.jsx";
+import { PersonalFlow } from "./PersonalFlow.jsx";
 import {
   PRACTICE_ICEBREAKER_STAGE_NAME,
   PRACTICE_ICEBREAKER_TRANSCRIPT_KEY,
@@ -49,6 +51,14 @@ export function Game() {
     document.getElementById("participant-scroll-root")?.scrollTo(0, 0);
     window.scrollTo(0, 0);
   }, [roundStageKey]);
+
+  if (round?.get("isPractice")) {
+    return stageName === "FinalDecision"
+      ? <FinalDecision key={roundStageKey} />
+      : <PracticeOnboarding key={roundStageKey} />;
+  }
+
+  if (["Preparation", "Followup"].includes(stageName)) return <PersonalFlow key={roundStageKey} />;
 
   if (stageName == "TaskInformation") {
     return <Introduction key={roundStageKey} />

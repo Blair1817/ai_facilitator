@@ -4,7 +4,7 @@ import { Alert } from "../components/Alert";
 import { Button } from "../components/Button";
 import { clearDraftKeys, draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
 
-export function SubjectiveSurvey() {
+export function SubjectiveSurvey({ onNext, deadline } = {}) {
     const labelClassName = "block text-md font-bold text-gray-700 my-2";
     const listClassName = "block text-md font-medium text-gray-700 my-2";
     const inputClassName =
@@ -78,7 +78,7 @@ export function SubjectiveSurvey() {
             submittedAt: Date.now(),
         });
         clearDraftKeys(draftKeys);
-        player.stage.set("submit", true);
+        if (onNext) onNext(); else player.stage.set("submit", true);
     }
 
     if (player.stage.get("submit")) {

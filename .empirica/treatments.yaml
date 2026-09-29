@@ -7,7 +7,7 @@ factors:
   - name: gameDuration
     desc: Duration of the Task stage in minutes
     values:
-      - value: 10
+      - value: 15
 
   - name: phase1Duration
     desc: Duration of the InitialDecision stage in minutes
@@ -35,7 +35,7 @@ treatments:
   - name: main
     factors:
       playerCount:   3
-      gameDuration:  10
+      gameDuration:  15
       phase1Duration: 2
       introDuration: 2
       hiddenInfoCue: true

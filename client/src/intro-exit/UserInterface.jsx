@@ -41,7 +41,7 @@ export function UserInterface() {
           </section>
           <section>
             <h2>3. Discuss with your group</h2>
-            <p>After a short icebreaker, you will discuss the task for 10 minutes. Your Task Report will remain visible beside the chat.</p>
+            <p>After a short icebreaker, you will discuss the task for 15 minutes. Your Task Report will remain visible beside the chat.</p>
             <p>Use the chat to discuss information from the task materials and the available options. You may tag a group member by typing <code>@</code> followed by their nickname. The AI facilitator may also post brief messages during the discussion.</p>
           </section>
           <section>

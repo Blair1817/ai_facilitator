@@ -68,6 +68,15 @@ import {
   researchPersistence,
 } from "./SupabasePersistence.mjs";
 import { countLobbyReadyPlayers } from "./LobbyReadiness.mjs";
+import { addPracticeRound, initialisePractice, registerPractice, handlePracticeMessage, logPractice } from "./PracticeOnboarding.mjs";
+import { registerPersonalFlow } from "./PersonalFlow.mjs";
+
+registerPractice(Empirica, appendCanonicalMessage);
+registerPersonalFlow(Empirica, (player, round, stageName) => {
+  const rows = buildRoundResponseRows({ gameId: round.currentGame.id, roundId: round.id,
+    participantId: player.id, stageName, read: (key) => player.round.get(key) });
+  if (rows.length) queueResearchMirror(`response_${stageName}`, () => researchPersistence().upsertResponses(rows));
+});
 
 dotenv.config();
 
@@ -877,14 +886,7 @@ Empirica.onGameStart(({ game }) => {
   // This container is explicitly non-formal: it has no taskVersion,
   // facilitation, or taskIndex, and exists only to synchronize the one shared
   // practice Icebreaker before the two experimental rounds.
-  const practiceRound = game.addRound({
-    name: "Practice / Orientation",
-    isPractice: true,
-  });
-  practiceRound.addStage({ name: "Walkthrough", duration: WALKTHROUGH_DURATION_SECONDS });
-  practiceRound.addStage({ name: "IceBreakerStartCountdown", duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
-  practiceRound.addStage({ name: PRACTICE_ICEBREAKER_STAGE_NAME, duration: introDuration * 60 });
-  practiceRound.addStage({ name: "IceBreakerEndCountdown", duration: ICEBREAKER_TRANSITION_DURATION_SECONDS });
+  addPracticeRound(game);
 
   const round1 = game.addRound({
     name: "Round 1",
@@ -892,15 +894,10 @@ Empirica.onGameStart(({ game }) => {
     taskIndex:    0,
     taskVersion:  sequence.taskVersionOrder[0],
   });
-  round1.addStage({ name: "TaskInformation",          duration: TASK_INFORMATION_DURATION_SECONDS });
-  round1.addStage({ name: "ReviewQuiz",               duration: REVIEW_QUIZ_SAFETY_DURATION_SECONDS });
-  round1.addStage({ name: "InitialDecision",          duration: INITIAL_DECISION_DURATION_SECONDS });
+  round1.addStage({ name: "Preparation", duration: 1e9 });
   round1.addStage({ name: "Task",                     duration: gameDuration * 60 });
   round1.addStage({ name: "FinalDecision",            duration: 90 });
-  round1.addStage({ name: "IndividualAssessment",     duration: INDIVIDUAL_ASSESSMENT_DURATION_SECONDS });
-  round1.addStage({ name: "TLX",                      duration: TLX_DURATION_SECONDS });
-  round1.addStage({ name: "SubjectiveSurvey",         duration: SUBJECTIVE_SURVEY_DURATION_SECONDS });
-  round1.addStage({ name: "Break",                    duration: BREAK_STAGE_SAFETY_DURATION_SECONDS });
+  round1.addStage({ name: "Followup", duration: 1e9 });
 
   const round2 = game.addRound({
     name: "Round 2",
@@ -908,14 +905,10 @@ Empirica.onGameStart(({ game }) => {
     taskIndex:    1,
     taskVersion:  sequence.taskVersionOrder[1],
   });
-  round2.addStage({ name: "TaskInformation",          duration: TASK_INFORMATION_DURATION_SECONDS });
-  round2.addStage({ name: "ReviewQuiz",               duration: REVIEW_QUIZ_SAFETY_DURATION_SECONDS });
-  round2.addStage({ name: "InitialDecision",          duration: INITIAL_DECISION_DURATION_SECONDS });
+  round2.addStage({ name: "Preparation", duration: 1e9 });
   round2.addStage({ name: "Task",                     duration: gameDuration * 60 });
   round2.addStage({ name: "FinalDecision",            duration: 90 });
-  round2.addStage({ name: "IndividualAssessment",     duration: INDIVIDUAL_ASSESSMENT_DURATION_SECONDS });
-  round2.addStage({ name: "TLX",                      duration: TLX_DURATION_SECONDS });
-  round2.addStage({ name: "SubjectiveSurvey",         duration: SUBJECTIVE_SURVEY_DURATION_SECONDS });
+  round2.addStage({ name: "Followup", duration: 1e9 });
 
   // Restore the original stable colour aliases. The shuffled slot controls the
   // participant's visible Green/Blue/Pink name, matching colour, and report
@@ -969,7 +962,10 @@ Empirica.onRoundStart(({ round }) => {
   const game = round.currentGame;
   round.set("callbacksInitializedAt", Date.now());
   round.set("callbacksInstanceId", CALLBACKS_INSTANCE_ID);
-  if (round.get("isPractice") === true) return;
+  if (round.get("isPractice") === true) {
+    initialisePractice(round);
+    return;
+  }
   const taskIndex = round.get("taskIndex");
   const taskVersion = round.get("taskVersion");
   const matchingTasks = taskConfig.tasks.filter((candidate) => candidate.taskVersion === taskVersion);
@@ -1096,6 +1092,7 @@ function finalizeGroupDecision(stage, { timedOut = false, now = Date.now() } = {
   round.set("finalDecisionFinalizedAt", now);
   round.set("finalDecisionDraftChoices", drafts.map(({ participantId, choice, confidence }) => ({ participantId, choice, confidence })));
   round.set("finalDecisionConfirmed", true);
+  if (round.get("isPractice")) logPractice(game, "group_choice", null, { choice: classification.officialChoice });
   publishFinalDecisionStatus(round, { status: "finalized", matchedChoice: summary.matchedChoice });
 
   for (const participant of assignedHumanPlayers(game)) {
@@ -1119,7 +1116,15 @@ function appendCanonicalMessage(game, attribute, fields) {
   const counters = { ...(game.get("messageSequenceCounters") || {}) };
   const sequencePosition = allocateSequencePosition(counters, attribute);
   game.set("messageSequenceCounters", counters);
-  const message = buildCanonicalMessage({ ...fields, sequencePosition });
+  const message = {
+    ...buildCanonicalMessage({ ...fields, sequencePosition }),
+    ...(fields.phase === "practice" ? {
+      phase: "practice", source: fields.source, group_id: game.id,
+      speaker_id: fields.participantId ?? fields.speakerId,
+      speaker_colour: fields.speaker_colour ?? null,
+      exclude_from_primary_analysis: true,
+    } : {}),
+  };
   game.append(attribute, message);
   const round = game.currentRound;
   // The existing research.rounds schema deliberately contains only the two
@@ -1300,6 +1305,7 @@ Empirica.onStageStart(({ stage }) => {
   const { gameDuration } = game.get("treatment");
   const now = Date.now();
   const stageName = stage.get("name");
+  if (stage.round.get("isPractice") && stageName !== "FinalDecision") return;
   if (["Task", "InitialDecision", "FinalDecision", "IndividualAssessment"].includes(stageName)) {
     stage.round.set(`${stageName}StartedAt`, now);
   }
@@ -1353,7 +1359,7 @@ Empirica.onStageStart(({ stage }) => {
     }
     // Empirica owns the visible stage clock; this server timer is the
     // authoritative fail-safe and remains valid across client refreshes.
-    setTimeout(() => {
+    if (!stage.round.get("isPractice")) setTimeout(() => {
       if (stage.get("name") === "FinalDecision" && !stage.round.get("finalDecisionConfirmed")) {
         finalizeGroupDecision(stage, { timedOut: true });
       }
@@ -1494,6 +1500,11 @@ Empirica.on("player", "humanMessageRequest", (_ctx, { player, humanMessageReques
   const round = game?.currentRound;
   const stage = game?.currentStage;
   if (!game || !round || !stage) return;
+  if (round.get("isPractice")) {
+    handlePracticeMessage(player, request, appendCanonicalMessage);
+    Empirica.flush();
+    return;
+  }
   const dedupeKey = `${player.id}:${request?.requestId ?? "invalid"}`;
   const processed = { ...(game.get("processedHumanMessageRequests") || {}) };
   if (processed[dedupeKey]) {
@@ -1540,6 +1551,7 @@ Empirica.on("player", "humanMessageRequest", (_ctx, { player, humanMessageReques
 // This listener cannot enter the formal detector/generator/validator pipeline.
 // Its context builder accepts only the isolated practice transcript.
 async function handleIcebreakerChat(_env, { game }) {
+  if (game.currentRound?.get("isPractice")) return;
   const round = game.currentRound;
   const stage = game.currentStage;
   if (!round || !stage || stage.get("name") !== PRACTICE_ICEBREAKER_STAGE_NAME) return;
@@ -1679,6 +1691,7 @@ function postParticipantRequestFallback(game, chatKey, logEntry) {
 }
 
 async function handleChat(env, { game }) {
+  if (game.currentRound?.get("isPractice")) return;
   const recovered = recoverInterruptedInFlight(game, CALLBACKS_INSTANCE_ID);
   if (recovered.length > 0) Empirica.flush();
   const previousCallbacksInstanceId = game.get("activeCallbacksInstanceId");
@@ -2146,6 +2159,13 @@ Empirica.onStageEnded(({ stage }) => {
   const round = stage.round;
   const game = stage.currentGame;
   const stageName = stage.get("name");
+  if (round.get("isPractice")) {
+    if (stageName === "PracticeDiscussion" && !round.get("practiceDiscussionEnded")) {
+      round.set("practiceDiscussionEnded", "timeout");
+      logPractice(game, "discussion_timeout");
+    }
+    return;
+  }
   if (["Task", "InitialDecision", "FinalDecision", "IndividualAssessment"].includes(stageName)) {
     round.set(`${stageName}EndedAt`, Date.now());
   }

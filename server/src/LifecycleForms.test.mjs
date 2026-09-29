@@ -28,6 +28,18 @@ const surveySource = readFileSync(
   path.join(dirname, "../../client/src/intro-exit/SubjectiveSurvey.jsx"),
   "utf8",
 );
+const personalFlowClient = readFileSync(
+  path.join(dirname, "../../client/src/PersonalFlow.jsx"),
+  "utf8",
+);
+const personalFlowServer = readFileSync(
+  path.join(dirname, "PersonalFlow.mjs"),
+  "utf8",
+);
+const personalFlowShared = readFileSync(
+  path.join(dirname, "../../shared/personalFlow.mjs"),
+  "utf8",
+);
 const overallInstructionsSource = readFileSync(
   path.join(dirname, "../../client/src/intro-exit/OverallInstructions.jsx"),
   "utf8",
@@ -52,7 +64,7 @@ const gamesFullSource = readFileSync(
 test("one technical practice container wraps the shared Icebreaker and formal rounds contain none", () => {
 
   const practiceStages = callbacksSource.slice(
-    callbacksSource.indexOf('const practiceRound = game.addRound({'),
+    callbacksSource.indexOf('addPracticeRound(game);'),
     callbacksSource.indexOf('const round1 = game.addRound({'),
   );
 
@@ -64,28 +76,28 @@ test("one technical practice container wraps the shared Icebreaker and formal ro
     callbacksSource.indexOf('round2.addStage({ name: "TaskInformation"'),
     callbacksSource.indexOf("// MIGRATED from old 2nd (TEMP-BE-007"),
   );
-  assert.match(practiceStages, /isPractice: true/);
-  assert.match(practiceStages, /name: "Walkthrough"[\s\S]*name: "IceBreakerStartCountdown"[\s\S]*PRACTICE_ICEBREAKER_STAGE_NAME[\s\S]*name: "IceBreakerEndCountdown"/);
+  assert.match(practiceStages, /addPracticeRound\(game\)/);
   for (const stages of [round1Stages, round2Stages]) assert.doesNotMatch(stages, /Walkthrough|IceBreaker|PracticeIcebreaker|Introduction/);
 
   assert.match(callbacksSource, /const ICEBREAKER_TRANSITION_DURATION_SECONDS = 10;/);
-  assert.equal((callbacksSource.match(/name: "IceBreakerStartCountdown"/g) ?? []).length, 1);
-  assert.equal((callbacksSource.match(/name: "IceBreakerEndCountdown"/g) ?? []).length, 1);
+  assert.equal((callbacksSource.match(/name: "IceBreakerStartCountdown"/g) ?? []).length, 0);
+  assert.equal((callbacksSource.match(/name: "IceBreakerEndCountdown"/g) ?? []).length, 0);
   assert.match(gameSource, /stageName == "IceBreakerStartCountdown"/);
   assert.match(gameSource, /stageName == "IceBreakerEndCountdown"/);
   assert.match(reviewQuizSource, /player\.stage\.set\("submit", true\)/);
 });
 
-test("InitialDecision is 180 seconds in both rounds and shows the Empirica stage countdown", () => {
-  assert.match(callbacksSource, /const INITIAL_DECISION_DURATION_SECONDS = 3 \* 60;/);
-  assert.equal(
-    (callbacksSource.match(/name: "InitialDecision",\s+duration: INITIAL_DECISION_DURATION_SECONDS/g) ?? []).length,
-    2,
-  );
+test("InitialDecision page allows 180 seconds, shows a countdown, and advances without waiting for others", () => {
+  // The 180s budget moved from a dedicated stage into the Preparation
+  // personal flow: the client derives the deadline from the server-owned
+  // page cursor and auto-advances on expiry; the server re-checks it.
+  assert.match(personalFlowClient, /page === "InitialDecision" \? 180000 : 300000/);
+  assert.match(personalFlowClient, /if \(page === "InitialDecision" && now >= deadline\) onNext\(\)/);
+  assert.match(personalFlowServer, /progress\.startedAt \+ 180000/);
 
   assert.match(initialDecisionSource, /import \{ Timer \} from "\.\.\/components\/Timer"/);
   assert.match(initialDecisionSource, /Time remaining:/);
-  assert.match(initialDecisionSource, /<Timer \/>/);
+  assert.match(initialDecisionSource, /<Timer deadline=\{deadline\} \/>/);
   assert.doesNotMatch(initialDecisionSource, /setInterval|setTimeout/);
   assert.match(timerSource, /useStageTimer\(\)/);
   assert.match(timerSource, /timer\?\.remaining/);
@@ -93,20 +105,37 @@ test("InitialDecision is 180 seconds in both rounds and shows the Empirica stage
   for (const key of ["initialChoice", "initialConfidence", "initialDecision"]) {
     assert.match(initialDecisionSource, new RegExp(key));
   }
-  assert.match(initialDecisionSource, /player\.stage\.set\("submit", true\)/);
-  assert.match(initialDecisionSource, /player\.stage\.get\("submit"\)/);
+  // In the personal flow the page advances as soon as this participant is
+  // done; the synchronous stage submit remains only as a defensive fallback.
+  assert.match(initialDecisionSource, /if \(onNext\) onNext\(\); else player\.stage\.set\("submit", true\)/);
   assert.match(initialDecisionSource, /Your initial decision has been submitted\./);
-  assert.match(initialDecisionSource, /Please wait for the other participant\(s\)\./);
 });
 
-test("R3-R7/R19: participant pages use normal stage submission, including the validated Break gate", () => {
+test("R3-R7/R19: personal pages advance individually; only group activities gate on all participants", () => {
   assert.doesNotMatch(callbacksSource, /Empirica\.on\("TRANSITION_ADD"|heldStagePauseTransition|isServerHeldStage/);
-  assert.match(callbacksSource, /updateBreakReadySummary/);
-  assert.match(breakSource, /remaining === 0 && ready && allReady/);
-  assert.match(breakSource, /player\.stage\.set\("submit", true\)/);
-  assert.match(callbacksSource, /name: "TaskInformation",\s+duration: TASK_INFORMATION_DURATION_SECONDS/);
-  assert.match(callbacksSource, /name: "Walkthrough",\s+duration: WALKTHROUGH_DURATION_SECONDS/);
-  assert.match(callbacksSource, /name: "ReviewQuiz",\s+duration: REVIEW_QUIZ_SAFETY_DURATION_SECONDS/);
+  // Personal pages never submit the shared stage: a server-owned per-player
+  // cursor advances each participant as soon as their own responses validate.
+  assert.match(personalFlowServer, /Empirica\.on\("player", "personalPageRequest"/);
+  assert.match(personalFlowServer, /request\.index !== progress\.index \|\| progress\.index >= pages\.length/);
+  assert.match(personalFlowServer, /player\.round\.set\(key, \{ index, startedAt: now \}\)/);
+  // Group synchronisation happens only at the group-activity entry: the
+  // stage ends once every assigned participant has finished their pages.
+  assert.match(personalFlowServer, /if \(allPersonalPagesDone\(game\.players, stageName, taskIndex\)\) stage\.set\("ended", true\)/);
+  assert.match(personalFlowShared, /players\.every\(\(p\) => \(p\.round\.get\(personalProgressKey\(stageName\)\)\?\.index \?\? 0\) >= length\)/);
+  // The ReviewQuiz page cannot be passed without passing the quiz.
+  assert.match(personalFlowServer, /page === "ReviewQuiz" && player\.round\.get\("reviewQuizPassed"\) !== true/);
+  // The Break page keeps its validated five-minute minimum before Round 2,
+  // with a deliberate discreet corner-arrow skip that only ends the
+  // participant's OWN break and is recorded for research.
+  assert.match(personalFlowServer, /page === "Break" && now < progress\.startedAt \+ 300000/);
+  assert.match(personalFlowServer, /if \(!request\.skipBreak\) return;/);
+  assert.match(personalFlowServer, /player\.round\.set\("breakSkippedAt", now\)/);
+  assert.match(personalFlowClient, /skipBreak: page === "Break" && skipBreak/);
+  assert.match(personalFlowClient, /Skip the rest of the break/);
+  assert.match(callbacksSource, /addPracticeRound\(game\)/);
+  assert.equal((callbacksSource.match(/name: "Preparation", duration: 1e9/g) ?? []).length, 2);
+  assert.doesNotMatch(callbacksSource, /name: "TaskInformation",\s+duration: TASK_INFORMATION_DURATION_SECONDS/);
+  assert.doesNotMatch(callbacksSource, /name: "Break"/);
   for (const key of [
     "taskInformationStartedAt", "taskInformationCompletedAt", "taskInformationCompletionDurationMs",
     "walkthroughStartedAt", "walkthroughCompletedAt", "walkthroughCompletionDurationMs",

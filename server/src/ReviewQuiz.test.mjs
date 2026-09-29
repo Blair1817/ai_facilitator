@@ -22,6 +22,7 @@ const subjectiveSurveySource = readFileSync(path.join(dirname, "../../client/src
 const appSource = readFileSync(path.join(dirname, "../../client/src/App.jsx"), "utf8");
 const discussionSource = readFileSync(path.join(dirname, "../../client/src/stages/Discussion.jsx"), "utf8");
 const treatmentsSource = readFileSync(path.join(dirname, "../../.empirica/treatments.yaml"), "utf8");
+const personalFlowShared = readFileSync(path.join(dirname, "../../shared/personalFlow.mjs"), "utf8");
 const hptConfig = JSON.parse(readFileSync(path.join(dirname, "HPTConfig.json"), "utf8"));
 
 function correctAnswers(taskVersion) {
@@ -35,8 +36,8 @@ test("Task A and Task B each define the five retained ReviewQuiz questions under
   assert.equal(getReviewQuiz("A").questions.length, 5);
   assert.equal(getReviewQuiz("B").questions.length, 5);
   assert.doesNotMatch(JSON.stringify(REVIEW_QUIZZES), /sameInformation|Must all group members have exactly the same information/);
-  assert.equal(getReviewQuiz("A").questions.find((question) => question.id === "discussionMinutes").correctAnswer, "10");
-  assert.equal(getReviewQuiz("B").questions.find((question) => question.id === "discussionMinutes").correctAnswer, "10");
+  assert.equal(getReviewQuiz("A").questions.find((question) => question.id === "discussionMinutes").correctAnswer, "15");
+  assert.equal(getReviewQuiz("B").questions.find((question) => question.id === "discussionMinutes").correctAnswer, "15");
   assert.match(getReviewQuiz("A").scenario, /International Youth Games/);
   assert.doesNotMatch(JSON.stringify(getReviewQuiz("A")), /International Sports Federation/);
   assert.match(getReviewQuiz("B").scenario, /Global Innovation Summit/);
@@ -120,22 +121,20 @@ test("taskVersion selection fails closed for every non-canonical value", () => {
 });
 
 test("both Rounds implement the approved task lifecycle in order", () => {
-  assert.equal([...callbacksSource.matchAll(/round1\.addStage\(\{ name: "ReviewQuiz"/g)].length, 1);
-  assert.equal([...callbacksSource.matchAll(/round2\.addStage\(\{ name: "ReviewQuiz"/g)].length, 1);
-  assert.doesNotMatch(callbacksSource, /function addReviewQuizStage|addReviewQuizStage\(/);
-
-  const round1Stages = callbacksSource.slice(callbacksSource.indexOf('round1.addStage({ name: "TaskInformation"'), callbacksSource.indexOf("const round2 = game.addRound("));
-  const round2Stages = callbacksSource.slice(callbacksSource.indexOf('round2.addStage({ name: "TaskInformation"'), callbacksSource.indexOf("// MIGRATED from old 2nd (TEMP-BE-007"));
+  const round1Stages = callbacksSource.slice(
+    callbacksSource.indexOf('round1.addStage({ name: "Preparation"'),
+    callbacksSource.indexOf("const round2 = game.addRound("),
+  );
+  const round2Stages = callbacksSource.slice(
+    callbacksSource.indexOf('round2.addStage({ name: "Preparation"'),
+    callbacksSource.indexOf("// MIGRATED from old 2nd (TEMP-BE-007"),
+  );
   for (const stages of [round1Stages, round2Stages]) {
     const orderedTokens = [
-      'name: "TaskInformation"',
-      'name: "ReviewQuiz"',
-      'name: "InitialDecision"',
+      'name: "Preparation"',
       'name: "Task"',
       'name: "FinalDecision"',
-      'name: "IndividualAssessment"',
-      'name: "TLX"',
-      'name: "SubjectiveSurvey"',
+      'name: "Followup"',
     ];
     let previousIndex = -1;
     for (const token of orderedTokens) {
@@ -146,20 +145,18 @@ test("both Rounds implement the approved task lifecycle in order", () => {
     assert.doesNotMatch(stages, /Walkthrough|IceBreaker|PracticeIcebreaker|Introduction/);
   }
 
-  assert.equal([...callbacksSource.matchAll(/name: "Break"/g)].length, 1);
-  assert.match(callbacksSource, /const BREAK_STAGE_SAFETY_DURATION_SECONDS = 24 \* 60 \* 60;/);
-  assert.match(callbacksSource, /const TASK_INFORMATION_DURATION_SECONDS = 10 \* 60;/);
-  assert.match(callbacksSource, /const WALKTHROUGH_DURATION_SECONDS = 10 \* 60;/);
-  assert.match(callbacksSource, /const ICEBREAKER_TRANSITION_DURATION_SECONDS = 10;/);
-  assert.match(callbacksSource, /const REVIEW_QUIZ_SAFETY_DURATION_SECONDS = 24 \* 60 \* 60;/);
+  // The within-stage page lifecycle lives in the shared personal-flow config.
+  assert.match(personalFlowShared, /export const PREPARATION_PAGES = \["TaskInformation", "ReviewQuiz", "InitialDecision"\]/);
+  assert.match(personalFlowShared, /\["IndividualAssessment", "TLX", "SubjectiveSurvey",/);
+  assert.match(personalFlowShared, /taskIndex === 0 \? \["Break"\] : \["FinalQuestions", "ExpFeedback", "Debriefing"\]/);
+  // Break is a Round 1 Followup page, not a stage.
+  assert.doesNotMatch(callbacksSource, /name: "Break"/);
+  assert.match(callbacksSource, /name: "Task",\s+duration: gameDuration \* 60/);
+  assert.equal((callbacksSource.match(/name: "FinalDecision",\s+duration: 90/g) ?? []).length, 2);
   assert.doesNotMatch(callbacksSource, /heldStagePauseTransition|heldStageCompletionTransitions|breakProgressRequest/);
   assert.doesNotMatch(callbacksSource, /365 \* 24 \* 60 \* 60/);
-  assert.match(callbacksSource, /const TLX_DURATION_SECONDS = 10 \* 60;/);
-  assert.match(callbacksSource, /const SUBJECTIVE_SURVEY_DURATION_SECONDS = 10 \* 60;/);
-  assert.match(callbacksSource, /const BREAK_DURATION_SECONDS = 300;/);
-  assert.match(round1Stages, /name: "SubjectiveSurvey"[\s\S]*name: "Break",\s+duration: BREAK_STAGE_SAFETY_DURATION_SECONDS/);
+  assert.match(treatmentsSource, /gameDuration:\s+15/);
   assert.doesNotMatch(round2Stages, /name: "Break"/);
-  assert.ok(callbacksSource.indexOf('round1.addStage({ name: "Break"') < callbacksSource.indexOf('round2.addStage({ name: "TaskInformation"'));
 });
 
 test("client routes ReviewQuiz, guards double-submit, preserves drafts locally, and stores only pass completion", () => {
@@ -186,9 +183,8 @@ test("global intro keeps only one-time global steps and round screens use round 
   assert.match(introductionSource, /<RenderMarkdown markdownText=\{taskBackground\}/);
   assert.match(introductionSource, /round\?\.get\("taskVersion"\)/);
   assert.doesNotMatch(introductionSource, /IntroContent/);
-  assert.equal([...callbacksSource.matchAll(/name: "Walkthrough"/g)].length, 1);
-  const practiceStages = callbacksSource.slice(callbacksSource.indexOf("const practiceRound = game.addRound("), callbacksSource.indexOf("const round1 = game.addRound("));
-  assert.match(practiceStages, /practiceRound\.addStage\(\{ name: "Walkthrough"/);
+  assert.equal([...callbacksSource.matchAll(/name: "Walkthrough"/g)].length, 0);
+  assert.match(callbacksSource, /addPracticeRound\(game\)/);
   assert.doesNotMatch(userInterfaceSource, /facilitation\s*=/);
 });
 
@@ -210,8 +206,8 @@ test("stale async Discussion results are discarded after their originating stage
   assert.match(callbacksSource, /Discarded stale repair Validator result after the originating Discussion stage ended/);
 });
 
-test("Discussion remains 10 minutes and retains unanimous participant early-ready wiring", () => {
-  assert.match(treatmentsSource, /gameDuration:\s+10/);
+test("Discussion lasts 15 minutes and retains unanimous participant early-ready wiring", () => {
+  assert.match(treatmentsSource, /gameDuration:\s+15/);
   assert.equal([...callbacksSource.matchAll(/name: "Task",\s+duration: gameDuration \* 60/g)].length, 2);
   assert.match(callbacksSource, /now \+ gameDuration \* 60 \* 1000/);
   assert.match(discussionSource, /player\.stage\.set\("submit", !isReady\)/);

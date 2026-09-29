@@ -7,7 +7,7 @@ import { Timer } from "../components/Timer";
 import { ConfidenceSlider, OptionChoice } from "../components/DecisionControls";
 import { clearDraftKeys, draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
 
-export function InitialDecision() {
+export function InitialDecision({ onNext, deadline } = {}) {
   const player = usePlayer();
   const players = usePlayers();
   const round = useRound();
@@ -34,7 +34,7 @@ export function InitialDecision() {
       submittedAt: Date.now(),
     });
     clearDraftKeys([choiceDraftKey, confidenceDraftKey]);
-    player.stage.set("submit", true);
+    if (onNext) onNext(); else player.stage.set("submit", true);
   };
 
   if (player.stage.get("submit")) return players.length === 1 ? <Loading /> : <Waiting text="Your initial decision has been submitted." />;
@@ -48,7 +48,7 @@ export function InitialDecision() {
           <h1 className="text-2xl font-bold text-gray-900">Initial Decision</h1>
           <div className="mt-3 flex items-center gap-2 rounded-md bg-gray-100 px-3 py-2 text-gray-700" role="status">
             <span className="font-semibold">Time remaining:</span>
-            <Timer />
+            <Timer deadline={deadline} />
           </div>
           <p className="mt-2 text-sm text-gray-600">Review the Task Report independently. This answer is private.</p>
           <div className="mt-6"><OptionChoice legend="Which option do you initially consider most suitable?" options={options} value={choice} onChange={updateChoice} name="initialChoice" /></div>

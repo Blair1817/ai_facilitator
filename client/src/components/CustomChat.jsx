@@ -17,6 +17,7 @@ export function Chat({
     scope,
     attribute = "chat",
     loading: LoadingComp = Loading,
+    disabled = false,
 }) {
     const player = usePlayer();
     const game = useGame();
@@ -56,7 +57,7 @@ export function Chat({
             {player.stage.get("newMessages") && <div className="text-center bg-red-500 text-white py-1 px-4 rounded shadow-lg">
                 <p>Scroll to bottom to see latest messages...</p>
             </div>}
-            <Input onNewMessage={handleNewMessage} requestResult={requestResult} />
+            <Input onNewMessage={handleNewMessage} requestResult={requestResult} disabled={disabled} />
         </div>
     );
 }
@@ -144,6 +145,28 @@ function Messages(props) {
     );
 }
 
+// Read-only transcript: no input, typing state, or participant-state writes.
+export function ChatHistory({ scope, attribute }) {
+    const msgs = scope.getAttribute(attribute)?.items || [];
+    const scroller = useRef(null);
+    const initialScrollDone = useRef(false);
+
+    useEffect(() => {
+        const el = scroller.current;
+        if (!el || !msgs.length || initialScrollDone.current) return;
+        el.scrollTop = el.scrollHeight;
+        initialScrollDone.current = true;
+    }, [msgs.length]);
+
+    return (
+        <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto break-words pl-2 pr-4 pb-2" aria-label="Discussion history" tabIndex={0}>
+            {msgs.length === 0
+                ? <p className="p-4 text-sm text-gray-500">No messages were sent in this discussion.</p>
+                : msgs.map((msg) => <MessageComp key={msg.id} attribute={msg} />)}
+        </div>
+    );
+}
+
 function MessageComp({ attribute }) {
     const msg = attribute.value;
     const ts = attribute.createdAt;
@@ -191,7 +214,7 @@ function MessageComp({ attribute }) {
     );
 }
 
-function Input({ onNewMessage, requestResult }) {
+function Input({ onNewMessage, requestResult, disabled = false }) {
     const player = usePlayer();
     const round = useRound();
     const stage = useStage();
@@ -199,6 +222,41 @@ function Input({ onNewMessage, requestResult }) {
     const [text, setText] = usePersistentDraft(messageDraftKey, "");
     const [pendingRequestId, setPendingRequestId] = useState(null);
     const [requestError, setRequestError] = useState("");
+    const typingTimerRef = useRef(null);
+    const playerRef = useRef(player);
+    playerRef.current = player;
+
+    // Debounce-style typing indicator: the flag only clears 1.5s after the
+    // LAST keystroke. Every keydown renews the timer, so continuous typing
+    // never lets it expire mid-composition (which caused the bubble to
+    // flicker off/on on other participants' screens).
+    const stopTyping = () => {
+        if (typingTimerRef.current !== null) {
+            clearTimeout(typingTimerRef.current);
+            typingTimerRef.current = null;
+        }
+        if (playerRef.current.get("isTyping")) {
+            playerRef.current.set("isTyping", false);
+        }
+    };
+
+    const renewTyping = () => {
+        if (typingTimerRef.current !== null) {
+            clearTimeout(typingTimerRef.current);
+        }
+        if (!playerRef.current.get("isTyping")) {
+            playerRef.current.set("isTyping", true);
+        }
+        typingTimerRef.current = setTimeout(() => {
+            typingTimerRef.current = null;
+            playerRef.current.set("isTyping", false);
+        }, 1500);
+    };
+
+    // If the input unmounts (stage advance / submit flow teardown) while
+    // typing, clear the timer and the flag so others don't see a stuck
+    // or late-firing "typing" bubble.
+    useEffect(() => () => stopTyping(), []);
     const facilitation = round?.get("facilitation");
 
     useEffect(() => {
@@ -217,7 +275,7 @@ function Input({ onNewMessage, requestResult }) {
         display: player.get("name"),
     }));
 
-    if (stage?.get("name") === PRACTICE_ICEBREAKER_STAGE_NAME || (facilitation != "none" && facilitation != "human")) {
+    if (!round?.get("isPractice") && (stage?.get("name") === PRACTICE_ICEBREAKER_STAGE_NAME || (facilitation != "none" && facilitation != "human"))) {
         mentionUsers.push({
             id: "ai",
             display: "Facilitator",
@@ -234,6 +292,7 @@ function Input({ onNewMessage, requestResult }) {
 
     const handleSubmit = (e) => {
         e.preventDefault();
+        if (disabled) return;
 
         const txt = text.trim();
         if (txt === "") {
@@ -251,7 +310,7 @@ function Input({ onNewMessage, requestResult }) {
         if (pendingRequestId) return;
         setRequestError("");
         setPendingRequestId(onNewMessage(txt));
-        player.set("isTyping", false);
+        stopTyping();
     };
 
     const handleKeyDown = (e) => {
@@ -259,11 +318,8 @@ function Input({ onNewMessage, requestResult }) {
             handleSubmit(e);
             resize(e);
         }
-        if (!player.get("isTyping") && !(e.key === "Enter")) {
-            player.set("isTyping", true);
-            setTimeout(() => {
-                player.set("isTyping", false);
-            }, 1500);
+        if (e.key !== "Enter") {
+            renewTyping();
         }
     };
 
@@ -299,7 +355,7 @@ function Input({ onNewMessage, requestResult }) {
             <div className="flex-col w-full">
                 <MentionsInput
                     value={text}
-                    disabled={Boolean(pendingRequestId)}
+                    disabled={disabled || Boolean(pendingRequestId)}
                     onKeyDown={(e) => {
                         handleKeyDown(e);
                         handleBackspace(e);
@@ -325,7 +381,7 @@ function Input({ onNewMessage, requestResult }) {
 
             <button
                 type="button"
-                disabled={Boolean(pendingRequestId)}
+                disabled={disabled || Boolean(pendingRequestId)}
                 className="rounded-md bg-gray-100 w-9 h-9 p-2 text-sm font-semibold text-gray-500 shadow-sm hover:bg-gray-200 hover:text-empirica-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-empirica-500"
                 onClick={handleSubmit}
             >

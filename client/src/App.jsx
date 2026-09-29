@@ -16,6 +16,7 @@ import { FinalQuestions } from "./intro-exit/FinalQuestions";
 import { CustomLobby } from "./intro-exit/CustomLobby";
 import { ConnectionRecovery } from "./intro-exit/ConnectionRecovery";
 import { getRecruitmentMode } from "./prolific";
+import { StudyComplete } from "./PersonalFlow";
 
 export default function App() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -34,6 +35,7 @@ export default function App() {
   }
 
   function exitSteps({ game, player }) {
+    if (player.get("personalStudyCompletedAt")) return [StudyComplete];
     if (player.get("ended") == "game ended") {
       // FinalDecision is now a per-round Stage
       // (client/src/stages/FinalDecision.jsx), so the

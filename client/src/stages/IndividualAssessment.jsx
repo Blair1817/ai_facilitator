@@ -4,7 +4,7 @@ import { Loading } from "@empirica/core/player/react";
 import { Button } from "../components/Button";
 import { ConfidenceSlider, OptionChoice } from "../components/DecisionControls";
 
-export function IndividualAssessment() {
+export function IndividualAssessment({ onNext, deadline } = {}) {
   const player = usePlayer();
   const players = usePlayers();
   const round = useRound();
@@ -24,9 +24,9 @@ export function IndividualAssessment() {
 
   useEffect(() => {
     if (groupReachedDecision && !player.stage.get("submit")) {
-      player.stage.set("submit", true);
+      if (onNext) onNext(); else player.stage.set("submit", true);
     }
-  }, [groupReachedDecision, player]);
+  }, [groupReachedDecision, player, onNext]);
 
   const submit = (event) => {
     event.preventDefault();
@@ -36,7 +36,7 @@ export function IndividualAssessment() {
     player.round.set("finalPersonalChoice", choice);
     player.round.set("finalPersonalChoiceConfidence", confidence);
     player.round.set("finalPersonalChoiceRationale", rationale.trim());
-    player.stage.set("submit", true);
+    if (onNext) onNext(); else player.stage.set("submit", true);
   };
 
   if (groupReachedDecision || player.stage.get("submit")) return players.length === 1 ? <Loading /> : <div className="flex h-full items-center justify-center text-gray-500">Your private assessment has been submitted. Please wait for the other participant(s).</div>;
