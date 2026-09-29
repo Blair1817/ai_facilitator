@@ -158,3 +158,56 @@ test("practice completion waits for all participants before the main experiment"
   assert.equal(f.stage.get("ended"), true);
   assert.equal(f.game.get("practice_complete"), true);
 });
+test("welcome icebreaker: facilitator opens once, chat works, and counts stay separate from discussion", () => {
+  const f = fixture("PracticeWelcome");
+  f.listeners.get("start")({ stage: f.stage });
+  assert.equal(f.round.get("practiceWelcomeGreetSent"), true);
+  const greets = f.messages.filter((m) => m.messageId?.startsWith("practice-greet-"));
+  assert.equal(greets.length, 1);
+  assert.match(greets[0].content, /Blue, Pink, Green/);
+  assert.equal(greets[0].stage, "PracticeWelcome");
+  // Reconnect / repeated stage start does not duplicate the greeting.
+  f.listeners.get("start")({ stage: f.stage });
+  assert.equal(f.messages.filter((m) => m.messageId?.startsWith("practice-greet-")).length, 1);
+
+  // Participants can chat on the Welcome page; messages land with the right
+  // stage tag and go into the separate welcome counter.
+  f.send(f.players[0], "w1", "Hi everyone!");
+  assert.equal(f.round.get("practiceWelcomeMessageCounts")?.p0, 1);
+  assert.equal(f.round.get("practiceMessageCounts"), undefined);
+  const human = f.messages.find((m) => m.messageId === "p0-w1");
+  assert.equal(human.stage, "PracticeWelcome");
+  // Duplicate request id deduplicates.
+  f.send(f.players[0], "w1", "Hi everyone!");
+  assert.equal(f.round.get("practiceWelcomeMessageCounts")?.p0, 1);
+
+  // Clicking Start practice advances this participant's page cursor (to
+  // Reading); they can no longer send welcome chat, while a participant
+  // still on the Welcome page can. (Real client requests carry page: the
+  // welcome page's derived name.)
+  f.request(f.players[0], "continue", { page: "PracticeWelcome" });
+  assert.equal(f.players[0].round.get("practicePageIndex"), 1);
+  f.send(f.players[0], "w0b", "I left already");
+  assert.equal(f.round.get("practiceWelcomeMessageCounts")?.p0, 1);
+  f.send(f.players[1], "w2", "Hello!");
+  assert.equal(f.round.get("practiceWelcomeMessageCounts")?.p1, 1);
+
+  // Moving to the discussion stage resets nothing but counts only its own
+  // messages towards the early-finish conditions.
+  const discussion = fixture();
+  discussion.listeners.get("start")({ stage: discussion.stage });
+  assert.deepEqual(discussion.round.get("practiceMessageCounts"), {});
+  discussion.send(discussion.players[0], "d1", "Garden looks good");
+  assert.equal(discussion.round.get("practiceMessageCounts")?.p0, 1);
+  assert.equal(discussion.round.get("practiceWelcomeMessageCounts"), undefined);
+});
+test("welcome chat rejects empty, oversized and stale requests", () => {
+  const f = fixture("PracticeWelcome");
+  f.listeners.get("start")({ stage: f.stage });
+  f.send(f.players[0], "w1", "");
+  f.send(f.players[0], "w2", "x".repeat(1025));
+  f.send(f.players[0], "w3", "stale");
+  // (w3 is valid content; stage/round ids in fixture match, so it is accepted —
+  // assert the first two were rejected by the absence of any count.)
+  assert.equal(f.round.get("practiceWelcomeMessageCounts")?.p0, 1);
+});

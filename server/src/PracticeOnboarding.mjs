@@ -76,6 +76,22 @@ export function registerPractice(Empirica, appendMessage) {
       round.set("practiceStarted", true);
       logPractice(game, "practice_started");
     }
+    // Icebreaker chat on the Welcome page: the facilitator opens the
+    // conversation so participants greet each other and see they are real
+    // people before the formal rounds. ~1 minute of casual chat; not
+    // counted towards the PracticeDiscussion early-finish conditions.
+    if (name === "PracticeWelcome" && !round.get("practiceWelcomeGreetSent")) {
+      round.set("practiceWelcomeGreetSent", true);
+      const colours = game.players.map((p) => p.get("name")).join(", ");
+      appendMessage(game, PRACTICE_CHAT, {
+        messageId: `practice-greet-${round.id}`, groupId: game.id, speakerId: "ai",
+        roundIndex: round.get("index"), stage: "PracticeWelcome",
+        messageType: "onboarding", speakerType: "facilitator_fixed", timestamp: Date.now(),
+        phase: "practice", source: "facilitator_fixed", exclude_from_primary_analysis: true,
+        content: `Welcome, ${colours}! You are now in the same online group. While everyone gets ready, say hello and tell the others something about yourself — for example, what you study or a place you would like to visit.`,
+        sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
+      });
+    }
     if (name === "PracticeDiscussion") {
       if (!round.get("practiceDiscussionStartedAt")) {
         const now = Date.now();
@@ -168,22 +184,37 @@ export function handlePracticeMessage(player, request, appendMessage) {
   const key = `practiceMessageResult.${player.id}.${request?.requestId}`;
   if (game.get(key)) { player.set("humanMessageRequestResult", game.get(key)); return; }
   const now = Date.now();
-  const accepted = stage.get("name") === "PracticeDiscussion" && !stage.get("ended")
-    && !round.get("practiceDiscussionEnded") && request?.roundId === round.id && request?.stageId === stage.id
+  // Welcome icebreaker chat: only while the sender is still ON the Welcome
+  // page (pageIndex 0). Advancing to Reading/InitialChoice/Tutorial locks it,
+  // even though the shared stage is still PracticeWelcome.
+  const welcomeChat = stage.get("name") === "PracticeWelcome" && !stage.get("ended")
+    && !round.get("practiceWelcomeEnded")
+    && (player.round.get("practicePageIndex") || 0) === 0;
+  const accepted = (welcomeChat
+    || (stage.get("name") === "PracticeDiscussion" && !stage.get("ended")
+      && !round.get("practiceDiscussionEnded")))
+    && request?.roundId === round.id && request?.stageId === stage.id
     && typeof request.requestId === "string" && request.requestId.length > 0 && request.requestId.length <= 128
     && typeof request.content === "string" && request.content.trim().length > 0 && request.content.trim().length <= 1024
-    && Number.isFinite(round.get("practiceDeadline")) && now < round.get("practiceDeadline");
+    && (welcomeChat || (Number.isFinite(round.get("practiceDeadline")) && now < round.get("practiceDeadline")));
   const result = { requestId: request?.requestId, status: accepted ? "accepted" : "rejected" };
   if (accepted) {
     const text = request.content.trim();
-    const counts = { ...(round.get("practiceMessageCounts") || {}) };
-    counts[player.id] = (counts[player.id] || 0) + 1;
-    round.set("practiceMessageCounts", counts);
-    round.set("practiceTotalMessages", Object.values(counts).reduce((sum, count) => sum + count, 0));
+    if (welcomeChat) {
+      const counts = { ...(round.get("practiceWelcomeMessageCounts") || {}) };
+      counts[player.id] = (counts[player.id] || 0) + 1;
+      round.set("practiceWelcomeMessageCounts", counts);
+    } else {
+      const counts = { ...(round.get("practiceMessageCounts") || {}) };
+      counts[player.id] = (counts[player.id] || 0) + 1;
+      round.set("practiceMessageCounts", counts);
+      round.set("practiceTotalMessages", Object.values(counts).reduce((sum, count) => sum + count, 0));
+    }
     game.set(key, result);
     appendMessage(game, PRACTICE_CHAT, {
       messageId: `${player.id}-${request.requestId}`, groupId: game.id, participantId: player.id,
-      roundIndex: round.get("index"), stage: "PracticeDiscussion", messageType: "human", speakerType: "human",
+      roundIndex: round.get("index"), stage: welcomeChat ? "PracticeWelcome" : "PracticeDiscussion",
+      messageType: "human", speakerType: "human",
       timestamp: now, content: text, phase: "practice", source: "participant",
       speaker_colour: player.get("name"), exclude_from_primary_analysis: true,
       sender: { id: player.id, name: player.get("name"), hexCode: player.get("hexCode"),

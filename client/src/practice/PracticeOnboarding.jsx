@@ -96,6 +96,31 @@ export function PracticeOnboarding() {
     </div>;
   }
   const complete = name === "PracticeComplete";
+  // Welcome page doubles as the icebreaker: while waiting for everyone to
+  // start, participants greet each other in the chat (facilitator opens
+  // with a fixed message). Chat is read-only once this participant moves on.
+  const welcomeIcebreaker = name === "PracticeWelcome";
+  if (welcomeIcebreaker) {
+    return <div className="flex h-full w-full overflow-hidden bg-gray-50">
+      <div className="flex min-w-0 flex-1 items-center justify-center overflow-y-auto px-4 py-8">
+        <main className="w-full max-w-xl space-y-6 rounded-lg border border-gray-200 bg-white p-8 shadow-sm">
+          <p className="text-sm font-semibold uppercase tracking-wide text-blue-700">Before the main tasks</p>
+          <h1 className="text-3xl font-bold text-gray-900">Practice Round</h1>
+          <p>Before the main tasks, you will complete a short practice activity with your group. This will show you how to use the task information, group chat, and decision interface.</p>
+          <Identity player={player} />
+          <p>Other group members will appear using colour nicknames.</p>
+          <p className="rounded-lg bg-blue-50 p-4 text-sm text-blue-950">The facilitator has started a conversation in the chat — say hello to your group while everyone gets ready.</p>
+          {done ? <p role="status">Waiting for the other group members…</p> : <Button disabled={pending} handleClick={() => next()}>Start practice</Button>}
+        </main>
+      </div>
+      <div className="flex h-full min-w-0 w-2/5 flex-col border-l border-gray-200">
+        <div className="w-full flex-none px-4 pt-3"><PlayerList /></div>
+        <div className="min-h-0 w-full flex-1 overflow-hidden px-2">
+          <Chat scope={game} attribute={PRACTICE_CHAT} disabled={done} />
+        </div>
+      </div>
+    </div>;
+  }
   return <div className="flex min-h-full items-center justify-center bg-gray-50 px-4 py-8">
     <main className="w-full max-w-2xl space-y-6 rounded-lg border border-gray-200 bg-white p-8 shadow-sm">
       <p className="text-sm font-semibold uppercase tracking-wide text-blue-700">Before the main tasks</p>
@@ -103,11 +128,7 @@ export function PracticeOnboarding() {
       {complete ? <>
         <p>You have now practised reading your task information, making an initial choice, chatting with your group, and reaching a group decision.</p>
         <p>The main tasks follow the same general process, but contain more information and allow more time for discussion.</p>
-      </> : <>
-        <p>Before the main tasks, you will complete a short practice activity with your group. This will show you how to use the task information, group chat, and decision interface.</p>
-        <Identity player={player} />
-        <p>Other group members will appear using colour nicknames.</p>
-      </>}
+      </> : null}
       {done ? <p role="status">Waiting for the other group members…</p> : <Button disabled={pending} handleClick={() => next()}>{complete ? "Continue" : "Start practice"}</Button>}
     </main>
   </div>;
