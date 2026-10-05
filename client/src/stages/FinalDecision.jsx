@@ -28,10 +28,21 @@ export function FinalDecision() {
 
   const agreementStatus = round?.get("finalDecisionAgreementStatus") ?? "not_agreed";
   const matchedChoice = round?.get("finalDecisionMatchedChoice") ?? null;
+  const recordedChoice = player.round.get("groupFinalChoice") ?? "";
+  const recordedConfidence = player.round.get("groupChoiceConfidence") ?? null;
   const confirmedChoice = player.round.get("groupFinalConfirmedChoice") ?? null;
   const agreed = agreementStatus === "agreed" && Boolean(choice) && matchedChoice === choice;
   const ownConfirmationCurrent = agreed && confirmedChoice === matchedChoice;
-  const canConfirm = agreed && confidence !== null && !ownConfirmationCurrent;
+  const localConfidenceValid = Number.isFinite(confidence) && confidence >= 0 && confidence <= 100;
+  const confidenceAcknowledged = localConfidenceValid
+    && Number.isFinite(recordedConfidence)
+    && recordedConfidence >= 0
+    && recordedConfidence <= 100
+    && recordedConfidence === confidence;
+  const choiceAcknowledged = Boolean(choice) && recordedChoice === choice;
+  const draftAcknowledged = choiceAcknowledged && confidenceAcknowledged;
+  const canConfirm = agreed && draftAcknowledged && !ownConfirmationCurrent;
+  const savingCurrentDraft = Boolean(choice) && localConfidenceValid && !draftAcknowledged;
 
   // Persist this participant's current private draft promptly. The server
   // publishes only aggregate agreement status and invalidates confirmations
@@ -100,8 +111,12 @@ export function FinalDecision() {
             <ConfidenceSlider name="groupChoiceConfidence" label="How confident are you that your group’s final outcome is appropriate based on the information discussed?" value={confidence} onChange={setConfidence} />
 
             <div className={`mt-6 rounded-md p-4 text-sm font-semibold ${agreed ? "bg-green-50 text-green-800" : "bg-amber-50 text-amber-800"}`} aria-live="polite">
-              {agreed
-                ? "Your group has selected the same outcome. You may now confirm your group decision."
+              {savingCurrentDraft
+                ? "Saving your response…"
+                : agreed
+                  ? localConfidenceValid
+                  ? "Everyone selected the same outcome. You can now confirm the group decision."
+                  : "Everyone selected the same outcome. Select your confidence before confirming."
                 : "Your group has not yet selected the same outcome."}
             </div>
             <p className="mt-3 text-sm font-semibold text-gray-700">If your group cannot agree on one option, each member should select “Fail to reach a final decision”.</p>

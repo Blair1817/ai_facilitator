@@ -1,13 +1,14 @@
 import { personalPages, personalProgressKey, allPersonalPagesDone } from "../../shared/personalFlow.mjs";
 
+export function handlePersonalFlowStageStart(stage) {
+  if (!personalPages(stage.get("name"), stage.round.get("taskIndex")).length) return;
+  const key = personalProgressKey(stage.get("name"));
+  for (const player of stage.currentGame.players) {
+    if (!player.round.get(key)) player.round.set(key, { index: 0, startedAt: Date.now() });
+  }
+}
+
 export function registerPersonalFlow(Empirica, mirrorResponse) {
-  Empirica.onStageStart(({ stage }) => {
-    if (!personalPages(stage.get("name"), stage.round.get("taskIndex")).length) return;
-    const key = personalProgressKey(stage.get("name"));
-    for (const player of stage.currentGame.players) {
-      if (!player.round.get(key)) player.round.set(key, { index: 0, startedAt: Date.now() });
-    }
-  });
   Empirica.on("player", "personalPageRequest", (_ctx, { player, personalPageRequest: request }) => {
     const game = player.currentGame, stage = game?.currentStage, round = game?.currentRound;
     if (!request || !stage || stage.get("ended") || request.stageId !== stage.id || request.roundId !== round.id) return;

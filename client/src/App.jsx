@@ -29,8 +29,8 @@ export default function App() {
 
   function introSteps({ game, player }) {
     // One-time global guidance followed by the invisible metadata bootstrap.
-    // Participant-facing task information, walkthrough, and ReviewQuiz remain
-    // inside each Round.
+    // Participant-facing task information and ReviewQuiz remain inside each
+    // Round's Preparation personal flow.
     return [OverallInstructions, RecruitmentBootstrap];
   }
 

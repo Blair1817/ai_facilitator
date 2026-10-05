@@ -12,7 +12,7 @@ factors:
   - name: phase1Duration
     desc: Duration of the InitialDecision stage in minutes
     values:
-      - value: 2
+      - value: 3
 
   - name: introDuration
     desc: Duration of the Introduction icebreaker stage in minutes
@@ -36,6 +36,6 @@ treatments:
     factors:
       playerCount:   3
       gameDuration:  15
-      phase1Duration: 2
+      phase1Duration: 3
       introDuration: 2
       hiddenInfoCue: true

@@ -1,13 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { PRACTICE } from "../../shared/practice.mjs";
+import {
+  FORMAL_DISCUSSION_FORCE_TIMER_SECONDS,
+  resolveTimerVisibility,
+} from "../../shared/timerVisibility.mjs";
 
 const root = new URL("../../", import.meta.url);
 const read = (path) => readFile(new URL(path, root), "utf8");
 const callbacks = await read("server/src/callbacks.js");
 const game = await read("client/src/Game.jsx");
-const stage = await read("client/src/Stage.jsx");
-const walkthrough = await read("client/src/intro-exit/UserInterface.jsx");
 const taskInformation = await read("client/src/intro-exit/Introduction.jsx");
 const reviewQuiz = await read("client/src/stages/ReviewQuiz.jsx");
 const initial = await read("client/src/stages/InitialDecision.jsx");
@@ -23,8 +26,35 @@ const playerSpecificInfo = await read("client/src/components/PlayerSpecificInfo.
 const timer = await read("client/src/components/Timer.jsx");
 const indexCss = await read("client/src/index.css");
 const policies = await read("server/src/ExperimentPolicies.mjs");
-const clientStructure = await read("client/src/experimentStructure.js");
 const personalFlowShared = await read("shared/personalFlow.mjs");
+const practiceShared = await read("shared/practice.mjs");
+const practiceClient = await read("client/src/practice/PracticeOnboarding.jsx");
+const practiceServer = await read("server/src/PracticeOnboarding.mjs");
+
+function finalDecisionClientState({
+  agreementStatus = "agreed",
+  matchedChoice = "Option A",
+  choice = "Option A",
+  confidence,
+  recordedChoice = "Option A",
+  recordedConfidence,
+  confirmedChoice = null,
+}) {
+  const agreed = agreementStatus === "agreed" && Boolean(choice) && matchedChoice === choice;
+  const ownConfirmationCurrent = agreed && confirmedChoice === matchedChoice;
+  const localConfidenceValid = Number.isFinite(confidence) && confidence >= 0 && confidence <= 100;
+  const confidenceAcknowledged = localConfidenceValid
+    && Number.isFinite(recordedConfidence)
+    && recordedConfidence >= 0
+    && recordedConfidence <= 100
+    && recordedConfidence === confidence;
+  const choiceAcknowledged = Boolean(choice) && recordedChoice === choice;
+  const draftAcknowledged = choiceAcknowledged && confidenceAcknowledged;
+  return {
+    canConfirm: agreed && draftAcknowledged && !ownConfirmationCurrent,
+    savingCurrentDraft: Boolean(choice) && localConfidenceValid && !draftAcknowledged,
+  };
+}
 
 test("T1-T7: locked routing includes one pre-round practice container and per-round personal-flow stages", () => {
   for (const [id, facilitation, tasks] of [["S1", '["static", "adaptive"]', '["A", "B"]'],["S2", '["adaptive", "static"]', '["A", "B"]'],["S3", '["static", "adaptive"]', '["B", "A"]'],["S4", '["adaptive", "static"]', '["B", "A"]']]) {
@@ -67,34 +97,9 @@ test("one practice container precedes two Icebreaker-free formal rounds and Roun
   assert.match(onRoundStartBlock, /resetRoundState\(game\)/);
 });
 
-test("Walkthrough uses the approved four-step instructions and stable card layout", () => {
-  const approvedText = [
-    "Task Walkthrough",
-    "1. Read the materials",
-    "Read the task information and your Task Report carefully. The report contains the information for this task. You will then complete a short review quiz.",
-    "2. Make an initial decision",
-    "Choose the option you currently think is most appropriate and rate your confidence from 0 to 100. This response is private.",
-    "3. Discuss with your group",
-    "After a short icebreaker, you will discuss the task for 15 minutes. Your Task Report will remain visible beside the chat.",
-    "Use the chat to discuss information from the task materials and the available options. You may tag a group member by typing",
-    "followed by their nickname. The AI facilitator may also post brief messages during the discussion.",
-    "4. Record the final decision",
-    "After the discussion, record your group’s final decision. If your group did not reach a final decision, you will then complete a short set of individual questions. Your individual responses will not be shown to the other group members.",
-  ];
-  for (const text of approvedText) {
-    assert.match(walkthrough, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  }
-  assert.equal((walkthrough.match(/<section>/g) ?? []).length, 4);
-  assert.match(walkthrough, /<article className="prose !max-w-none">/);
-  assert.match(walkthrough, /mt-8 flex justify-end border-t border-gray-100 pt-6/);
-  assert.doesNotMatch(walkthrough, /After the task|Group and personal answers|gameDuration/);
-});
-
 test("only screens that require scrolling show bold scroll reminders", () => {
   assert.match(playerSpecificInfo, /font-bold[^>]*>Scroll down within the report to review all information\./);
   assert.doesNotMatch(taskInformation, /Scroll down to review all task information/);
-  assert.match(walkthrough, /<strong>Scroll down to review the full walkthrough\.<\/strong>/);
-  assert.equal((stage.match(/\*\*Scroll down to review all IceBreaker instructions\.\*\*/g) ?? []).length, 1);
   assert.match(reviewQuiz, /font-bold[^>]*>Scroll down to answer all five questions\./);
   assert.match(individual, /font-bold[^>]*>Scroll down to complete all questions\./);
   assert.match(tlx, /font-bold[^>]*>Scroll down to complete all questions\./);
@@ -102,19 +107,12 @@ test("only screens that require scrolling show bold scroll reminders", () => {
   assert.match(finalQuestions, /font-bold[^>]*>Scroll down to complete all questions\./);
 });
 
-test("Walkthrough always opens at the beginning rather than focusing its bottom button", () => {
-  assert.match(walkthrough, /useLayoutEffect/);
-  assert.match(walkthrough, /scrollContainerRef\.current\?\.scrollTo\(0, 0\)/);
-  assert.match(walkthrough, /participant-scroll-root/);
-  assert.doesNotMatch(walkthrough, /autoFocus/);
-});
-
-test("every stage resets the shared page scroll so the Discussion timer stays visible", () => {
+test("every stage resets the shared page scroll so the Discussion timer controls stay visible", () => {
   assert.match(game, /useLayoutEffect/);
   assert.match(game, /participant-scroll-root/);
   assert.match(game, /\[roundStageKey\]/);
   assert.match(discussion, /sticky top-0 z-10[^\"]*flex-none/);
-  assert.match(discussion, /<Profile \/>/);
+  assert.match(discussion, /<Profile collapsibleTimer forceTimerAtSeconds=\{FORMAL_DISCUSSION_FORCE_TIMER_SECONDS\} \/>/);
 });
 
 test("Discussion countdown falls back to the server-owned deadline when the Empirica timer hook is unavailable", () => {
@@ -125,23 +123,102 @@ test("Discussion countdown falls back to the server-owned deadline when the Empi
   assert.match(callbacks, /game\.set\("deadline",\s+now \+ gameDuration \* 60 \* 1000\)/);
 });
 
-test("the temporary practice Icebreaker preserves one neutral activity without formal task selection", () => {
-  assert.doesNotMatch(stage, /get\("taskVersion"\)|taskVersion ===/);
-  assert.match(stage, /IceBreaker: Would You Rather\.\.\.\?/);
-  assert.match(stage, /speak every language fluently or play every musical instrument expertly/);
-  assert.doesNotMatch(stage, /IceBreaker: Word Chain|Starting word:\*\* Rocket/);
-  assert.equal((stage.match(/Practise tagging a group member/g) ?? []).length, 1);
-  assert.match(stage, /type \\`@\\`, select their nickname/);
-  assert.doesNotMatch(stage, /chicken-sized horses|pause time or rewind time|Coffee.*Bean.*Green.*Tea/);
+test("formal Discussion visibility executes the above, boundary, and below-threshold states", () => {
+  const state = (remaining, manuallyVisible = false) => resolveTimerVisibility({
+    collapsible: true,
+    forceVisibleAtSeconds: FORMAL_DISCUSSION_FORCE_TIMER_SECONDS,
+    remaining,
+    manuallyVisible,
+  });
+
+  assert.deepEqual(state(FORMAL_DISCUSSION_FORCE_TIMER_SECONDS + 1), {
+    forcedVisible: false,
+    visible: false,
+    canToggle: true,
+    controlLabel: "Show timer",
+  });
+  assert.deepEqual(state(FORMAL_DISCUSSION_FORCE_TIMER_SECONDS), {
+    forcedVisible: true,
+    visible: true,
+    canToggle: false,
+    controlLabel: null,
+  });
+  assert.deepEqual(state(FORMAL_DISCUSSION_FORCE_TIMER_SECONDS - 1), {
+    forcedVisible: true,
+    visible: true,
+    canToggle: false,
+    controlLabel: null,
+  });
 });
 
-test("one practice transcript is isolated from both formal round transcripts", () => {
-  for (const source of [game, policies, callbacks, clientStructure]) assert.match(source, /practice_icebreaker_chat|PRACTICE_ICEBREAKER_TRANSCRIPT_KEY/);
-  assert.match(clientStructure, /PRACTICE_ICEBREAKER_STAGE_NAME = "PracticeIcebreaker"/);
-  assert.match(clientStructure, /PRACTICE_ICEBREAKER_TRANSCRIPT_KEY = "practice_icebreaker_chat"/);
+test("a manually shown formal timer stays singular and loses its Hide control at the threshold", () => {
+  const before = resolveTimerVisibility({
+    collapsible: true,
+    forceVisibleAtSeconds: FORMAL_DISCUSSION_FORCE_TIMER_SECONDS,
+    remaining: FORMAL_DISCUSSION_FORCE_TIMER_SECONDS + 1,
+    manuallyVisible: true,
+  });
+  const forced = resolveTimerVisibility({
+    collapsible: true,
+    forceVisibleAtSeconds: FORMAL_DISCUSSION_FORCE_TIMER_SECONDS,
+    remaining: FORMAL_DISCUSSION_FORCE_TIMER_SECONDS,
+    manuallyVisible: true,
+  });
+
+  assert.deepEqual(before, { forcedVisible: false, visible: true, canToggle: true, controlLabel: "Hide timer" });
+  assert.deepEqual(forced, { forcedVisible: true, visible: true, canToggle: false, controlLabel: null });
+  assert.equal(Number(before.visible), 1);
+  assert.equal(Number(forced.visible), 1);
+});
+
+test("Practice keeps its independent final-30-second timer policy", () => {
+  const state = (remaining) => resolveTimerVisibility({
+    collapsible: true,
+    forceVisibleAtSeconds: PRACTICE.forceTimerSeconds,
+    remaining,
+  });
+
+  assert.equal(state(PRACTICE.forceTimerSeconds + 1).forcedVisible, false);
+  assert.equal(state(PRACTICE.forceTimerSeconds).forcedVisible, true);
+  assert.equal(state(PRACTICE.forceTimerSeconds - 1).forcedVisible, true);
+  assert.equal(state(FORMAL_DISCUSSION_FORCE_TIMER_SECONDS).forcedVisible, false);
+});
+
+test("both formal rounds share one Discussion timer policy independent of taskIndex", () => {
+  const round1Start = callbacks.indexOf('const round1 = game.addRound({');
+  const round2Start = callbacks.indexOf('const round2 = game.addRound({');
+  const round1Block = callbacks.slice(round1Start, round2Start);
+  const round2Block = callbacks.slice(round2Start, callbacks.indexOf('// Restore the original stable colour aliases'));
+  for (const [taskIndex, block] of [[0, round1Block], [1, round2Block]]) {
+    assert.match(block, new RegExp(`taskIndex:\\s+${taskIndex}`));
+    assert.match(block, /addStage\(\{ name: "Task"/);
+    const state = resolveTimerVisibility({
+      collapsible: true,
+      forceVisibleAtSeconds: FORMAL_DISCUSSION_FORCE_TIMER_SECONDS,
+      remaining: FORMAL_DISCUSSION_FORCE_TIMER_SECONDS,
+    });
+    assert.equal(state.forcedVisible, true);
+    assert.equal(state.canToggle, false);
+  }
+  assert.match(game, /DISCUSSION_STAGE_NAMES\.includes\(stageName\)/);
+  assert.match(game, /return <Discussion key=\{roundStageKey\} \/>/);
+});
+
+test("FinalDecision keeps its non-collapsible timer presentation", () => {
+  const state = resolveTimerVisibility({ remaining: 90 });
+  assert.deepEqual(state, { forcedVisible: false, visible: true, canToggle: false, controlLabel: null });
+  assert.equal((callbacks.match(/name: "FinalDecision",\s+duration: 90/g) ?? []).length, 2);
+  assert.match(finalDecision, /: <Profile \/>/);
+});
+
+test("the active Practice transcript is isolated from both formal round transcripts", () => {
+  assert.match(practiceShared, /export const PRACTICE_CHAT = "practice_chat"/);
+  assert.match(practiceClient, /<Chat scope=\{game\} attribute=\{PRACTICE_CHAT\}/);
+  assert.match(practiceServer, /appendMessage\(game, PRACTICE_CHAT/);
+  for (const source of [game, policies, callbacks, practiceClient, practiceServer, practiceShared]) {
+    assert.doesNotMatch(source, /practice_icebreaker_chat|PRACTICE_ICEBREAKER_TRANSCRIPT_KEY|PracticeIcebreaker|handleIcebreakerChat/);
+  }
   for (const source of [game, policies, callbacks]) assert.doesNotMatch(source, /intro_round_[01]|`intro_round_/);
-  assert.match(callbacks, /Empirica\.on\("game", PRACTICE_ICEBREAKER_TRANSCRIPT_KEY, handleIcebreakerChat\)/);
-  assert.equal((callbacks.match(/handleIcebreakerChat\);/g) ?? []).length, 1);
   assert.match(callbacks, /Empirica\.on\("game", "chat_round_0", handleChat\)/);
   assert.match(callbacks, /Empirica\.on\("game", "chat_round_1", handleChat\)/);
 });
@@ -159,11 +236,14 @@ test("timer reminders flush immediately without waiting for a human chat message
     callbacks.indexOf('Empirica.onStageStart'),
   );
   assert.match(timedMessageBlock, /appendCanonicalMessage\([\s\S]*Empirica\.flush\(\)/);
-  assert.match(callbacks, /Thirty seconds remain in the IceBreaker\./);
+  assert.match(callbacks, /One minute remains in the discussion\./);
 });
 
 test("new games enter the interactive practice instead of legacy IceBreaker countdowns", () => {
-  assert.doesNotMatch(callbacks, /addStage\(\{ name: "IceBreaker(Start|End)Countdown"/);
+  for (const source of [callbacks, game, practiceServer, practiceShared]) {
+    assert.doesNotMatch(source, /Walkthrough|IceBreakerStartCountdown|IceBreakerEndCountdown|PracticeIcebreaker/);
+  }
+  assert.match(practiceShared, /"PracticeWelcome", "PracticeDiscussion", "FinalDecision", "PracticeComplete"/);
   assert.match(game, /round\?\.get\("isPractice"\)/);
   assert.match(game, /<PracticeOnboarding key=\{roundStageKey\}/);
 });
@@ -214,6 +294,34 @@ test("Group Final Decision is a 90-second server-authoritative unanimous confirm
   assert.match(callbacks, /summarizeFinalDecisionDrafts/);
   assert.match(callbacks, /allFinalDecisionConfirmationsMatch/);
   assert.match(callbacks, /clearFinalDecisionConfirmations/);
+  assert.match(callbacks, /reviewFinalDecisionConfirmation\(\{[\s\S]*participantId: player\.id,[\s\S]*requestChoice: request\.choice/);
+  assert.doesNotMatch(callbacks, /allConfidenceRecorded/);
+  const confirmHandler = callbacks.slice(
+    callbacks.indexOf('Empirica.on("player", "finalDecisionConfirmRequest"'),
+    callbacks.indexOf('Empirica.on("playerStage", "submit"'),
+  );
+  assert.match(confirmHandler, /if \(!review\.accepted\) return;[\s\S]*player\.round\.set\("groupFinalConfirmedChoice", review\.matchedChoice\);[\s\S]*finalizeGroupDecision\(stage\)/);
+  assert.doesNotMatch(confirmHandler, /request\.confidence/);
+  const draftHandler = callbacks.slice(
+    callbacks.indexOf('Empirica.on("player", "finalDecisionDraftRequest"'),
+    callbacks.indexOf('Empirica.on("player", "finalDecisionConfirmRequest"'),
+  );
+  assert.match(draftHandler, /if \(choiceChanged\) \{[\s\S]*clearFinalDecisionConfirmations\(game\);/);
+  assert.match(finalDecision, /recordedChoice = player\.round\.get\("groupFinalChoice"\) \?\? ""/);
+  assert.match(finalDecision, /recordedConfidence = player\.round\.get\("groupChoiceConfidence"\) \?\? null/);
+  assert.match(finalDecision, /localConfidenceValid = Number\.isFinite\(confidence\) && confidence >= 0 && confidence <= 100/);
+  assert.match(finalDecision, /Number\.isFinite\(recordedConfidence\)[\s\S]*recordedConfidence >= 0[\s\S]*recordedConfidence <= 100[\s\S]*recordedConfidence === confidence/);
+  assert.match(finalDecision, /choiceAcknowledged = Boolean\(choice\) && recordedChoice === choice/);
+  assert.match(finalDecision, /draftAcknowledged = choiceAcknowledged && confidenceAcknowledged/);
+  assert.match(finalDecision, /canConfirm = agreed && draftAcknowledged && !ownConfirmationCurrent/);
+  assert.match(finalDecision, /savingCurrentDraft = Boolean\(choice\) && localConfidenceValid && !draftAcknowledged/);
+  assert.match(finalDecision, /Saving your response…/);
+  assert.match(finalDecision, /Everyone selected the same outcome\. Select your confidence before confirming\./);
+  assert.match(finalDecision, /Everyone selected the same outcome\. You can now confirm the group decision\./);
+  assert.match(decisionControls, /Move the slider to record your confidence\./);
+  assert.match(decisionControls, /value=\{hasSelectedValue \? value : 50\}/);
+  assert.match(decisionControls, /onChange=\{\(_event, next\) => onChange\(Number\(next\)\)\}/);
+  assert.match(decisionControls, /Selected value: \{hasSelectedValue \? value : "Not selected"\}/);
   assert.match(callbacks, /setTimeout\(\(\) => \{[\s\S]*finalizeGroupDecision\(stage, \{ timedOut: true \}\);[\s\S]*90_000/);
   assert.match(individual, /finalDecisionOutcome === "consensus_choice"/);
   assert.match(individual, /finalDecisionOutcome === "declared_fail" \|\| finalDecisionOutcome === "timeout_fail"/);
@@ -221,6 +329,28 @@ test("Group Final Decision is a 90-second server-authoritative unanimous confirm
   assert.match(individual, /if \(groupReachedDecision && !player\.stage\.get\("submit"\)\)/);
   assert.match(individual, /player\.stage\.set\("submit", true\)/);
   assert.doesNotMatch(individual, /Do you agree with your group’s final choice\?/);
+});
+
+test("FinalDecision waits for this participant's exact authoritative draft acknowledgement", () => {
+  assert.deepEqual(
+    finalDecisionClientState({ confidence: 40, recordedConfidence: null }),
+    { canConfirm: false, savingCurrentDraft: true },
+  );
+  assert.deepEqual(
+    finalDecisionClientState({ confidence: 80, recordedConfidence: 40 }),
+    { canConfirm: false, savingCurrentDraft: true },
+  );
+  assert.equal(finalDecisionClientState({ confidence: 0, recordedConfidence: 0 }).canConfirm, true);
+  assert.equal(finalDecisionClientState({ confidence: 100, recordedConfidence: 100 }).canConfirm, true);
+  assert.deepEqual(
+    finalDecisionClientState({ confidence: 40, recordedChoice: "Option B", recordedConfidence: 40 }),
+    { canConfirm: false, savingCurrentDraft: true },
+  );
+  assert.equal(finalDecisionClientState({ confidence: 40, recordedConfidence: 40 }).canConfirm, true);
+  assert.equal(finalDecisionClientState({ confidence: 40, recordedConfidence: 40, confirmedChoice: "Option A" }).canConfirm, false);
+  for (const invalidConfidence of [null, Number.NaN, Number.POSITIVE_INFINITY, -1, 101]) {
+    assert.equal(finalDecisionClientState({ confidence: invalidConfidence, recordedConfidence: invalidConfidence }).canConfirm, false);
+  }
 });
 
 test("T24/T49-T50: survey additions and final-question removals are complete", () => {

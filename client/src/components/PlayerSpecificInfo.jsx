@@ -2,6 +2,9 @@ import React, { useRef } from "react";
 import { usePlayer, useRound } from "@empirica/core/player/classic/react";
 import { RenderMarkdown } from "./RenderMarkdown.jsx";
 
+const INFORMATION_DIFFERENCE_NOTICE = "Some information may be different from what other group members see.";
+const REPORT_DISCUSSION_PERMISSION = "You may discuss the information in your report with your group.";
+
 function parseReportMarkdown(markdown) {
   if (typeof markdown !== "string" || !markdown.trim()) return { introduction: "", sections: [] };
   const chunks = markdown.trim().split(/\n(?=## )/);
@@ -38,7 +41,7 @@ function buildPersonalReport({ generalInfo, participantContent, playerName }) {
     mergedSections.push(`## ${heading}\n\n${body}`);
   }
 
-  const reportIntroduction = `As a decision maker named "${playerName}", you have received a report with information about the three options. Although this report is personal, you may discuss the information in it with others. Your goal is to select the option that is most suitable overall. Be sure to scroll to the bottom of the report to review all details.`;
+  const reportIntroduction = `${INFORMATION_DIFFERENCE_NOTICE}\n\n${REPORT_DISCUSSION_PERMISSION}\n\nBe sure to scroll to the bottom of the report to review all details.`;
 
   return `# General Information\n\n${withoutLeadingTitle(shared.introduction)}\n\n# Personal report delivered to ${playerName}:\n\n${reportIntroduction}\n\n${mergedSections.join("\n\n")}`;
 }
@@ -53,10 +56,6 @@ export function PlayerSpecificInfo({ className = "", mode = "full" }) {
     participantContent: player.round?.get("playerContent"),
     playerName,
   });
-  const practice = round?.get("isPractice") === true;
-  const displayedReport = practice
-    ? `${generalInfo || ""}\n\n# Your Additional Information\n\n${player.round?.get("playerContent") || ""}`
-    : reportMarkdown;
   const compact = mode === "compact";
   const lastCountedScroll = useRef(0);
 
@@ -78,7 +77,7 @@ export function PlayerSpecificInfo({ className = "", mode = "full" }) {
       </header>
       <div className={`min-h-0 flex-1 overflow-y-auto rounded-b-lg border-x-2 border-b-2 border-gray-300 text-left leading-relaxed ${compact ? "px-6 py-5 text-base" : "px-8 py-6 text-base"}`} data-testid="task-report-scroll-panel" onScroll={recordScroll}>
         <p className="mb-4 text-sm font-bold text-gray-700">Scroll down within the report to review all information.</p>
-        <RenderMarkdown markdownText={displayedReport} />
+        <RenderMarkdown markdownText={reportMarkdown} />
       </div>
     </section>
   );

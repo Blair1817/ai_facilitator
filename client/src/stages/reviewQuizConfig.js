@@ -1,23 +1,23 @@
 export const REVIEW_QUIZZES = Object.freeze({
   A: {
-    title: "Task A: International Youth Games host city",
+    title: "Task A: Choose a host city",
     scenario: "This quiz concerns the International Youth Games host-city task with Rovenna, Talwick, and Meridia.",
     remediation: {
       evidenceRule: {
         title: "Information to use",
-        content: "Use only the facts provided in the experiment when evaluating the cities. Do not use outside knowledge or assumptions about the cities.",
+        content: "Use only the facts provided, without outside knowledge or assumptions.",
       },
       taskOverview: {
         title: "Task A scenario",
-        content: "The International Youth Sports Council organises the International Youth Games every four years. Three cities, Rovenna, Talwick, and Meridia, have submitted bids. All three meet the mandatory requirements for sporting venues, public safety, finance, and legal compliance.",
+        content: "Your group will choose a city to host the International Youth Games. The three options are Rovenna, Talwick and Meridia. The International Youth Sports Council holds the Games every four years. All three cities have passed the initial checks and meet the requirements for sports venues, public safety, finances and legal compliance.",
       },
       discussionDuration: {
         title: "Discussion period",
-        content: "You will have a total of 15 minutes to discuss the decision as a group.",
+        content: "The group discussion can last up to 15 minutes.",
       },
       objective: {
         title: "Task objective",
-        content: "Your task is to judge how the provided non-critical facts affect each city's suitability and then select the city most suitable to host the International Youth Games.",
+        content: "None of the listed drawbacks would rule out an option as a host. Treat each strength and drawback as equally important, then choose the best host overall.",
       },
     },
     questions: [
@@ -43,7 +43,7 @@ export const REVIEW_QUIZZES = Object.freeze({
         id: "mandatoryRequirements",
         remediationKey: "taskOverview",
         type: "radio",
-        prompt: "Do all alternatives meet the mandatory requirements stated in their task?",
+        prompt: "Do all alternatives meet the requirements stated in their task?",
         options: [
           { value: "yes", label: "Yes" },
           { value: "no", label: "No" },
@@ -65,7 +65,7 @@ export const REVIEW_QUIZZES = Object.freeze({
         options: [
           { value: "option1", label: "Rate sports facilities in each city." },
           { value: "option2", label: "Compare cities to determine which is most deserving of an infrastructure grant." },
-          { value: "option3", label: "Judge how the provided non-critical facts affect each city's suitability and then select the city most suitable to host the International Youth Games." },
+          { value: "option3", label: "Treat each strength and drawback as equally important, then choose the best host overall." },
           { value: "option4", label: "Select an objective that is not included in any of the options listed above." },
         ],
         correctAnswer: "option3",
@@ -73,24 +73,24 @@ export const REVIEW_QUIZZES = Object.freeze({
     ],
   },
   B: {
-    title: "Task B: Global Innovation Summit host campus",
+    title: "Task B: Choose a host campus",
     scenario: "This quiz concerns the Global Innovation Summit host-campus task with Fenwick University, Halden University, and Norvale University.",
     remediation: {
       evidenceRule: {
         title: "Information to use",
-        content: "Use only the facts provided in the experiment when evaluating the university campuses. Do not use outside knowledge or assumptions about the universities.",
+        content: "Use only the facts provided, without outside knowledge or assumptions.",
       },
       taskOverview: {
         title: "Task B scenario",
-        content: "The International Innovation Council organises the Global Innovation Summit every four years. Three university campuses, Fenwick University, Halden University, and Norvale University, have submitted bids. All three meet the mandatory requirements for conference facilities, public safety, finance, and legal compliance.",
+        content: "Your group will choose a university campus to host the Global Innovation Summit. The three options are Fenwick University, Halden University and Norvale University. The International Innovation Council holds the summit every four years. All three campuses have passed the initial checks and meet the requirements for conference facilities, public safety, finances and legal compliance.",
       },
       discussionDuration: {
         title: "Discussion period",
-        content: "You will have a total of 15 minutes to discuss the decision as a group.",
+        content: "The group discussion can last up to 15 minutes.",
       },
       objective: {
         title: "Task objective",
-        content: "Your task is to judge how the provided non-critical facts affect each campus's suitability and then select the campus most suitable to host the Global Innovation Summit.",
+        content: "None of the listed drawbacks would rule out an option as a host. Treat each strength and drawback as equally important, then choose the best host overall.",
       },
     },
     questions: [
@@ -116,7 +116,7 @@ export const REVIEW_QUIZZES = Object.freeze({
         id: "mandatoryRequirements",
         remediationKey: "taskOverview",
         type: "radio",
-        prompt: "Do all alternatives meet the mandatory requirements stated in their task?",
+        prompt: "Do all alternatives meet the requirements stated in their task?",
         options: [
           { value: "yes", label: "Yes" },
           { value: "no", label: "No" },
@@ -138,7 +138,7 @@ export const REVIEW_QUIZZES = Object.freeze({
         options: [
           { value: "option1", label: "Rate the overall suitability of each university using the background information provided." },
           { value: "option2", label: "Select the university most deserving of funding for future infrastructure improvement projects." },
-          { value: "option3", label: "Judge how the provided non-critical facts affect each campus's suitability and then select the campus most suitable to host the Global Innovation Summit." },
+          { value: "option3", label: "Treat each strength and drawback as equally important, then choose the best host overall." },
           { value: "option4", label: "Select an objective that is not included in any of the options listed above." },
         ],
         correctAnswer: "option3",

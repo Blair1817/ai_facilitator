@@ -9,7 +9,7 @@ const options = [
   { id: "RIVERSIDE", label: "Riverside Room" },
   { id: "GARDEN", label: "Garden Room" },
 ];
-const generalInfo = "# Practice Round: Choose a Room for Your First Team Meeting\n\nYour group needs to choose one of three rooms for a 30-minute team meeting.\n\nAll three rooms meet the basic requirements for capacity, accessibility, and safety. However, they differ in other features that may affect the meeting.\n\nYou may not have exactly the same information as the other group members.\n\nUse only the information provided in this task.\n\n## Maple Room\n- Closest to the entrance\n- Bright natural light\n- Comfortable chairs\n\n## Riverside Room\n- Quiet\n- Large central table\n- Plenty of charging sockets\n\n## Garden Room\n- Good ventilation";
+const generalInfo = "# Practice Round: Choose a Room for Your First Team Meeting\n\nYour group needs to choose one of three rooms for a 30-minute team meeting.\n\nAll three rooms meet the basic requirements for capacity, accessibility, and safety. However, they differ in other features that may affect the meeting.\n\nUse only the information provided in this task.\n\n## Maple Room\n- Closest to the entrance\n- Bright natural light\n- Comfortable chairs\n\n## Riverside Room\n- Quiet\n- Large central table\n- Plenty of charging sockets\n\n## Garden Room\n- Good ventilation";
 export const practiceReports = {
   Blue: "## Maple Room\n- Building work nearby may create noise during the meeting.\n\n## Garden Room\n- Has the most reliable Wi-Fi.",
   Orange: "## Riverside Room\n- The main display is currently unavailable.\n\n## Garden Room\n- Has a large working display.",
@@ -48,75 +48,78 @@ export function initialisePractice(round) {
     player.round.set("playerContent", report);
   }
 }
-export function registerPractice(Empirica, appendMessage) {
-  const finishDiscussion = (stage, now = Date.now()) => {
-    const round = stage.round;
-    if (stage.get("name") !== "PracticeDiscussion" || !stage.isCurrent() || round.get("practiceDiscussionEnded")) return;
-    const game = stage.currentGame;
-    const timedOut = now >= round.get("practiceDeadline");
-    const eligible = practiceReadiness({
-      startedAt: round.get("practiceDiscussionStartedAt"), now,
-      counts: round.get("practiceMessageCounts") || {}, participantIds: game.players.map((p) => p.id),
+function finishPracticeDiscussion(stage, Empirica, now = Date.now()) {
+  const round = stage.round;
+  if (stage.get("name") !== "PracticeDiscussion" || !stage.isCurrent() || round.get("practiceDiscussionEnded")) return;
+  const game = stage.currentGame;
+  const timedOut = now >= round.get("practiceDeadline");
+  const eligible = practiceReadiness({
+    startedAt: round.get("practiceDiscussionStartedAt"), now,
+    counts: round.get("practiceMessageCounts") || {}, participantIds: game.players.map((p) => p.id),
+  });
+  const ready = round.get("practiceReady") || {};
+  if (!timedOut && !(eligible && game.players.every((p) => ready[p.id]))) return;
+  round.set("practiceDiscussionEnded", timedOut ? "timeout" : "early");
+  logPractice(game, timedOut ? "discussion_timeout" : "discussion_ended_early");
+  stage.set("ended", true);
+  Empirica.flush();
+}
+
+export function handlePracticeStageStart(stage, appendMessage, Empirica) {
+  const round = stage.round;
+  if (!round.get("isPractice") || stage.get("practiceStageStartHandled")) return;
+  stage.set("practiceStageStartHandled", true);
+  const game = stage.currentGame;
+  const name = stage.get("name");
+  round.set("practiceState", name);
+  if (!stage.get("practiceStartedAt")) stage.set("practiceStartedAt", Date.now());
+  if (name === "PracticeWelcome" && !round.get("practiceStarted")) {
+    round.set("practiceStarted", true);
+    logPractice(game, "practice_started");
+  }
+  // Icebreaker chat on the Welcome page: the facilitator opens the
+  // conversation so participants greet each other and see they are real
+  // people before the formal rounds. ~1 minute of casual chat; not
+  // counted towards the PracticeDiscussion early-finish conditions.
+  if (name === "PracticeWelcome" && !round.get("practiceWelcomeGreetSent")) {
+    round.set("practiceWelcomeGreetSent", true);
+    const colours = game.players.map((p) => p.get("name")).join(", ");
+    appendMessage(game, PRACTICE_CHAT, {
+      messageId: `practice-greet-${round.id}`, groupId: game.id, speakerId: "ai",
+      roundIndex: round.get("index"), stage: "PracticeWelcome",
+      messageType: "onboarding", speakerType: "facilitator_fixed", timestamp: Date.now(),
+      phase: "practice", source: "facilitator_fixed", exclude_from_primary_analysis: true,
+      content: `Welcome, ${colours}! You are now in the same online group. While everyone gets ready, say hello and tell the others something about yourself, for example, what you study or a place you would like to visit.`,
+      sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
     });
-    const ready = round.get("practiceReady") || {};
-    if (!timedOut && !(eligible && game.players.every((p) => ready[p.id]))) return;
-    round.set("practiceDiscussionEnded", timedOut ? "timeout" : "early");
-    logPractice(game, timedOut ? "discussion_timeout" : "discussion_ended_early");
-    stage.set("ended", true);
-    Empirica.flush();
-  };
-  Empirica.onStageStart(({ stage }) => {
-    const round = stage.round;
-    if (!round.get("isPractice")) return;
-    const game = stage.currentGame;
-    const name = stage.get("name");
-    round.set("practiceState", name);
-    if (!stage.get("practiceStartedAt")) stage.set("practiceStartedAt", Date.now());
-    if (name === "PracticeWelcome" && !round.get("practiceStarted")) {
-      round.set("practiceStarted", true);
-      logPractice(game, "practice_started");
+  }
+  if (name === "PracticeDiscussion") {
+    if (!round.get("practiceDiscussionStartedAt")) {
+      const now = Date.now();
+      round.set("practiceDiscussionStartedAt", now);
+      round.set("practiceDeadline", now + PRACTICE.discussionSeconds * 1000);
+      round.set("practiceMessageCounts", {});
+      round.set("practiceTotalMessages", 0);
+      round.set("practiceReady", {});
+      logPractice(game, "discussion_started");
     }
-    // Icebreaker chat on the Welcome page: the facilitator opens the
-    // conversation so participants greet each other and see they are real
-    // people before the formal rounds. ~1 minute of casual chat; not
-    // counted towards the PracticeDiscussion early-finish conditions.
-    if (name === "PracticeWelcome" && !round.get("practiceWelcomeGreetSent")) {
-      round.set("practiceWelcomeGreetSent", true);
-      const colours = game.players.map((p) => p.get("name")).join(", ");
+    if (!round.get("practiceWelcomeSent")) {
+      round.set("practiceWelcomeSent", true);
       appendMessage(game, PRACTICE_CHAT, {
-        messageId: `practice-greet-${round.id}`, groupId: game.id, speakerId: "ai",
-        roundIndex: round.get("index"), stage: "PracticeWelcome",
+        messageId: `practice-welcome-${round.id}`, groupId: game.id, speakerId: "ai",
+        roundIndex: round.get("index"), stage: "PracticeDiscussion",
         messageType: "onboarding", speakerType: "facilitator_fixed", timestamp: Date.now(),
         phase: "practice", source: "facilitator_fixed", exclude_from_primary_analysis: true,
-        content: `Welcome, ${colours}! You are now in the same online group. While everyone gets ready, say hello and tell the others something about yourself — for example, what you study or a place you would like to visit.`,
+        content: "Welcome! Start by saying hello, introducing your colour, and sharing which room currently looks best to you and why.",
         sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
       });
     }
-    if (name === "PracticeDiscussion") {
-      if (!round.get("practiceDiscussionStartedAt")) {
-        const now = Date.now();
-        round.set("practiceDiscussionStartedAt", now);
-        round.set("practiceDeadline", now + PRACTICE.discussionSeconds * 1000);
-        round.set("practiceMessageCounts", {});
-        round.set("practiceTotalMessages", 0);
-        round.set("practiceReady", {});
-        logPractice(game, "discussion_started");
-      }
-      if (!round.get("practiceWelcomeSent")) {
-        round.set("practiceWelcomeSent", true);
-        appendMessage(game, PRACTICE_CHAT, {
-          messageId: `practice-welcome-${round.id}`, groupId: game.id, speakerId: "ai",
-          roundIndex: round.get("index"), stage: "PracticeDiscussion",
-          messageType: "onboarding", speakerType: "facilitator_fixed", timestamp: Date.now(),
-          phase: "practice", source: "facilitator_fixed", exclude_from_primary_analysis: true,
-          content: "Welcome! Start by saying hello, introducing your colour, and sharing which room currently looks best to you and why.",
-          sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
-        });
-      }
-      const timeout = setTimeout(() => finishDiscussion(stage), Math.max(0, round.get("practiceDeadline") - Date.now()));
-      timeout.unref?.();
-    }
-  });
+    const timeout = setTimeout(() => finishPracticeDiscussion(stage, Empirica), Math.max(0, round.get("practiceDeadline") - Date.now()));
+    timeout.unref?.();
+  }
+}
+
+export function registerPractice(Empirica) {
   Empirica.on("player", "practiceRequest", (_ctx, { player, practiceRequest: request }) => {
     const game = player.currentGame, round = game?.currentRound, stage = game?.currentStage;
     if (!round?.get("isPractice") || !stage || stage.get("ended") || !request
@@ -127,9 +130,9 @@ export function registerPractice(Empirica, appendMessage) {
     if (personalPreparation && request.page !== name) return;
     const action = request.action;
     const now = Date.now();
-    if (action === "deadline") { finishDiscussion(stage, now); return; }
+    if (action === "deadline") { finishPracticeDiscussion(stage, Empirica, now); return; }
     if (action === "ready" && name === "PracticeDiscussion") {
-      finishDiscussion(stage, now);
+      finishPracticeDiscussion(stage, Empirica, now);
       if (round.get("practiceDiscussionEnded")) return;
       if (!practiceReadiness({ startedAt: round.get("practiceDiscussionStartedAt"), now,
         counts: round.get("practiceMessageCounts") || {}, participantIds: game.players.map((p) => p.id) })) return;
@@ -138,7 +141,7 @@ export function registerPractice(Empirica, appendMessage) {
       ready[player.id] = Boolean(request.ready);
       round.set("practiceReady", ready);
       logPractice(game, request.ready ? "ready_to_decide" : "ready_cancelled", player);
-      finishDiscussion(stage, now);
+      finishPracticeDiscussion(stage, Empirica, now);
     } else if (["timer_opened", "timer_hidden", "timer_forced_visible"].includes(action) && name === "PracticeDiscussion") {
       const forced = now >= round.get("practiceDeadline") - PRACTICE.forceTimerSeconds * 1000;
       if (action === "timer_hidden" && forced) return;
@@ -175,7 +178,6 @@ export function registerPractice(Empirica, appendMessage) {
     }
     Empirica.flush();
   });
-  return { finishDiscussion };
 }
 
 // Handled before the formal human-message / LLM paths. No formal state is touched.
