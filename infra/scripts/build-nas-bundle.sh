@@ -33,6 +33,11 @@ for lockfile in client/package-lock.json server/package-lock.json; do
   fi
 done
 
+if [[ ! -d "$REPO_DIR/shared" ]]; then
+  echo "FATAL: required shared source directory not found: $REPO_DIR/shared" >&2
+  exit 2
+fi
+
 EXPECTED_EMPIRICA_VERSION="v1.12.5"
 PROJECT_EMPIRICA_VERSION="$(awk -F': *' '/^version:/ {print $2; exit}' "$REPO_DIR/.empirica/release")"
 if [[ "$PROJECT_EMPIRICA_VERSION" != "$EXPECTED_EMPIRICA_VERSION" ]]; then
@@ -57,7 +62,7 @@ for modules_dir in client/node_modules server/node_modules; do
   fi
 done
 
-mkdir -p "$STAGING_DIR/.empirica" "$STAGING_DIR/client" "$STAGING_DIR/server" "$OUTPUT_DIR"
+mkdir -p "$STAGING_DIR/.empirica" "$STAGING_DIR/client" "$STAGING_DIR/server" "$STAGING_DIR/shared" "$OUTPUT_DIR"
 
 for file in release id treatments.yaml lobbies.yaml; do
   cp "$REPO_DIR/.empirica/$file" "$STAGING_DIR/.empirica/$file"
@@ -77,6 +82,22 @@ rsync -a \
   --exclude 'node_modules' \
   --exclude 'dist' \
   "$REPO_DIR/server/" "$STAGING_DIR/server/"
+rsync -a \
+  --exclude '.DS_Store' \
+  --exclude '.env*' \
+  --exclude 'node_modules' \
+  --exclude 'dist' \
+  --exclude 'coverage' \
+  --exclude 'local' \
+  --exclude 'backups' \
+  --exclude '*.db' \
+  --exclude '*.sqlite' \
+  --exclude '*.sqlite3' \
+  --exclude '*.bak' \
+  --exclude '*.backup' \
+  --exclude '*.log' \
+  --exclude '*.tmp' \
+  "$REPO_DIR/shared/" "$STAGING_DIR/shared/"
 
 # Reuse the already installed, lockfile-matched dependencies without copying
 # them into the bundle. Empirica executes the builds through these symlinks.
