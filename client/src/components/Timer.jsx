@@ -4,8 +4,9 @@ import {
   useStageTimer,
 } from "@empirica/core/player/classic/react";
 import React, { useEffect, useState } from "react";
+import { resolveTimerVisibility } from "../../../shared/timerVisibility.mjs";
 
-export function Timer({ deadline } = {}) {
+export function Timer({ deadline, collapsible = false, forceVisibleAtSeconds = null } = {}) {
   const timer = useStageTimer();
   const game = useGame();
   const stage = useStage();
@@ -33,6 +34,39 @@ export function Timer({ deadline } = {}) {
     remaining = Math.round(timer?.remaining / 1000);
   } else if (Number.isFinite(discussionDeadline)) {
     remaining = Math.max(0, Math.ceil((discussionDeadline - now) / 1000));
+  }
+
+  const [manuallyVisible, setManuallyVisible] = useState(false);
+  const { visible, canToggle, controlLabel } = resolveTimerVisibility({
+    collapsible,
+    forceVisibleAtSeconds,
+    remaining,
+    manuallyVisible,
+  });
+
+  if (collapsible) {
+    return (
+      <div className="flex flex-wrap items-center gap-3">
+        {visible && (
+          <>
+            <div className="font-bold text-gray-600">Time remaining:</div>
+            <div className="tabular-nums text-3xl font-semibold text-gray-500">
+              {humanTimer(remaining)}
+            </div>
+          </>
+        )}
+        {canToggle && (
+          <button
+            type="button"
+            className="rounded border border-gray-300 px-3 py-2 text-sm text-gray-700"
+            aria-expanded={visible}
+            onClick={() => setManuallyVisible((current) => !current)}
+          >
+            {controlLabel}
+          </button>
+        )}
+      </div>
+    );
   }
 
   return (

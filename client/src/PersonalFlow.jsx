@@ -76,7 +76,10 @@ function PersonalPage({ player, round, stage, stageName, progress, pages }) {
   if (page === "Break") return <main className="relative flex h-full items-center justify-center p-8 text-center"><div>
     <h1 className="text-2xl font-bold">Break</h1>
     <p className="my-4">Take a five-minute break, then confirm you are ready for the next task.</p>
-    <Timer deadline={deadline} />
+    <div className="my-4 flex items-center justify-center gap-2" role="status">
+      <span className="font-semibold">Time remaining:</span>
+      <Timer deadline={deadline} />
+    </div>
     <button className="mt-6 rounded bg-blue-700 px-5 py-3 text-white disabled:opacity-50"
       disabled={now < deadline || pending} onClick={onNext}>I’m back and ready to continue</button>
     {/* Deliberately discreet early-skip: a small faint chevron in the corner.

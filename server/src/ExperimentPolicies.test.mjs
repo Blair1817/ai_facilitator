@@ -6,11 +6,10 @@ import {
   classifyFinalDecision,
   MESSAGE_TYPES,
   NO_GROUP_FINAL_DECISION,
-  PRACTICE_ICEBREAKER_STAGE_NAME,
-  PRACTICE_ICEBREAKER_TRANSCRIPT_KEY,
   allocateSequencePosition,
   buildCanonicalMessage,
   normalizeMessageContent,
+  reviewFinalDecisionConfirmation,
   reviewHumanMessageRequest,
   summarizeFinalDecisionDrafts,
 } from "./ExperimentPolicies.mjs";
@@ -23,9 +22,68 @@ test("T32-T33: readiness opens exactly 45 seconds before the scheduled end", () 
 });
 
 test("FinalDecision requires exactly three identical non-empty drafts", () => {
-  assert.deepEqual(summarizeFinalDecisionDrafts([{ choice: "A" }, { choice: "A" }, { choice: "A" }]), { status: "agreed", matchedChoice: "A" });
+  assert.deepEqual(summarizeFinalDecisionDrafts([
+    { choice: "A", confidence: 40 },
+    { choice: "A", confidence: null },
+    { choice: "A", confidence: null },
+  ]), { status: "agreed", matchedChoice: "A" });
   assert.deepEqual(summarizeFinalDecisionDrafts([{ choice: "A" }, { choice: "B" }, { choice: "A" }]), { status: "not_agreed", matchedChoice: null });
   assert.deepEqual(summarizeFinalDecisionDrafts([{ choice: "A" }, { choice: "A" }, { choice: "" }]), { status: "not_agreed", matchedChoice: null });
+});
+
+function matchingFinalDecisionDrafts(confidences = [40, null, null]) {
+  return confidences.map((confidence, index) => ({
+    participantId: `p${index + 1}`,
+    choice: "A",
+    confidence,
+    confirmedChoice: null,
+  }));
+}
+
+test("FinalDecision lets one participant confirm from their own authoritative confidence", () => {
+  const drafts = matchingFinalDecisionDrafts();
+  assert.deepEqual(reviewFinalDecisionConfirmation({
+    drafts,
+    participantId: "p1",
+    requestChoice: "A",
+  }), { accepted: true, matchedChoice: "A" });
+
+  drafts[0].confirmedChoice = "A";
+  assert.equal(allFinalDecisionConfirmationsMatch(drafts, "A"), false);
+});
+
+test("FinalDecision rejects a participant without their own valid confidence", () => {
+  const drafts = matchingFinalDecisionDrafts();
+  assert.equal(reviewFinalDecisionConfirmation({ drafts, participantId: "p2", requestChoice: "A" }).accepted, false);
+  assert.equal(reviewFinalDecisionConfirmation({ drafts, participantId: "p1", requestChoice: "B" }).accepted, false);
+});
+
+test("FinalDecision accepts confidence boundaries and rejects invalid stored values", () => {
+  for (const confidence of [0, 100]) {
+    const drafts = matchingFinalDecisionDrafts([confidence, null, null]);
+    assert.equal(reviewFinalDecisionConfirmation({ drafts, participantId: "p1", requestChoice: "A" }).accepted, true);
+  }
+  for (const confidence of [null, NaN, Infinity, -1, 101, "40"]) {
+    const drafts = matchingFinalDecisionDrafts([confidence, null, null]);
+    assert.equal(reviewFinalDecisionConfirmation({ drafts, participantId: "p1", requestChoice: "A" }).accepted, false);
+  }
+});
+
+test("FinalDecision completes only after all three independently eligible confirmations", () => {
+  const drafts = matchingFinalDecisionDrafts([40, null, null]);
+  assert.equal(reviewFinalDecisionConfirmation({ drafts, participantId: "p1", requestChoice: "A" }).accepted, true);
+  drafts[0].confirmedChoice = "A";
+  assert.equal(allFinalDecisionConfirmationsMatch(drafts, "A"), false);
+
+  drafts[1].confidence = 0;
+  assert.equal(reviewFinalDecisionConfirmation({ drafts, participantId: "p2", requestChoice: "A" }).accepted, true);
+  drafts[1].confirmedChoice = "A";
+  assert.equal(allFinalDecisionConfirmationsMatch(drafts, "A"), false);
+
+  drafts[2].confidence = 100;
+  assert.equal(reviewFinalDecisionConfirmation({ drafts, participantId: "p3", requestChoice: "A" }).accepted, true);
+  drafts[2].confirmedChoice = "A";
+  assert.equal(allFinalDecisionConfirmationsMatch(drafts, "A"), true);
 });
 
 test("FinalDecision confirmations must all bind to the current matching choice", () => {
@@ -73,25 +131,7 @@ test("R9-R10: authoritative message review accepts before deadline and rejects c
   assert.equal(reviewHumanMessageRequest({ ...baseRequestContext, request, currentStageName: "TLX" }).reason, "wrong_stage");
 });
 
-test("R9/R13: the one practice Icebreaker uses the reviewed request boundary and canonical transcript", () => {
-  const result = reviewHumanMessageRequest({ ...baseRequestContext, request, currentRoundIndex: undefined, currentStageName: PRACTICE_ICEBREAKER_STAGE_NAME, deadline: undefined });
-  assert.equal(result.accepted, true);
-  assert.equal(result.attribute, PRACTICE_ICEBREAKER_TRANSCRIPT_KEY);
-  assert.equal(result.stage, "IceBreaker");
-
-  const samePracticeNamespace = reviewHumanMessageRequest({
-    ...baseRequestContext,
-    request: { ...request, roundId: "r2" },
-    currentRoundId: "r2",
-    currentRoundIndex: 1,
-    currentStageName: PRACTICE_ICEBREAKER_STAGE_NAME,
-    deadline: undefined,
-  });
-  assert.equal(samePracticeNamespace.attribute, PRACTICE_ICEBREAKER_TRANSCRIPT_KEY);
-  assert.equal(samePracticeNamespace.attribute, result.attribute);
-});
-
-test("formal Round 2 remains isolated in chat_round_1 and practice never enters a formal transcript", () => {
+test("formal Round 2 remains isolated in chat_round_1 and non-Discussion stages are rejected", () => {
   const formalRound2 = reviewHumanMessageRequest({
     ...baseRequestContext,
     request: { ...request, roundId: "r2" },
@@ -104,12 +144,11 @@ test("formal Round 2 remains isolated in chat_round_1 and practice never enters 
     ...baseRequestContext,
     request,
     currentRoundIndex: 0,
-    currentStageName: PRACTICE_ICEBREAKER_STAGE_NAME,
+    currentStageName: "PracticeDiscussion",
     deadline: undefined,
   });
-  assert.equal(practice.attribute, PRACTICE_ICEBREAKER_TRANSCRIPT_KEY);
-  assert.notEqual(practice.attribute, "chat_round_0");
-  assert.notEqual(practice.attribute, "chat_round_1");
+  assert.equal(practice.accepted, false);
+  assert.equal(practice.reason, "wrong_stage");
 });
 
 test("R11-R12/G2: stable IDs deduplicate by request and server allocator is unique and monotonic", () => {
@@ -147,13 +186,13 @@ function messageFixture(overrides = {}) {
   });
 }
 
-test("R13/D6: canonical human/facilitator/timer/system/IceBreaker messages satisfy the export fixture contract", () => {
+test("R13/D6: canonical human/facilitator/timer/system/Practice messages satisfy the export fixture contract", () => {
   const representative = [
     messageFixture({ messageId: "human", participantId: "p1", speakerId: undefined, messageType: "human", speakerType: "human" }),
     messageFixture({ messageId: "facilitator", speakerId: "ai", messageType: "facilitator", speakerType: "facilitator" }),
     messageFixture({ messageId: "timer", messageType: "timer_reminder", speakerType: "timer_reminder" }),
     messageFixture({ messageId: "system" }),
-    messageFixture({ messageId: "ice", participantId: "p1", speakerId: undefined, stage: "IceBreaker", messageType: "human", speakerType: "human" }),
+    messageFixture({ messageId: "practice", participantId: "p1", speakerId: undefined, stage: "PracticeDiscussion", messageType: "human", speakerType: "human" }),
   ];
   const exportFixture = { game: { attributes: { chat_round_0: { items: representative.map((value) => ({ value })) } } } };
   for (const { value } of exportFixture.game.attributes.chat_round_0.items) {

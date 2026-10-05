@@ -1,7 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { PRACTICE, PRACTICE_STAGES, PRACTICE_CHAT, practiceReadiness } from "../../shared/practice.mjs";
-import { addPracticeRound, initialisePractice, registerPractice, handlePracticeMessage } from "./PracticeOnboarding.mjs";
+import { resolveTimerVisibility } from "../../shared/timerVisibility.mjs";
+import { addPracticeRound, initialisePractice, handlePracticeStageStart, registerPractice, handlePracticeMessage } from "./PracticeOnboarding.mjs";
+
+const dirname = path.dirname(fileURLToPath(import.meta.url));
+const practiceClientSource = readFileSync(path.join(dirname, "../../client/src/practice/PracticeOnboarding.jsx"), "utf8");
+const reportSource = readFileSync(path.join(dirname, "../../client/src/components/PlayerSpecificInfo.jsx"), "utf8");
 
 function scope(id, attributes = {}) {
   const data = new Map(Object.entries(attributes));
@@ -20,11 +28,11 @@ function fixture(name = "PracticeDiscussion") {
   const messages = [];
   const append = (_game, attribute, value) => messages.push({ attribute, ...value });
   const api = {
-    onStageStart: (fn) => listeners.set("start", fn),
     on: (_kind, key, fn) => listeners.set(key, fn),
     flush: () => {},
   };
-  registerPractice(api, append);
+  registerPractice(api);
+  listeners.set("start", ({ stage: startedStage }) => handlePracticeStageStart(startedStage, append, api));
   const request = (player, action, fields = {}) => listeners.get("practiceRequest")({}, {
     player, practiceRequest: { action, stageId: stage.id, roundId: round.id, ...fields },
   });
@@ -148,6 +156,24 @@ test("timer is initially hidden, toggles per participant, and cannot hide in fin
   f.request(f.players[0], "timer_forced_visible");
   f.request(f.players[0], "timer_hidden");
   assert.equal(f.players[0].round.get("practiceTimerVisible"), true);
+});
+test("client preserves hidden-to-forced timer behaviour across refresh and shows one clear label", () => {
+  const hidden = resolveTimerVisibility({
+    collapsible: true,
+    forceVisibleAtSeconds: PRACTICE.forceTimerSeconds,
+    remaining: PRACTICE.forceTimerSeconds + 1,
+  });
+  const forced = resolveTimerVisibility({
+    collapsible: true,
+    forceVisibleAtSeconds: PRACTICE.forceTimerSeconds,
+    remaining: PRACTICE.forceTimerSeconds,
+  });
+  assert.deepEqual(hidden, { forcedVisible: false, visible: false, canToggle: true, controlLabel: "Show timer" });
+  assert.deepEqual(forced, { forcedVisible: true, visible: true, canToggle: false, controlLabel: null });
+  assert.match(practiceClientSource, /resolveTimerVisibility\(\{/);
+  assert.match(practiceClientSource, /forced && !forcedSent\.current && !player\.round\.get\("practiceTimerForced"\)/);
+  assert.equal((practiceClientSource.match(/Time remaining:/g) || []).length, 1);
+  assert.match(reportSource, /Some information may be different from what other group members see\./);
 });
 test("practice completion waits for all participants before the main experiment", () => {
   const f = fixture("PracticeComplete");

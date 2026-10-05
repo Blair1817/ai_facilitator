@@ -40,6 +40,14 @@ const personalFlowShared = readFileSync(
   path.join(dirname, "../../shared/personalFlow.mjs"),
   "utf8",
 );
+const practiceServerSource = readFileSync(
+  path.join(dirname, "PracticeOnboarding.mjs"),
+  "utf8",
+);
+const practiceSharedSource = readFileSync(
+  path.join(dirname, "../../shared/practice.mjs"),
+  "utf8",
+);
 const overallInstructionsSource = readFileSync(
   path.join(dirname, "../../client/src/intro-exit/OverallInstructions.jsx"),
   "utf8",
@@ -61,7 +69,7 @@ const gamesFullSource = readFileSync(
   "utf8",
 );
 
-test("one technical practice container wraps the shared Icebreaker and formal rounds contain none", () => {
+test("one technical practice container wraps the current Practice flow and formal rounds contain no legacy stages", () => {
 
   const practiceStages = callbacksSource.slice(
     callbacksSource.indexOf('addPracticeRound(game);'),
@@ -69,21 +77,23 @@ test("one technical practice container wraps the shared Icebreaker and formal ro
   );
 
   const round1Stages = callbacksSource.slice(
-    callbacksSource.indexOf('round1.addStage({ name: "TaskInformation"'),
+    callbacksSource.indexOf('round1.addStage({ name: "Preparation"'),
     callbacksSource.indexOf("const round2 = game.addRound("),
   );
   const round2Stages = callbacksSource.slice(
-    callbacksSource.indexOf('round2.addStage({ name: "TaskInformation"'),
-    callbacksSource.indexOf("// MIGRATED from old 2nd (TEMP-BE-007"),
+    callbacksSource.indexOf('round2.addStage({ name: "Preparation"'),
+    callbacksSource.indexOf("// Restore the original stable colour aliases"),
   );
   assert.match(practiceStages, /addPracticeRound\(game\)/);
   for (const stages of [round1Stages, round2Stages]) assert.doesNotMatch(stages, /Walkthrough|IceBreaker|PracticeIcebreaker|Introduction/);
 
-  assert.match(callbacksSource, /const ICEBREAKER_TRANSITION_DURATION_SECONDS = 10;/);
-  assert.equal((callbacksSource.match(/name: "IceBreakerStartCountdown"/g) ?? []).length, 0);
-  assert.equal((callbacksSource.match(/name: "IceBreakerEndCountdown"/g) ?? []).length, 0);
-  assert.match(gameSource, /stageName == "IceBreakerStartCountdown"/);
-  assert.match(gameSource, /stageName == "IceBreakerEndCountdown"/);
+  assert.match(practiceSharedSource, /PRACTICE_STAGES = \[\s*"PracticeWelcome", "PracticeDiscussion", "FinalDecision", "PracticeComplete"/);
+  assert.match(practiceServerSource, /for \(const name of PRACTICE_STAGES\)/);
+  for (const source of [callbacksSource, gameSource, practiceServerSource, practiceSharedSource]) {
+    assert.doesNotMatch(source, /Walkthrough|IceBreakerStartCountdown|IceBreakerEndCountdown|PracticeIcebreaker/);
+  }
+  assert.match(gameSource, /round\?\.get\("isPractice"\)/);
+  assert.match(gameSource, /<PracticeOnboarding key=\{roundStageKey\}/);
   assert.match(reviewQuizSource, /player\.stage\.set\("submit", true\)/);
 });
 
@@ -132,13 +142,13 @@ test("R3-R7/R19: personal pages advance individually; only group activities gate
   assert.match(personalFlowServer, /player\.round\.set\("breakSkippedAt", now\)/);
   assert.match(personalFlowClient, /skipBreak: page === "Break" && skipBreak/);
   assert.match(personalFlowClient, /Skip the rest of the break/);
+  assert.match(personalFlowClient, /<span className="font-semibold">Time remaining:<\/span>/);
   assert.match(callbacksSource, /addPracticeRound\(game\)/);
   assert.equal((callbacksSource.match(/name: "Preparation", duration: 1e9/g) ?? []).length, 2);
   assert.doesNotMatch(callbacksSource, /name: "TaskInformation",\s+duration: TASK_INFORMATION_DURATION_SECONDS/);
   assert.doesNotMatch(callbacksSource, /name: "Break"/);
   for (const key of [
     "taskInformationStartedAt", "taskInformationCompletedAt", "taskInformationCompletionDurationMs",
-    "walkthroughStartedAt", "walkthroughCompletedAt", "walkthroughCompletionDurationMs",
     "reviewQuizStartedAt", "reviewQuizCompletedAt", "reviewQuizCompletionDurationMs",
     "finalQuestionsStartedAt", "finalQuestionsCompletedAt", "finalQuestionsCompletionDurationMs",
     "tlxSubmittedAt", "tlxCompletionDurationMs", "subjectiveSurveySubmittedAt",
@@ -160,6 +170,8 @@ test("SubjectiveSurvey requires every visible response without blocking hidden c
   assert.match(surveySource, /disabled=\{submitting \|\| !isComplete\}/);
   assert.match(surveySource, /Please answer every question shown above before continuing\./);
   assert.match(surveySource, /player\.round\.set\("subjectiveSurvey"/);
+  assert.equal((surveySource.match(/summaris(e|ing)/g) ?? []).length, 2);
+  assert.doesNotMatch(surveySource, /summarize|summarizing/);
 });
 
 test("OverallInstructions is one global introStep before RecruitmentBootstrap and is not a round stage", () => {

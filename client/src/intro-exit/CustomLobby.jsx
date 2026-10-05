@@ -60,7 +60,7 @@ export function CustomLobby() {
                 </svg>
                 <h3 className="mt-2 text-5xl font-medium text-gray-900">
                     {treatment.playerCount > 1
-                        ? `${assignedPlayerCount}/${treatment.playerCount} players connected — waiting for other players to join...`
+                        ? `${assignedPlayerCount}/${treatment.playerCount} players connected. Waiting for other players to join...`
                         : "Game loading"}
                 </h3>
                 <br/>

@@ -67,6 +67,65 @@
   /* Internet Explorer/Edge */
 }
 
+/* Facilitator messages remain ordinary records in the shared chat stream.
+   Scope every rule to this card so human and system message presentation is
+   unchanged. */
+.ai-facilitator-message-row {
+  display: flex;
+  width: 100%;
+  justify-content: center;
+  margin: 1.25rem 0;
+}
+
+.ai-facilitator-message-card {
+  box-sizing: border-box;
+  width: 90%;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #f1f5f9;
+  color: #111827;
+}
+
+.ai-facilitator-message-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.25rem 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.ai-facilitator-message-title {
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1.25rem;
+}
+
+.ai-facilitator-message-time {
+  color: #6b7280;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.ai-facilitator-message-content {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+  color: #111827;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  text-align: left;
+}
+
+@media (max-width: 640px) {
+  .ai-facilitator-message-card {
+    width: calc(100% - 1rem);
+    padding: 12px 14px;
+  }
+}
+
 
 /* Typing-indicator three-dot animation.
    Used by the Chat component to show that a human participant or the

@@ -7,6 +7,7 @@ import { Chat } from "../components/CustomChat";
 import { PlayerList } from "../components/PlayerList";
 import { draftKey, usePersistentDraft } from "../hooks/usePersistentDraft";
 import { PRACTICE, PRACTICE_CHAT, PRACTICE_PERSONAL_PAGES, practiceReadiness } from "../../../shared/practice.mjs";
+import { resolveTimerVisibility } from "../../../shared/timerVisibility.mjs";
 
 function Button(props) {
   return <SharedButton {...props} className="ml-0 bg-blue-700 text-white hover:bg-blue-800" />;
@@ -109,7 +110,7 @@ export function PracticeOnboarding() {
           <p>Before the main tasks, you will complete a short practice activity with your group. This will show you how to use the task information, group chat, and decision interface.</p>
           <Identity player={player} />
           <p>Other group members will appear using colour nicknames.</p>
-          <p className="rounded-lg bg-blue-50 p-4 text-sm text-blue-950">The facilitator has started a conversation in the chat — say hello to your group while everyone gets ready.</p>
+          <p className="rounded-lg bg-blue-50 p-4 text-sm text-blue-950">The facilitator has started a conversation in the chat. Say hello to your group while everyone gets ready.</p>
           {done ? <p role="status">Waiting for the other group members…</p> : <Button disabled={pending} handleClick={() => next()}>Start practice</Button>}
         </main>
       </div>
@@ -138,8 +139,12 @@ function PracticeDiscussion({ game, player, players, round, stage, now, config, 
   const deadline = round.get("practiceDeadline");
   const startedAt = round.get("practiceDiscussionStartedAt");
   const remaining = Number.isFinite(deadline) ? Math.max(0, Math.ceil((deadline - now) / 1000)) : null;
-  const forced = !tutorial && remaining !== null && remaining <= config.forceTimerSeconds;
-  const visible = forced || player.round.get("practiceTimerVisible") === true;
+  const { forcedVisible: forced, visible } = resolveTimerVisibility({
+    collapsible: true,
+    forceVisibleAtSeconds: config.forceTimerSeconds,
+    remaining: tutorial ? null : remaining,
+    manuallyVisible: player.round.get("practiceTimerVisible") === true,
+  });
   const ready = round.get("practiceReady") || {};
   const eligible = !tutorial && remaining > 0 && practiceReadiness({
     startedAt, now, counts: round.get("practiceMessageCounts") || {},
@@ -168,7 +173,7 @@ function PracticeDiscussion({ game, player, players, round, stage, now, config, 
           {!tutorial && <div className="rounded-lg border border-gray-200 bg-white p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <strong>{remaining === 0 ? "Discussion time has ended. Please submit your group’s choice." : "Discussion in progress"}</strong>
-              {visible && <span className="text-2xl font-semibold tabular-nums">{clock} remaining</span>}
+              {visible && <span className="flex items-baseline gap-2"><span className="font-semibold">Time remaining:</span><span className="text-2xl font-semibold tabular-nums">{clock}</span></span>}
               {!forced && <button className="rounded border border-gray-300 px-3 py-2 text-sm" onClick={() => request(visible ? "timer_hidden" : "timer_opened")}>{visible ? "Hide timer" : "Show timer"}</button>}
             </div>
             {forced && remaining > 0 && <p className="mt-2 text-sm text-gray-600">Please start bringing your discussion to a conclusion.</p>}

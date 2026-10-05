@@ -6,9 +6,6 @@ export const MESSAGE_TYPES = Object.freeze({
   TIMER_REMINDER: "timer_reminder",
 });
 
-export const PRACTICE_ICEBREAKER_STAGE_NAME = "PracticeIcebreaker";
-export const PRACTICE_ICEBREAKER_TRANSCRIPT_KEY = "practice_icebreaker_chat";
-
 export const BREAK_READY_WINDOW_MS = 45_000;
 export const NO_GROUP_FINAL_DECISION = "NO_GROUP_FINAL_DECISION";
 
@@ -32,6 +29,33 @@ export function allFinalDecisionConfirmationsMatch(drafts, matchedChoice, requir
     && Array.isArray(drafts)
     && drafts.length === requiredParticipants
     && drafts.every((draft) => draft?.confirmedChoice === matchedChoice);
+}
+
+export function reviewFinalDecisionConfirmation({
+  drafts,
+  participantId,
+  requestChoice,
+  requiredParticipants = 3,
+}) {
+  const summary = summarizeFinalDecisionDrafts(drafts, requiredParticipants);
+  if (summary.status !== "agreed" || !summary.matchedChoice) {
+    return { accepted: false, matchedChoice: null };
+  }
+
+  const ownDraft = drafts.find((draft) => draft?.participantId === participantId);
+  const ownConfidence = ownDraft?.confidence;
+  const confidenceRecorded = Number.isFinite(ownConfidence)
+    && ownConfidence >= 0
+    && ownConfidence <= 100;
+  const accepted = Boolean(ownDraft)
+    && ownDraft.choice === summary.matchedChoice
+    && confidenceRecorded
+    && requestChoice === summary.matchedChoice;
+
+  return {
+    accepted,
+    matchedChoice: accepted ? summary.matchedChoice : null,
+  };
 }
 
 export function classifyFinalDecision(matchedChoice, { timedOut = false } = {}) {
@@ -127,9 +151,8 @@ export function reviewHumanMessageRequest({
   if (request.stageId !== currentStageId) return { accepted: false, reason: "stale_stage" };
 
   const isDiscussion = currentStageName === "Task" || currentStageName === "Discussion";
-  const isIceBreaker = currentStageName === PRACTICE_ICEBREAKER_STAGE_NAME;
-  if (!isDiscussion && !isIceBreaker) return { accepted: false, reason: "wrong_stage" };
-  if (isDiscussion && (!Number.isFinite(deadline) || now >= deadline)) {
+  if (!isDiscussion) return { accepted: false, reason: "wrong_stage" };
+  if (!Number.isFinite(deadline) || now >= deadline) {
     return { accepted: false, reason: "discussion_closed" };
   }
 
@@ -138,8 +161,8 @@ export function reviewHumanMessageRequest({
     reason: "accepted",
     requestId: request.requestId,
     messageId: `${playerId}-${request.requestId}`,
-    attribute: isDiscussion ? `chat_round_${currentRoundIndex}` : PRACTICE_ICEBREAKER_TRANSCRIPT_KEY,
-    stage: isDiscussion ? "Discussion" : "IceBreaker",
+    attribute: `chat_round_${currentRoundIndex}`,
+    stage: "Discussion",
     content: request.content.trim(),
   };
 }

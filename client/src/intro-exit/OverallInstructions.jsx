@@ -9,7 +9,7 @@ export function OverallInstructions({ next }) {
         <div className="mt-4 space-y-4 text-base leading-6 text-gray-700">
           <section>
             <h2 className="text-lg font-semibold leading-6 text-gray-900">What you will do</h2>
-            <p className="mt-1">You will work in a group of three and complete two different decision-making tasks, with a short break between them. For each task, you will read the materials, complete a short knowledge check, make a private initial decision, discuss the options, record your group’s final decision, and answer private follow-up questions.</p>
+            <p className="mt-1">You will first complete a short Practice activity. You will then work in the same group of three on two different decision-making tasks, with a short break between them. For each task, you will read the materials, complete a short knowledge check, make a private initial decision, discuss the options for up to 15 minutes, record your group’s final decision, and answer private follow-up questions.</p>
           </section>
 
           <section>

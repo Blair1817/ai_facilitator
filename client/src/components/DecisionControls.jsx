@@ -24,16 +24,18 @@ export function OptionChoice({ legend, options, value, onChange, name }) {
 }
 
 export function ConfidenceSlider({ label, value, onChange, name }) {
+  const hasSelectedValue = Number.isFinite(value);
   return (
     <div className="mt-6 min-w-0 w-full">
       <label id={`${name}-label`} className="block text-base font-semibold text-gray-900">{label}</label>
-      <div className="mt-4 px-3">
-        <Slider value={value ?? 50} onChange={(_event, next) => onChange(Number(next))} aria-labelledby={`${name}-label`} min={0} max={100} step={1} valueLabelDisplay={value === null || value === undefined ? "off" : "on"} sx={{ "& input": { padding: 0, flex: "none" } }} />
+      {!hasSelectedValue && <p className="mt-2 text-sm font-medium text-blue-800">Move the slider to record your confidence.</p>}
+      <div className={`mt-4 px-3 ${hasSelectedValue ? "" : "opacity-60"}`}>
+        <Slider value={hasSelectedValue ? value : 50} onChange={(_event, next) => onChange(Number(next))} aria-labelledby={`${name}-label`} aria-valuetext={hasSelectedValue ? `${value} out of 100 selected` : "Not selected. Move the slider to record your confidence."} min={0} max={100} step={1} valueLabelDisplay={hasSelectedValue ? "on" : "off"} sx={{ "& input": { padding: 0, flex: "none" } }} />
       </div>
       <div className="flex justify-between gap-4 text-xs font-semibold text-gray-600">
         <span>0 = Not at all confident</span><span>100 = Completely confident</span>
       </div>
-      <p className="mt-2 text-center text-sm text-gray-600" aria-live="polite">Selected value: {value ?? "Not selected"}</p>
+      <p className="mt-2 text-center text-sm text-gray-600" aria-live="polite">Selected value: {hasSelectedValue ? value : "Not selected"}</p>
     </div>
   );
 }

@@ -6,12 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const callbacks = readFileSync(path.join(dir, "callbacks.js"), "utf8");
-const icebreaker = readFileSync(path.join(dir, "IcebreakerFacilitator.mjs"), "utf8");
 const formalHandle = callbacks.slice(callbacks.indexOf("async function handleChat"));
-const icebreakerHandle = callbacks.slice(
-  callbacks.indexOf("async function handleIcebreakerChat"),
-  callbacks.indexOf('// ── on("game", "chat_round_N")'),
-);
 
 test("formal LLM call sites receive only the sanitised shared task overview", () => {
   assert.match(formalHandle, /buildStaticSharedTaskOverview\(\{/);
@@ -22,15 +17,8 @@ test("formal LLM call sites receive only the sanitised shared task overview", ()
   assert.doesNotMatch(formalHandle, /get\("playerContent"\)|get\("private|privateProfile|hiddenFacts|answerKey/i);
 });
 
-test("icebreaker and formal handlers use different transcript keys and context builders", () => {
-  assert.match(icebreakerHandle, /PRACTICE_ICEBREAKER_TRANSCRIPT_KEY/);
-  assert.match(icebreakerHandle, /buildIcebreakerLLMMessages\(chat\)/);
-  assert.doesNotMatch(icebreakerHandle, /chat_round_|buildGeneratorContext|assessSemanticFactors|validateCandidate|generalInfo|decisionOptions|playerContent/);
+test("formal LLM handlers subscribe only to formal transcripts", () => {
   assert.match(formalHandle, /chat_round_/);
   assert.doesNotMatch(formalHandle, /practice_icebreaker_chat|buildIcebreakerLLMMessages/);
-});
-
-test("icebreaker boundary module imports no task or formal-pipeline source", () => {
-  const imports = icebreaker.split("\n").filter((line) => /^\s*import\s/u.test(line)).join("\n");
-  assert.equal(imports, "");
+  assert.doesNotMatch(callbacks, /handleIcebreakerChat|IcebreakerFacilitator|PRACTICE_ICEBREAKER/);
 });

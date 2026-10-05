@@ -11,6 +11,7 @@ import { PlayerList } from "../components/PlayerList.jsx";
 import { Profile } from "../Profile";
 import { Button } from "../components/Button";
 import { PlayerSpecificInfo } from "../components/PlayerSpecificInfo.jsx";
+import { FORMAL_DISCUSSION_FORCE_TIMER_SECONDS } from "../../../shared/timerVisibility.mjs";
 
 // Renders the "Task" stage (the group discussion). Kept as its own
 // self-contained page -- like InitialDecision.jsx/FinalDecision.jsx -- rather
@@ -40,7 +41,7 @@ export function Discussion() {
       <div className="flex h-full min-h-0 min-w-[960px]">
         <div className="flex h-full min-h-0 min-w-0 w-3/5 flex-col border-r border-gray-200 px-4 py-3">
           <div className="sticky top-0 z-10 mb-3 flex-none bg-white">
-            <Profile />
+            <Profile collapsibleTimer forceTimerAtSeconds={FORMAL_DISCUSSION_FORCE_TIMER_SECONDS} />
           </div>
 
           <div className="mb-4 flex-none text-center">

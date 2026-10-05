@@ -9,9 +9,21 @@ import { MentionsInput, Mention } from 'react-mentions';
 import ReactMentionsStyling from "./ReactMentionsStyling.jsx";
 import reactStringReplace from "react-string-replace";
 import { draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
-import { PRACTICE_ICEBREAKER_STAGE_NAME } from "../experimentStructure.js";
 
 
+
+const FACILITATOR_SPEAKER_TYPES = new Set([
+    "facilitator",
+    "facilitator_fixed",
+    "ice_breaking_facilitator",
+]);
+
+// Presentation-only classification using the explicit speaker types authored
+// by the existing chat publication paths. Never infer identity from content
+// or the sender's display name.
+function isFacilitatorMessage(message) {
+    return FACILITATOR_SPEAKER_TYPES.has(message?.speakerType);
+}
 
 export function Chat({
     scope,
@@ -68,47 +80,56 @@ function Messages(props) {
     const player = usePlayer();
     const playerRef = useRef(player);
     playerRef.current = player;
-    const [msgCount, setMsgCount] = useState(0);
+    const previousMessageCountRef = useRef(0);
+    const wasNearBottomRef = useRef(true);
+    const observedScrollHeightRef = useRef(0);
+    const hasMessages = msgs.length > 0;
 
-    // This first effect is to detect scrolling to the bottom.
-    // Depends on msgs.length so it re-runs when the scrollable div first mounts
-    // (msgs going from 0 to 1 swaps the empty state for the message list).
+    // Track the reader's position independently of message height. This value
+    // is intentionally captured by scroll events before the next message is
+    // rendered, so a tall facilitator card cannot change the decision.
+    // Depends on whether messages exist so it re-runs when the scrollable div
+    // first mounts (0 to 1 swaps the empty state for the message list).
     useEffect(() => {
         const el = scroller.current;
         if (!el) return;
+        observedScrollHeightRef.current = el.scrollHeight;
 
         const handleScroll = () => {
             const { scrollTop, scrollHeight, clientHeight } = el;
-            if (scrollHeight - scrollTop - clientHeight < 10) {
+            // Message insertion can itself dispatch a scroll event after the
+            // DOM grows. Keep the pre-update reader position until the message
+            // effect below has acted on it.
+            if (scrollHeight !== observedScrollHeightRef.current) return;
+            wasNearBottomRef.current = scrollHeight - scrollTop - clientHeight < 80;
+            if (wasNearBottomRef.current) {
                 playerRef.current.stage.set('newMessages', false);
             }
         };
 
         el.addEventListener('scroll', handleScroll);
         return () => el.removeEventListener('scroll', handleScroll);
-    }, [msgs.length]);
+    }, [hasMessages]);
 
 
-    // This effect is to manage auto-scrolling and alerting
+    // Follow new messages only when the reader was already near the bottom.
+    // Otherwise preserve their position and retain the existing indicator.
     useEffect(() => {
-        if (!scroller.current) {
-            return;
-        }
+        const previousMessageCount = previousMessageCountRef.current;
+        const hasNewMessages = msgs.length > previousMessageCount;
+        previousMessageCountRef.current = msgs.length;
 
-        const { scrollTop, scrollHeight, clientHeight } = scroller.current;
-        const nMessagesUnseen = (scrollHeight - scrollTop - clientHeight) / 63; // 63 is the height of a message
+        if (!scroller.current || !hasNewMessages) return;
 
-        if (msgCount !== msgs.length) {
-            setMsgCount(msgs.length);
-            if (nMessagesUnseen > 3) {
-                player.stage.set("newMessages", true);
-            }
-            else {
-                player.stage.set("newMessages", false);
-                scroller.current.scrollTop = scroller.current.scrollHeight;
-            }
+        if (wasNearBottomRef.current) {
+            playerRef.current.stage.set("newMessages", false);
+            scroller.current.scrollTop = scroller.current.scrollHeight;
         }
-    }, [scroller, props, msgCount]);
+        else {
+            playerRef.current.stage.set("newMessages", true);
+        }
+        observedScrollHeightRef.current = scroller.current.scrollHeight;
+    }, [msgs.length]);
 
 
     if (msgs.length === 0) {
@@ -178,6 +199,22 @@ function MessageComp({ attribute }) {
             </span>
         ));
     };
+
+    if (isFacilitatorMessage(msg)) {
+        return (
+            <div className="ai-facilitator-message-row">
+                <article className="ai-facilitator-message-card">
+                    <header className="ai-facilitator-message-header">
+                        <span className="ai-facilitator-message-title">Facilitator</span>
+                        <span className="ai-facilitator-message-time">{ts && relTime(ts)}</span>
+                    </header>
+                    <p className="ai-facilitator-message-content">
+                        {renderMessageWithMentions(msg.content ?? msg.text)}
+                    </p>
+                </article>
+            </div>
+        );
+    }
 
     let avatar = msg.sender.avatar;
     const isHuman = (msg.speakerType ?? (msg.sender.id === "ai" ? "facilitator" : "human")) === "human";
@@ -275,7 +312,7 @@ function Input({ onNewMessage, requestResult, disabled = false }) {
         display: player.get("name"),
     }));
 
-    if (!round?.get("isPractice") && (stage?.get("name") === PRACTICE_ICEBREAKER_STAGE_NAME || (facilitation != "none" && facilitation != "human"))) {
+    if (!round?.get("isPractice") && facilitation != "none" && facilitation != "human") {
         mentionUsers.push({
             id: "ai",
             display: "Facilitator",
@@ -421,7 +458,6 @@ export function TypingBubbles({ scrollerRef }) {
     const game = useGame();
     const round = useRound();
     const stage = useStage();
-    const stageName = stage?.get("name");
 
     // Human participants: only show OTHER players currently typing -- the
     // local user should not see their own "is typing" bubble.
@@ -433,10 +469,7 @@ export function TypingBubbles({ scrollerRef }) {
     // broader audit lifecycle on `game.llmInFlight`, but only entries whose
     // visible-response generation has started should be participant-visible.
     // Adaptive semantic assessment therefore remains invisible when it
-    // ultimately abstains. The PracticeIcebreaker stage uses its own
-    // `icebreakerFacilitatorHandledMessageIds` ledger with `status:
-    // "pending"` while the LLM is generating a reply. Both must be honoured
-    // so the dots appear during every chat that the Facilitator can post in.
+    // ultimately abstains.
     const llmInFlight = game.get("llmInFlight") || {};
     const facilitatorTypingInFlight = Object.values(llmInFlight).some(
         (entry) => (
@@ -447,11 +480,7 @@ export function TypingBubbles({ scrollerRef }) {
         )
     );
 
-    const icebreakerHandled = game.get("icebreakerFacilitatorHandledMessageIds") || {};
-    const facilitatorTypingInIcebreaker = stageName === PRACTICE_ICEBREAKER_STAGE_NAME
-        && Object.values(icebreakerHandled).some((entry) => entry?.status === "pending");
-
-    const facilitatorTyping = facilitatorTypingInFlight || facilitatorTypingInIcebreaker;
+    const facilitatorTyping = facilitatorTypingInFlight;
 
     // All hooks must run on every render -- declare effects BEFORE any
     // early-return so React's hook order stays stable.

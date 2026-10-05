@@ -14,11 +14,6 @@ import {
   buildSuccessfulLLMResult,
   extractChatCompletionResponseMetadata,
 } from "./LLMTransport.mjs";
-import {
-  buildIcebreakerLLMMessages,
-  buildIcebreakerOpening,
-  parseIcebreakerLLMResponse,
-} from "./IcebreakerFacilitator.mjs";
 import { assessSemanticFactors } from "./SemanticAssessor.js";
 import { checkEvidence } from "./EvidenceChecker.js";
 import { compilePlan } from "./PolicyCompiler.js";
@@ -50,10 +45,9 @@ import {
   classifyFinalDecision,
   MESSAGE_TYPES,
   NO_GROUP_FINAL_DECISION,
-  PRACTICE_ICEBREAKER_STAGE_NAME,
-  PRACTICE_ICEBREAKER_TRANSCRIPT_KEY,
   allocateSequencePosition,
   buildCanonicalMessage,
+  reviewFinalDecisionConfirmation,
   reviewHumanMessageRequest,
   summarizeFinalDecisionDrafts,
 } from "./ExperimentPolicies.mjs";
@@ -68,10 +62,10 @@ import {
   researchPersistence,
 } from "./SupabasePersistence.mjs";
 import { countLobbyReadyPlayers } from "./LobbyReadiness.mjs";
-import { addPracticeRound, initialisePractice, registerPractice, handlePracticeMessage, logPractice } from "./PracticeOnboarding.mjs";
-import { registerPersonalFlow } from "./PersonalFlow.mjs";
+import { addPracticeRound, initialisePractice, handlePracticeStageStart, registerPractice, handlePracticeMessage, logPractice } from "./PracticeOnboarding.mjs";
+import { handlePersonalFlowStageStart, registerPersonalFlow } from "./PersonalFlow.mjs";
 
-registerPractice(Empirica, appendCanonicalMessage);
+registerPractice(Empirica);
 registerPersonalFlow(Empirica, (player, round, stageName) => {
   const rows = buildRoundResponseRows({ gameId: round.currentGame.id, roundId: round.id,
     participantId: player.id, stageName, read: (key) => player.round.get(key) });
@@ -110,14 +104,14 @@ function finalizeAuditLog(store, entry) {
   });
 }
 
-function whileFacilitatorPublishesVisibleResponse(game, logEntry, task) {
+async function whileFacilitatorPublishesVisibleResponse(game, logEntry, task) {
   setVisibleResponsePending(game, logEntry.auditRequestId, true);
-  Empirica.flush();
+  await Empirica.flush();
   try {
-    return task();
+    return await task();
   } finally {
     setVisibleResponsePending(game, logEntry.auditRequestId, false);
-    Empirica.flush();
+    await Empirica.flush();
   }
 }
 
@@ -224,15 +218,10 @@ async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens) {
   }
 }
 
-// Formal-task and icebreaker calls are separate, stateless completion paths.
-// The shared function above is transport only: it stores no conversation and
-// adds no context. Each wrapper receives messages from its own locked builder.
+// The transport above stores no conversation and adds no context. Formal
+// callers provide messages from their own locked context builders.
 async function getLLMResponse(messages) {
   return requestChatCompletion(messages, llmMaxOutputTokens);
-}
-
-async function getIcebreakerLLMResponse(messages) {
-  return requestChatCompletion(messages, Math.min(llmMaxOutputTokens, 500));
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -650,7 +639,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   logEntry.validator = v1.verdict;
   if (v1.verdict.passed) {
     logEntry.llmAction = a1.candidate;
-    const posted = postGeneratorResultIfValid(game, chatKey, a1.candidate, built.metadata.generationRole, logEntry);
+    const posted = await postGeneratorResultIfValid(game, chatKey, a1.candidate, built.metadata.generationRole, logEntry);
     logEntry.attempts = 1;
     logEntry.outcome = posted ? "PUBLISHED" : "SILENT";
     return { published: posted, candidate: a1.candidate, attempts: 1, validator: v1.verdict };
@@ -686,7 +675,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   logEntry.attempts = 2;
   if (v2.verdict.passed) {
     logEntry.llmAction = a2.candidate;
-    const posted = postGeneratorResultIfValid(game, chatKey, a2.candidate, built.metadata.generationRole, logEntry);
+    const posted = await postGeneratorResultIfValid(game, chatKey, a2.candidate, built.metadata.generationRole, logEntry);
     logEntry.outcome = posted ? "PUBLISHED" : "SILENT";
     return { published: posted, candidate: a2.candidate, attempts: 2, validator: v2.verdict };
   }
@@ -733,8 +722,6 @@ const SEQUENCES = {
 const SEQUENCE_IDS = Object.keys(SEQUENCES);
 const REVIEW_QUIZ_SAFETY_DURATION_SECONDS = 24 * 60 * 60;
 const TASK_INFORMATION_DURATION_SECONDS = 10 * 60;
-const WALKTHROUGH_DURATION_SECONDS = 10 * 60;
-const ICEBREAKER_TRANSITION_DURATION_SECONDS = 10;
 const INITIAL_DECISION_DURATION_SECONDS = 3 * 60;
 // The visible Break countdown is controlled by breakScheduledEndAt. This long
 // safety duration prevents Empirica's timer from ending the stage before the
@@ -884,8 +871,8 @@ Empirica.onGameStart(({ game }) => {
   // sequence; it must not be inferred from taskIndex or facilitation.
   // Empirica Classic synchronous multiplayer stages must live in a Round.
   // This container is explicitly non-formal: it has no taskVersion,
-  // facilitation, or taskIndex, and exists only to synchronize the one shared
-  // practice Icebreaker before the two experimental rounds.
+  // facilitation, or taskIndex, and exists only to synchronize the shared
+  // practice activity before the two experimental rounds.
   addPracticeRound(game);
 
   const round1 = game.addRound({
@@ -1147,7 +1134,7 @@ function appendTimedMessage(stage, attribute, content, messageType = MESSAGE_TYP
     groupId: game.id,
     speakerId: `system-${messageType}`,
     roundIndex: stage.round.get("taskIndex") ?? stage.round.get("index"),
-    stage: stage.get("name") === "Task" ? "Discussion" : "IceBreaker",
+    stage: "Discussion",
     messageType,
     speakerType: messageType,
     timestamp,
@@ -1269,43 +1256,16 @@ function clearSilenceWatchdog(gameId, chatKey) {
   }
 }
 
-function icebreakerActivityPrompt() {
-  // Temporary content preserved from the previous Task A Icebreaker until the
-  // team designs the future practice mini-task. It is no longer task-selected.
-  return "For this activity, choose whether you would rather speak every language fluently or play every musical instrument expertly, share a short reason, and invite a teammate to answer.";
-}
-
-function appendIcebreakerOpening(stage, introChatKey) {
+export function handleFormalStageStart(stage) {
   const game = stage.currentGame;
-  const existing = game.get(introChatKey) || [];
-  if (existing.some((message) => message?.messageType === MESSAGE_TYPES.ICE_BREAKING_FACILITATOR)) return false;
-  const timestamp = Date.now();
-  appendCanonicalMessage(game, introChatKey, {
-    messageId: `icebreaker-opening-${stage.id}`,
-    groupId: game.id,
-    speakerId: "icebreaker-ai",
-    roundIndex: stage.round.get("index"),
-    stage: "IceBreaker",
-    messageType: MESSAGE_TYPES.ICE_BREAKING_FACILITATOR,
-    speakerType: MESSAGE_TYPES.ICE_BREAKING_FACILITATOR,
-    timestamp,
-    content: buildIcebreakerOpening({
-      participantNames: game.players.map((participant) => participant.get("name")),
-      activityPrompt: icebreakerActivityPrompt(),
-    }),
-    sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
-  });
-  return true;
-}
-
-Empirica.onStageStart(({ stage }) => {
-  const game = stage.currentGame;
+  const stageName = stage.get("name");
+  if (stage.round.get("isPractice") && stageName !== "FinalDecision") return;
+  if (stage.get("formalStageStartHandled")) return;
+  stage.set("formalStageStartHandled", true);
   stage.set("callbacksInitializedAt", Date.now());
   stage.set("callbacksInstanceId", CALLBACKS_INSTANCE_ID);
   const { gameDuration } = game.get("treatment");
   const now = Date.now();
-  const stageName = stage.get("name");
-  if (stage.round.get("isPractice") && stageName !== "FinalDecision") return;
   if (["Task", "InitialDecision", "FinalDecision", "IndividualAssessment"].includes(stageName)) {
     stage.round.set(`${stageName}StartedAt`, now);
   }
@@ -1335,12 +1295,6 @@ Empirica.onStageStart(({ stage }) => {
     if (durationMs > SILENCE_NUDGE_DELAY_MS + THRESHOLDS.gate.min_time_for_intervention_seconds * 1000) {
       armSilenceWatchdog(stage, chatKey);
     }
-  }
-  if (stageName === PRACTICE_ICEBREAKER_STAGE_NAME) {
-    const durationMs = stage.get("duration") * 1000;
-    appendIcebreakerOpening(stage, PRACTICE_ICEBREAKER_TRANSCRIPT_KEY);
-    if (durationMs > 30_000) setTimeout(() => appendTimedMessage(stage, PRACTICE_ICEBREAKER_TRANSCRIPT_KEY, "Thirty seconds remain in the IceBreaker."), durationMs - 30_000);
-    Empirica.flush();
   }
   if (stageName === "FinalDecision") {
     stage.round.set("finalDecisionAgreementStatus", "not_agreed");
@@ -1384,6 +1338,12 @@ Empirica.onStageStart(({ stage }) => {
       updateBreakReadySummary(stage);
     }
   }
+}
+
+Empirica.onStageStart(({ stage }) => {
+  handlePracticeStageStart(stage, appendCanonicalMessage, Empirica);
+  handlePersonalFlowStageStart(stage);
+  handleFormalStageStart(stage);
 });
 
 Empirica.on("player", "breakReadyRequest", (ctx, { player }) => {
@@ -1463,14 +1423,16 @@ Empirica.on("player", "finalDecisionConfirmRequest", (_ctx, { player, finalDecis
   if (!request || request.roundId !== round.id || request.stageId !== stage.id) return;
 
   const drafts = finalDecisionDrafts(game);
-  const summary = summarizeFinalDecisionDrafts(drafts);
-  const ownChoice = player.round.get("groupFinalChoice");
-  const allConfidenceRecorded = drafts.every((draft) => Number.isFinite(draft.confidence));
-  if (summary.status !== "agreed" || !allConfidenceRecorded || !ownChoice || ownChoice !== summary.matchedChoice) return;
+  const review = reviewFinalDecisionConfirmation({
+    drafts,
+    participantId: player.id,
+    requestChoice: request.choice,
+  });
+  if (!review.accepted) return;
 
   // Duplicate confirmations are idempotent and always bind to the current
   // matching choice, never merely to a participant identity.
-  player.round.set("groupFinalConfirmedChoice", summary.matchedChoice);
+  player.round.set("groupFinalConfirmedChoice", review.matchedChoice);
   player.round.set("groupFinalConfirmedAt", Date.now());
   finalizeGroupDecision(stage);
   Empirica.flush();
@@ -1547,83 +1509,6 @@ Empirica.on("player", "humanMessageRequest", (_ctx, { player, humanMessageReques
   player.set("humanMessageRequestResult", result);
 });
 
-// ── Icebreaker-only @Facilitator path ───────────────────────────────────────
-// This listener cannot enter the formal detector/generator/validator pipeline.
-// Its context builder accepts only the isolated practice transcript.
-async function handleIcebreakerChat(_env, { game }) {
-  if (game.currentRound?.get("isPractice")) return;
-  const round = game.currentRound;
-  const stage = game.currentStage;
-  if (!round || !stage || stage.get("name") !== PRACTICE_ICEBREAKER_STAGE_NAME) return;
-
-  const roundIndex = round.get("index");
-  const chat = game.get(PRACTICE_ICEBREAKER_TRANSCRIPT_KEY) || [];
-  const lastMessage = chat[chat.length - 1];
-  if (
-    !lastMessage
-    || lastMessage.stage !== "IceBreaker"
-    || lastMessage.speakerType !== MESSAGE_TYPES.HUMAN
-    || !containsFacilitatorMention(lastMessage.content ?? lastMessage.text ?? "")
-  ) return;
-
-  const messageId = lastMessage.messageId;
-  if (typeof messageId !== "string" || !messageId) return;
-  const handled = { ...(game.get("icebreakerFacilitatorHandledMessageIds") || {}) };
-  if (handled[messageId]) return;
-  handled[messageId] = { status: "pending", startedAt: Date.now() };
-  game.set("icebreakerFacilitatorHandledMessageIds", handled);
-  Empirica.flush();
-
-  const originatingRoundId = round.id;
-  const originatingStageId = stage.id;
-  const llmMessages = buildIcebreakerLLMMessages(chat);
-  const response = await getIcebreakerLLMResponse(llmMessages);
-  const parsed = response.success ? parseIcebreakerLLMResponse(response.rawText) : { ok: false, reason: response.error };
-
-  if (
-    game.currentRound?.id !== originatingRoundId
-    || game.currentStage?.id !== originatingStageId
-    || game.currentStage?.get("name") !== PRACTICE_ICEBREAKER_STAGE_NAME
-  ) return;
-
-  const content = parsed.ok
-    ? parsed.message
-    : "I can help using only what has been shared in this icebreaker chat. Please rephrase your question or ask about the icebreaker activity.";
-  const timestamp = Date.now();
-  appendCanonicalMessage(game, PRACTICE_ICEBREAKER_TRANSCRIPT_KEY, {
-    messageId: `icebreaker-facilitator-${originatingStageId}-${timestamp}`,
-    groupId: game.id,
-    speakerId: "icebreaker-ai",
-    roundIndex,
-    stage: "IceBreaker",
-    messageType: MESSAGE_TYPES.ICE_BREAKING_FACILITATOR,
-    speakerType: MESSAGE_TYPES.ICE_BREAKING_FACILITATOR,
-    timestamp,
-    content,
-    sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
-  });
-  game.set("icebreakerFacilitatorHandledMessageIds", {
-    ...(game.get("icebreakerFacilitatorHandledMessageIds") || {}),
-    [messageId]: { status: parsed.ok ? "published" : "safe_fallback", finishedAt: timestamp },
-  });
-  game.set("icebreakerLLMLog", [
-    ...(game.get("icebreakerLLMLog") || []),
-    {
-      timestamp,
-      roundIndex,
-      requestMessageId: messageId,
-      outcome: parsed.ok ? "PUBLISHED" : "SAFE_FALLBACK",
-      failureReason: parsed.ok ? null : parsed.reason,
-      contextBoundary: "PUBLIC_ICEBREAKER_CHAT_ONLY",
-      model: openaiModel,
-      responseMetadata: response.responseMetadata ?? null,
-    },
-  ]);
-  Empirica.flush();
-}
-
-Empirica.on("game", PRACTICE_ICEBREAKER_TRANSCRIPT_KEY, handleIcebreakerChat);
-
 // ── on("game", "chat_round_N") ────────────────────────────────────────────────
 
 // GRAIL's single, shared chat-publication path (Static AND Adaptive) --
@@ -1631,7 +1516,7 @@ Empirica.on("game", PRACTICE_ICEBREAKER_TRANSCRIPT_KEY, handleIcebreakerChat);
 // write. By the time this is called from runSharedGeneration, the schema,
 // deterministic, and live Semantic Validator checks have passed, so these
 // checks are a final defensive guard. Returns true if a message was posted.
-function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole, logEntry) {
+async function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole, logEntry) {
   if (!llmAction || typeof llmAction.message !== "string" || !llmAction.message.trim()) {
     logEntry.reason = "LLM response missing a valid non-empty 'message' field (per generation.schema.json)";
     return false;
@@ -1665,7 +1550,7 @@ function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole, logE
 // A participant-requested turn must receive a visible response even when the
 // prompt, model, parser, or Validator is unavailable. This deterministic
 // fallback is intentionally neutral and reveals no hidden information.
-function postParticipantRequestFallback(game, chatKey, logEntry) {
+async function postParticipantRequestFallback(game, chatKey, logEntry) {
   return whileFacilitatorPublishesVisibleResponse(game, logEntry, () => {
     const publishedAt = Date.now();
     const publishedMessage = appendCanonicalMessage(game, chatKey, {
@@ -1677,7 +1562,7 @@ function postParticipantRequestFallback(game, chatKey, logEntry) {
       messageType: MESSAGE_TYPES.FACILITATOR,
       speakerType: MESSAGE_TYPES.FACILITATOR,
       timestamp: publishedAt,
-      content: "I can’t tell you which option is correct — that’s for your group to decide — but I’m glad to help organize or clarify what’s already been discussed. Could you point me to the specific option, claim, or message you’d like help with?",
+      content: "I can’t tell you which option is correct. That’s for your group to decide, but I’m glad to help organise or clarify what’s already been discussed. Could you point me to the specific option, claim, or message you’d like help with?",
       sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
     });
     logEntry.messageAdded = true;
@@ -1895,7 +1780,7 @@ async function handleChat(env, { game }) {
       game.currentStage?.id === originatingStageId &&
       game.currentStage?.get("name") === "Task"
     ) {
-      postParticipantRequestFallback(game, chatKey, logEntry);
+      await postParticipantRequestFallback(game, chatKey, logEntry);
     }
     if (requestedResult.published) {
       recordParticipantRequestedPublish(game, {

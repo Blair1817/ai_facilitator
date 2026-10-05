@@ -178,7 +178,7 @@ export function SubjectiveSurvey({ onNext, deadline } = {}) {
 
                                 <div className="flex">
                                     <label htmlFor="question5" className={`${listClassName} w-4/10`}>
-                                        The group had a structured way of collecting and summarizing information to reach a decision
+                                        The group had a structured way of collecting and summarising information to reach a decision
                                     </label>
                                     <div className="w-6/10">
                                         <LikertScale
@@ -281,7 +281,7 @@ export function SubjectiveSurvey({ onNext, deadline } = {}) {
 
                                     <div className="flex">
                                         <label htmlFor="question11" className={`${listClassName} w-4/10`}>
-                                        The facilitator helped the group summarize the information shared to reach a decision
+                                        The facilitator helped the group summarise the information shared to reach a decision
                                         </label>
                                         <div className="w-6/10">
                                             <LikertScale

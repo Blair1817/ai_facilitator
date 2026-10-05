@@ -51,12 +51,11 @@ test("callbacks.js imports the shared Generator contract and live Semantic Valid
   assert.doesNotMatch(callbacksSource, /import[^;]*from\s*"\.\/prompts\/regenerationPlaceholder\.js"/, "regenerationPlaceholder.js must not be imported in production");
 });
 
-test("callbacks.js persists sanitized response metadata for Assessor, Generator, Validator, and icebreaker calls", () => {
+test("callbacks.js persists sanitized response metadata for Assessor, Generator, and Validator calls", () => {
   assert.match(callbacksSource, /extractChatCompletionResponseMetadata\(responseBody\)/);
   assert.match(callbacksSource, /detectorResponseMetadata\s*=\s*assessorResult\.responseMetadata/);
   assert.match(callbacksSource, /generatorResponseMetadata\s*=\s*\[/);
   assert.match(callbacksSource, /validatorResponseMetadata\s*=\s*\[/);
-  assert.match(callbacksSource, /responseMetadata:\s*response\.responseMetadata\s*\?\?\s*null/);
   assert.doesNotMatch(callbacksSource, /logEntry\.[A-Za-z]*responseBody|responseBody:\s*responseBody/);
 });
 
@@ -176,7 +175,8 @@ test("validated publication sets typing immediately around append and always cle
   const helperEnd = callbacksSource.indexOf("\n}\n", helperStart) + 3;
   const helperBody = callbacksSource.slice(helperStart, helperEnd);
   assert.match(helperBody, /setVisibleResponsePending\(game, logEntry\.auditRequestId, true\)/);
-  assert.match(helperBody, /try\s*\{[\s\S]*?return task\(\);[\s\S]*?\}\s*finally\s*\{[\s\S]*?setVisibleResponsePending\(game, logEntry\.auditRequestId, false\)/);
+  assert.match(helperBody, /setVisibleResponsePending\(game, logEntry\.auditRequestId, true\);\s*await Empirica\.flush\(\)/);
+  assert.match(helperBody, /try\s*\{[\s\S]*?return await task\(\);[\s\S]*?\}\s*finally\s*\{[\s\S]*?setVisibleResponsePending\(game, logEntry\.auditRequestId, false\);\s*await Empirica\.flush\(\)/);
 
   const publishStart = callbacksSource.indexOf("function postGeneratorResultIfValid");
   const publishEnd = callbacksSource.indexOf("\n}\n", publishStart) + 3;
@@ -186,6 +186,11 @@ test("validated publication sets typing immediately around append and always cle
   const typingIndex = publishBody.indexOf("whileFacilitatorPublishesVisibleResponse(");
   const appendIndex = publishBody.indexOf("appendCanonicalMessage(");
   assert.ok(nonEmptyGuard < roleGuard && roleGuard < typingIndex && typingIndex < appendIndex);
+});
+
+test("publication waits for visible-response flushes before terminal audit cleanup", () => {
+  assert.match(callbacksSource, /const posted = await postGeneratorResultIfValid\(/);
+  assert.match(callbacksSource, /await postParticipantRequestFallback\(/);
 });
 
 test("failed generation, Validator rejection, repair/fallback failure, and stale abort never activate typing", () => {
