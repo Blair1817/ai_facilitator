@@ -778,11 +778,9 @@ Empirica.before("game", "start", async (ctx, { game, start }) => {
       assignment_status: "confirmed",
       updated_at: new Date().toISOString(),
     });
-    // persistAssignmentOrBlock returns null only when Supabase is
-    // intentionally not configured (pilot-only fail-open). Tajriba still
-    // holds the assignment through its own durable claim, so we mark
-    // the game as "tajriba-only" rather than blocking onGameStart.
-    // Re-attach Supabase before formal data collection.
+    // The obsolete Supabase production mirror is disabled, so its adapter
+    // returns a Tajriba-only result. The authoritative allocation claim
+    // already lives on Tajriba's persistent Global and Game scopes.
     game.set(
       "assignmentPersistenceStatus",
       persisted?.persistenceMode === "tajriba-only" ? "tajriba-only" : "confirmed",
@@ -798,9 +796,9 @@ Empirica.before("game", "start", async (ctx, { game, start }) => {
 
 Empirica.onGameStart(({ game }) => {
   const persistenceStatus = game.get("assignmentPersistenceStatus");
-  // Accept both "confirmed" (Supabase mirror written) and "tajriba-only"
-  // (Supabase intentionally not configured for pilot). Only "blocked"
-  // or missing status fails the game start.
+  // Accept both legacy "confirmed" claims and current "tajriba-only"
+  // authoritative claims. Only "blocked" or missing status fails the game
+  // start.
   if (persistenceStatus !== "confirmed" && persistenceStatus !== "tajriba-only") {
     game.end("failed", game.get("assignmentPersistenceError") || "Research assignment persistence failed before this session could begin.");
     return;

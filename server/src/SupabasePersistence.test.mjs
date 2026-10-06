@@ -11,6 +11,7 @@ import {
   persistAssignmentOrBlock,
   redactPII,
   researchParticipantId,
+  researchPersistence,
 } from "./SupabasePersistence.mjs";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,6 +34,7 @@ test("assignment persistence is idempotent for the same game_id", async () => {
     return jsonResponse(200, stored.has(gameId) ? [stored.get(gameId)] : []);
   };
   const persistence = createSupabasePersistence({ url: "https://project.invalid", serviceRoleKey: "test-placeholder", fetchImpl });
+  assert.equal(persistence.mode, "supabase");
   const row = {
     game_id: "g1", sequence_id: "S3", allocation_number: 7,
     allocation_block_id: 2, allocation_position: 1,
@@ -61,20 +63,25 @@ test("assignment persistence failure blocks a new untracked game", async () => {
   );
   assert.match(callbacksSource, /Empirica\.before\("game", "start", async/);
   assert.match(callbacksSource, /assignmentPersistenceStatus"\) === "confirmed"\) return/);
-  // Pilot-only fail-open: onGameStart accepts both "confirmed" (Supabase
-  // mirror written) and "tajriba-only" (Supabase not configured). Only
-  // "blocked" or missing status ends the game.
+  // onGameStart accepts both "confirmed" (optional mirror written) and
+  // "tajriba-only" (authoritative Tajriba claim only). Only "blocked" or
+  // missing status ends the game.
   assert.match(
     callbacksSource,
     /persistenceStatus !== "confirmed" && persistenceStatus !== "tajriba-only"[\s\S]*game\.end\("failed"/,
   );
 });
 
-test("assignment persistence fail-opens when Supabase is not configured (pilot-only)", async () => {
-  // createSupabasePersistence throws SUPABASE_NOT_CONFIGURED when env
-  // vars are missing. persistAssignmentOrBlock must catch that and
-  // return a tajriba-only row so game.start can proceed during pilot.
-  const unconfigured = createSupabasePersistence({ url: "", serviceRoleKey: "", fetchImpl: globalThis.fetch });
+test("unconfigured Supabase disables the optional mirror silently and preserves Tajriba-only allocation", async () => {
+  let fetchCalls = 0;
+  const unconfigured = createSupabasePersistence({
+    url: "",
+    serviceRoleKey: "",
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      throw new Error("disabled persistence must not make requests");
+    },
+  });
   const row = {
     game_id: "pilot-game", sequence_id: "S1", allocation_number: 1,
     allocation_block_id: 1, allocation_position: 0,
@@ -82,14 +89,35 @@ test("assignment persistence fail-opens when Supabase is not configured (pilot-o
     allocation_method: "test", ledger_key: "ledger",
   };
   const result = await persistAssignmentOrBlock(unconfigured, row);
+  await unconfigured.upsertParticipants([{ participant_id: "p1" }]);
+  await unconfigured.upsertRounds([{ round_id: "r1" }]);
+  await unconfigured.upsertMessage({ message_id: "m1" });
+  const mirrorFailures = [];
+  await mirrorNonBlocking(unconfigured.upsertResponses([{ response_id: "response-1" }]), {
+    operation: "response_test",
+    onError: (failure) => mirrorFailures.push(failure),
+  });
+  await unconfigured.upsertSnapshot({ snapshot_id: "snapshot-1" });
+  await unconfigured.mirrorIntervention({ intervention: {} });
+
+  assert.equal(unconfigured.mode, "disabled");
   assert.equal(result?.persistenceMode, "tajriba-only");
   assert.equal(result?.game_id, "pilot-game");
+  assert.equal(fetchCalls, 0);
+  assert.deepEqual(mirrorFailures, []);
+  assert.doesNotMatch(callbacksSource, /\[research-persistence\] Supabase is not configured/);
   // Generic (non-NOT_CONFIGURED) failures must still block.
   const failing = { persistAssignment: async () => { throw new Error("network down"); } };
   await assert.rejects(
     persistAssignmentOrBlock(failing, row),
     (error) => error.code === "ASSIGNMENT_PERSISTENCE_BLOCKED",
   );
+});
+
+test("production research persistence remains explicitly disabled", async () => {
+  const persistence = researchPersistence();
+  assert.equal(persistence.mode, "disabled");
+  assert.equal(await persistence.upsertResponses([{ response_id: "ignored" }]), null);
 });
 
 test("ReviewQuiz mirror stores only a minimal successful completion and no attempt history", () => {

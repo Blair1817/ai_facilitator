@@ -223,23 +223,26 @@ export async function persistAssignmentOrBlock(persistence, row) {
   try {
     return await persistence.persistAssignment(row);
   } catch (error) {
-    if (error?.code === "SUPABASE_NOT_CONFIGURED") {
-      // Pilot-only fail-open: Tajriba JSON DB already records the
-      // assignment through its own durable claim. We log a warning so
-      // this never silently turns into a formal-research config.
-      // Re-attach Supabase before formal data collection — see
-      // project-knowledge/open-gates.md Gate 11.
-      console.warn(
-        "[research-persistence] Supabase is not configured; " +
-        "assignment is held only in the local Tajriba DB. " +
-        "Re-attach Supabase before formal data collection."
-      );
-      return { ...row, persistenceMode: "tajriba-only" };
-    }
     const blocked = new Error("This session cannot begin because its research assignment could not be durably recorded. Please contact the research team.");
     blocked.code = "ASSIGNMENT_PERSISTENCE_BLOCKED";
     throw blocked;
   }
+}
+
+function createDisabledPersistence() {
+  const noOp = async () => null;
+  return {
+    mode: "disabled",
+    async persistAssignment(row) {
+      return { ...row, persistenceMode: "tajriba-only" };
+    },
+    upsertParticipants: noOp,
+    upsertRounds: noOp,
+    upsertMessage: noOp,
+    upsertResponses: noOp,
+    upsertSnapshot: noOp,
+    mirrorIntervention: noOp,
+  };
 }
 
 export function createSupabasePersistence({
@@ -248,15 +251,9 @@ export function createSupabasePersistence({
   fetchImpl = globalThis.fetch,
 } = {}) {
   const baseUrl = typeof url === "string" ? url.replace(/\/$/, "") : "";
-  function requireConfiguration() {
-    if (!baseUrl || !serviceRoleKey || typeof fetchImpl !== "function") {
-      const error = new Error("Server research persistence is not configured");
-      error.code = "SUPABASE_NOT_CONFIGURED";
-      throw error;
-    }
-  }
+  if (!baseUrl || !serviceRoleKey) return createDisabledPersistence();
+
   async function request(table, { method = "GET", query = "", body, prefer } = {}) {
-    requireConfiguration();
     const response = await fetchImpl(`${baseUrl}/rest/v1/${table}${query}`, {
       method,
       headers: {
@@ -282,6 +279,7 @@ export function createSupabasePersistence({
     return request(table, { method: "POST", query: `?on_conflict=${encodeURIComponent(conflict)}`, body: rows, prefer: "resolution=merge-duplicates,return=minimal" });
   };
   return {
+    mode: "supabase",
     async persistAssignment(row) {
       await request("game_assignments", { method: "POST", query: "?on_conflict=game_id", body: row, prefer: "resolution=ignore-duplicates,return=minimal" });
       const existing = await request("game_assignments", { query: `?game_id=eq.${encodeURIComponent(row.game_id)}&select=game_id,sequence_id,allocation_number,allocation_block_id,allocation_position` });
@@ -309,6 +307,6 @@ export function createSupabasePersistence({
 
 let singleton;
 export function researchPersistence() {
-  if (!singleton) singleton = createSupabasePersistence();
+  if (!singleton) singleton = createDisabledPersistence();
   return singleton;
 }
