@@ -161,48 +161,41 @@ fi
 # changes made while dependencies, the bundle, or the image were being built.
 require_expected_post_build_source
 
-if ! command -v az >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
-  echo "FATAL: --push requires Azure CLI, curl, and an authenticated Azure identity; admin credentials are not supported." >&2
+if ! command -v az >/dev/null 2>&1; then
+  echo "FATAL: --push requires Azure CLI and an authenticated Azure identity; admin credentials are not supported." >&2
   exit 5
 fi
 
 echo "==> Verifying Azure identity and immutable target tag..."
 az account show --output none
 
-ACR_TOKEN="$(az acr login --name "$ACR_NAME" --expose-token --output tsv --query accessToken)"
-if [[ -z "$ACR_TOKEN" ]]; then
-  echo "FATAL: Azure CLI did not return a registry access token." >&2
-  exit 7
+if ! ACR_TAGS="$(az acr repository show-tags \
+  --name "$ACR_NAME" \
+  --repository "$IMAGE_REPOSITORY" \
+  --query '[]' \
+  --output tsv)"; then
+  echo "FATAL: could not query ACR tags to prove that the release tag is absent." >&2
+  echo "Failing closed without publishing $REMOTE_IMAGE." >&2
+  exit 9
 fi
 
-MANIFEST_STATUS="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
-  --ignore-content-length \
-  --request HEAD \
-  --header "Authorization: Bearer $ACR_TOKEN" \
-  --header 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
-  "https://${ACR_LOGIN_SERVER}/v2/${IMAGE_REPOSITORY}/manifests/${IMAGE_TAG}")"
+TAG_EXISTS=0
+while IFS= read -r existing_tag; do
+  if [[ "$existing_tag" == "$IMAGE_TAG" ]]; then
+    TAG_EXISTS=1
+    break
+  fi
+done <<< "$ACR_TAGS"
+unset ACR_TAGS
 
-case "$MANIFEST_STATUS" in
-  200)
-    unset ACR_TOKEN
-    echo "FATAL: immutable release tag already exists: $REMOTE_IMAGE" >&2
-    echo "No overwrite, deletion, reuse, or automatic replacement tag was attempted." >&2
-    exit 8
-    ;;
-  404) ;;
-  *)
-    unset ACR_TOKEN
-    echo "FATAL: could not prove that the release tag is absent (ACR returned HTTP $MANIFEST_STATUS)." >&2
-    echo "Failing closed without publishing $REMOTE_IMAGE." >&2
-    exit 9
-    ;;
-esac
+if [[ "$TAG_EXISTS" -eq 1 ]]; then
+  echo "FATAL: immutable release tag already exists: $REMOTE_IMAGE" >&2
+  echo "No overwrite, deletion, reuse, or automatic replacement tag was attempted." >&2
+  exit 8
+fi
 
 echo "==> Authenticating Docker to $ACR_LOGIN_SERVER through Azure CLI..."
-printf '%s' "$ACR_TOKEN" | docker login "$ACR_LOGIN_SERVER" \
-  --username 00000000-0000-0000-0000-000000000000 \
-  --password-stdin >/dev/null
-unset ACR_TOKEN
+az acr login --name "$ACR_NAME"
 
 echo "==> Pushing immutable tag $REMOTE_IMAGE..."
 docker tag "$LOCAL_IMAGE" "$REMOTE_IMAGE"
