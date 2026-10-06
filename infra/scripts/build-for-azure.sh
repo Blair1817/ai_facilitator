@@ -176,6 +176,7 @@ if [[ -z "$ACR_TOKEN" ]]; then
 fi
 
 MANIFEST_STATUS="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+  --ignore-content-length \
   --request HEAD \
   --header "Authorization: Bearer $ACR_TOKEN" \
   --header 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
