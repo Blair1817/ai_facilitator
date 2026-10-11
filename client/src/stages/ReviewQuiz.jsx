@@ -19,7 +19,7 @@ export function ReviewQuiz({ onNext, deadline } = {}) {
   const players = usePlayers();
   const round = useRound();
   const taskVersion = round?.get("taskVersion") ?? null;
-  const quiz = getReviewQuiz(taskVersion);
+  const quiz = getReviewQuiz(taskVersion, round?.get("decisionOptions"));
   const answersDraftKey = draftKey({
     playerId: player.id,
     roundId: round?.id,
@@ -82,7 +82,7 @@ export function ReviewQuiz({ onNext, deadline } = {}) {
       clearIncorrectReviewQuizAnswers(currentAnswers, evaluation.incorrectQuestionIds)
     );
     setRemediationSections(
-      getReviewQuizRemediation(taskVersion, evaluation.incorrectQuestionIds)
+      getReviewQuizRemediation(taskVersion, evaluation.incorrectQuestionIds, round?.get("decisionOptions"))
     );
     processingRef.current = false;
     setIsProcessing(false);

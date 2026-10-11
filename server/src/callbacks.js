@@ -31,6 +31,7 @@ import { buildAgentState } from "./AgentState.mjs";
 import { validateCandidate } from "./SemanticValidator.js";
 import { claimSequenceForStudy, RANDOMIZATION_LEDGER_KEY } from "./RandomizationLedger.mjs";
 import { randomUUID } from "node:crypto";
+import { initialiseTaskOptionOrder, orderTaskSections } from "./TaskOptionOrder.mjs";
 import {
   beginInFlight,
   finalizeAuditLog as finalizeAuditLogBase,
@@ -974,8 +975,7 @@ Empirica.onRoundStart(({ round }) => {
   // Task A and Task B have different generalInfo text; a flat game.set(...)
   // here would be overwritten the moment Round 2's onRoundStart fires, which
   // could race against a Round 1 client still rendering FinalDecision.
-  round.set("generalInfo", task["generalInfo"]);
-  round.set("decisionOptions", task["decisionOptions"]); // Blair's own line, unchanged -- already round-scoped and correct
+  const orderedOptions = initialiseTaskOptionOrder(round, task);
   round.set("sequenceId", game.get("sequenceId"));
 
   // MIGRATED from old 2nd (TEMP-BE-007 there): use the stable profileSlot
@@ -1003,7 +1003,7 @@ Empirica.onRoundStart(({ round }) => {
       console.error(`[onRoundStart] Player ${player.id} has no valid profileSlot (got ${JSON.stringify(slot)})`);
       return;
     }
-    player.round.set("playerContent", playerConfig[slot].playerContent);
+    player.round.set("playerContent", orderTaskSections(playerConfig[slot].playerContent, orderedOptions));
     player.round.set("participantId", player.id);
     player.round.set("roundIndex", taskIndex);
     player.round.set("taskVersion", taskVersion);
