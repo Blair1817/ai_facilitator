@@ -1,3 +1,5 @@
+import { presentationForMessage } from "../../client/src/components/facilitatorPresentation.mjs";
+
 export const MESSAGE_TYPES = Object.freeze({
   HUMAN: "human",
   FACILITATOR: "facilitator",
@@ -96,6 +98,7 @@ export function buildCanonicalMessage({
   timestamp,
   sequencePosition,
   content,
+  presentation,
   sender,
 }) {
   const canonicalSpeakerId = participantId ?? speakerId;
@@ -122,6 +125,7 @@ export function buildCanonicalMessage({
     timestamp,
     sequencePosition,
     content,
+    ...(presentationForMessage({ content, presentation }) ? { presentation } : {}),
     text: content,
     ts: timestamp,
     sender,

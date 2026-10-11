@@ -1,5 +1,23 @@
 # Prompt module status
 
+**Structured presentation update (2026-10-11):** Generator output retains
+the three top-level fields `role`, `message`, and `groundingMessageIds`.
+`message` now accepts either the legacy plain-text string or an object with
+`summary`, `sections: [{title, body}]`, and `question`. The shared contract
+applies to Static and Adaptive alike. Only inline `**bold**` and participant
+mentions are supported inside strings; section headings and the closing
+question divider are rendered by the client. Brief interventions use no
+sections, and the question may be empty.
+
+After strict schema validation, the runtime flattens every visible field
+into plain-text `message` for all existing word/character limits, grounding,
+mention, duplicate and semantic checks. It stores the matching structured
+object as `presentation` alongside canonical `content`/`text`; transcripts
+and research mirrors keep the complete plain-text content. Old records and
+invalid or mismatched presentation fall back to the existing plain-text UI.
+This supersedes the historical plain-text-only presentation descriptions
+below, without changing facilitation routing or content boundaries.
+
 This file is written by the implementer of this module (not part of the
 source package) to record the real, verified state of every prompt/schema
 file as of the copy taken into `./source/`. Nothing below fills in or

@@ -29,6 +29,7 @@ import {
 } from "./CheckpointManager.mjs";
 import { buildAgentState } from "./AgentState.mjs";
 import { validateCandidate } from "./SemanticValidator.js";
+import { normalizeGeneratorCandidate } from "../../client/src/components/facilitatorPresentation.mjs";
 import { claimSequenceForStudy, RANDOMIZATION_LEDGER_KEY } from "./RandomizationLedger.mjs";
 import { randomUUID } from "node:crypto";
 import { initialiseTaskOptionOrder, orderTaskSections } from "./TaskOptionOrder.mjs";
@@ -471,7 +472,8 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       };
     }
 
-    const deterministicResult = runDeterministicValidation(parseResult.parsed, {
+    const candidate = normalizeGeneratorCandidate(parseResult.parsed);
+    const deterministicResult = runDeterministicValidation(candidate, {
       selectedRole: built.metadata.generationRole,
       eligibleMessageIds: built.eligibleMessageIds,
       aiOrSystemMessageIds: built.aiOrSystemMessageIds,
@@ -505,11 +507,11 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
         // as before -- those indicate a broken candidate, not just a
         // trimmable one, so blindly retrying them is not safe.
         deterministicFailedCriteria: deterministicResult.failedCriteria,
-        priorCandidate: parseResult.parsed,
+        priorCandidate: candidate,
       };
     }
 
-    return { ok: true, candidate: parseResult.parsed };
+    return { ok: true, candidate };
   }
 
   // True only when the 40-word cap was the SOLE deterministic failure.
@@ -1535,6 +1537,7 @@ async function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole
       speakerType: MESSAGE_TYPES.FACILITATOR,
       timestamp: publishedAt,
       content: llmAction.message,
+      presentation: llmAction.presentation,
       sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
     });
     logEntry.messageAdded = true;

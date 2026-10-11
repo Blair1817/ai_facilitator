@@ -119,6 +119,31 @@
   text-align: left;
 }
 
+.ai-facilitator-structured-content {
+  line-height: 1.5;
+}
+
+.ai-facilitator-structured-content p {
+  margin: 0;
+}
+
+.ai-facilitator-content-section {
+  margin-top: 14px;
+}
+
+.ai-facilitator-content-section h3 {
+  margin: 0 0 4px;
+  font-size: inherit;
+  line-height: inherit;
+  font-weight: 700;
+}
+
+.ai-facilitator-content-question {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #cbd5e1;
+}
+
 @media (max-width: 640px) {
   .ai-facilitator-message-card {
     width: calc(100% - 1rem);

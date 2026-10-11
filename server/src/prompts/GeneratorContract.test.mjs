@@ -5,6 +5,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizeGeneratorCandidate } from "../../../client/src/components/facilitatorPresentation.mjs";
+import { buildCanonicalMessage } from "../ExperimentPolicies.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 process.argv[1] = path.join(__dirname, "..", "fake-entry.js");
@@ -20,6 +22,47 @@ const {
 } = await import("./GeneratorContract.mjs");
 
 const VALID_CANDIDATE = { role: "INFORMATION_EXPANDER", message: "Is there anything else anyone has not shared yet?", groundingMessageIds: [] };
+
+test("structured output passes schema, audits all visible text, and survives canonical publication", () => {
+  const output = { role: "GENERALIST", message: {
+    summary: "Here is what you shared:",
+    sections: [{ title: "Option A", body: "@[Blue] discussed its cost." }],
+    question: "What **information** is still missing?",
+  }, groundingMessageIds: ["m1"] };
+  const parsed = parseGeneratorOutputStrict(JSON.stringify(output));
+  assert.equal(parsed.ok, true);
+  assert.equal(validateAgainstGenerationSchema(parsed.parsed, "GENERALIST").ok, true);
+  const candidate = normalizeGeneratorCandidate(parsed.parsed);
+  assert.equal(runDeterministicValidation(candidate, {
+    selectedRole: "GENERALIST", eligibleMessageIds: ["m1"], activeParticipantNames: ["Blue"], maxWords: 40,
+  }).passed, true);
+  const published = buildCanonicalMessage({
+    messageId: "f1", groupId: "g1", speakerId: "ai", roundIndex: 0,
+    stage: "Discussion", messageType: "facilitator", speakerType: "facilitator",
+    timestamp: 1, sequencePosition: 0, content: candidate.message,
+    presentation: candidate.presentation, sender: { id: "ai", name: "Facilitator" },
+  });
+  assert.deepEqual(published.presentation, output.message);
+  assert.equal(published.text, candidate.message);
+  assert.match(published.content, /Option A\n\n@\[Blue\] discussed its cost/);
+  assert.ok(runDeterministicValidation(candidate, { selectedRole: "GENERALIST", eligibleMessageIds: [], maxWords: 5 }).failedCriteria.includes("MESSAGE_EXCEEDS_WORD_LIMIT"));
+  assert.ok(runDeterministicValidation(candidate, { selectedRole: "GENERALIST", eligibleMessageIds: [] }).failedCriteria.includes("UNKNOWN_GROUNDING_ID"));
+});
+
+test("structured titles are included in mention validation and presentation cannot add unaudited text", () => {
+  const message = { summary: "Discuss these points.", sections: [{ title: "@[Facilitator]", body: "What is missing?" }], question: "" };
+  const candidate = normalizeGeneratorCandidate({ role: "GENERALIST", message, groundingMessageIds: [] });
+  assert.ok(runDeterministicValidation(candidate, { selectedRole: "GENERALIST", activeParticipantNames: ["Blue"] }).failedCriteria.includes("FACILITATOR_SELF_MENTION"));
+  const forged = { ...candidate, presentation: { ...message, summary: "Different text" } };
+  assert.ok(runDeterministicValidation(forged, { selectedRole: "GENERALIST" }).failedCriteria.includes("INVALID_PRESENTATION"));
+});
+
+test("structured schema rejects missing fields and unknown nested fields", () => {
+  for (const message of [{ summary: "Hi" }, { summary: "Hi", sections: [], question: "", rationale: "hidden" },
+    { summary: "Hi", sections: [{ title: "A", body: "Text", winner: true }], question: "" }]) {
+    assert.equal(validateAgainstGenerationSchema({ role: "GENERALIST", message, groundingMessageIds: [] }, "GENERALIST").ok, false);
+  }
+});
 
 // ── strict JSON parsing ──────────────────────────────────────────────────
 
