@@ -17,7 +17,7 @@ export const REVIEW_QUIZZES = Object.freeze({
       },
       objective: {
         title: "Task objective",
-        content: "None of the listed drawbacks would rule out an option as a host. Treat each strength and drawback as equally important, then choose the best host overall.",
+        content: "Choose the best city to host the International Youth Games. Give equal weight to each listed strength and drawback. A drawback does not automatically rule out a city.",
       },
     },
     questions: [
@@ -63,12 +63,12 @@ export const REVIEW_QUIZZES = Object.freeze({
         type: "radio",
         prompt: "The objective of the committee's discussion is to:",
         options: [
-          { value: "option1", label: "Rate sports facilities in each city." },
-          { value: "option2", label: "Compare cities to determine which is most deserving of an infrastructure grant." },
-          { value: "option3", label: "Treat each strength and drawback as equally important, then choose the best host overall." },
-          { value: "option4", label: "Select an objective that is not included in any of the options listed above." },
+          { value: "option1", label: "Choose the city with the fewest drawbacks and ignore its strengths." },
+          { value: "option2", label: "Choose the best city to host the International Youth Games, giving equal weight to each listed strength and drawback." },
+          { value: "option3", label: "Choose the city with the best sports facilities, without comparing the other information." },
+          { value: "option4", label: "Rule out any city that has a listed drawback." },
         ],
-        correctAnswer: "option3",
+        correctAnswer: "option2",
       },
     ],
   },
@@ -90,7 +90,7 @@ export const REVIEW_QUIZZES = Object.freeze({
       },
       objective: {
         title: "Task objective",
-        content: "None of the listed drawbacks would rule out an option as a host. Treat each strength and drawback as equally important, then choose the best host overall.",
+        content: "Choose the best university campus to host the Global Innovation Summit. Give equal weight to each listed strength and drawback. A drawback does not automatically rule out a campus.",
       },
     },
     questions: [
@@ -136,12 +136,12 @@ export const REVIEW_QUIZZES = Object.freeze({
         type: "radio",
         prompt: "The objective of the committee's discussion is to:",
         options: [
-          { value: "option1", label: "Rate the overall suitability of each university using the background information provided." },
-          { value: "option2", label: "Select the university most deserving of funding for future infrastructure improvement projects." },
-          { value: "option3", label: "Treat each strength and drawback as equally important, then choose the best host overall." },
-          { value: "option4", label: "Select an objective that is not included in any of the options listed above." },
+          { value: "option1", label: "Choose the campus with the most strengths and ignore all drawbacks." },
+          { value: "option2", label: "Choose the university that most deserves funding for future improvements." },
+          { value: "option3", label: "Rule out any campus that has a listed drawback." },
+          { value: "option4", label: "Choose the best university campus to host the Global Innovation Summit, giving equal weight to each listed strength and drawback." },
         ],
-        correctAnswer: "option3",
+        correctAnswer: "option4",
       },
     ],
   },

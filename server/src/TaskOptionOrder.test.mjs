@@ -25,6 +25,7 @@ test("every permutation aligns group options, shared reports and all three priva
     }
     assert.equal(JSON.stringify(task), original);
     assert.deepEqual(options.map((o) => o.id), permutation.map((i) => task.decisionOptions[i].id));
+    assert.deepEqual(options, permutation.map((i) => task.decisionOptions[i]));
   }
 });
 
@@ -44,13 +45,16 @@ test("practice is excluded and invalid saved orders fail instead of changing opt
 });
 
 test("ReviewQuiz scenario and remediation use the same group order and retain the original answers", () => {
-  for (const task of tasks) {
-    const options = [...task.decisionOptions].reverse(), labels = options.map((o) => o.label);
+  for (const task of tasks) for (const permutation of permutations) {
+    const options = permutation.map((index) => task.decisionOptions[index]);
+    const labels = options.map((o) => o.label);
     const list = `${labels[0]}, ${labels[1]} and ${labels[2]}`;
     const quiz = getReviewQuiz(task.taskVersion, options);
     assert.ok(quiz.scenario.includes(list));
     assert.deepEqual(quiz.questions, getReviewQuiz(task.taskVersion).questions);
-    const remediation = getReviewQuizRemediation(task.taskVersion, ["alternativeCount"], options);
-    assert.ok(remediation[0].content.includes(list));
+    const remediation = getReviewQuizRemediation(task.taskVersion, ["alternativeCount", "objective"], options);
+    assert.ok(remediation.find((section) => section.key === "taskOverview").content.includes(list));
   }
+  assert.equal(getReviewQuiz("A").questions.find((question) => question.id === "objective").correctAnswer, "option2");
+  assert.equal(getReviewQuiz("B").questions.find((question) => question.id === "objective").correctAnswer, "option4");
 });

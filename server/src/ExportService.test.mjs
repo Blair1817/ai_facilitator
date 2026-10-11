@@ -4,15 +4,59 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   ExportService,
+  buildFormalTranscript,
   redactGameBundle,
+  resolveFacilitatorProvenance,
   renderQuestionnaireCsv,
   renderTranscriptMd,
   ExportNotFoundError,
 } from "./ExportService.mjs";
 import { recordExportEvent } from "./ExportAudit.mjs";
+import {
+  assertExpectedTajribaQueryCount,
+  patchTajribaBundleSource,
+} from "../scripts/patch-tajriba-page-size.mjs";
+
+test("Tajriba install patch raises only nested attribute query limits and is idempotent", () => {
+  const generatedAttributeQuery = `
+    name: { kind: "Name", value: "attributes" },
+    arguments: [{
+      name: { kind: "Name", value: "first" },
+      value: { kind: "IntValue", value: "100" }
+    }]
+  `;
+  const generated = `
+    ${Array.from({ length: 4 }, () => generatedAttributeQuery).join("\n")}
+    unrelated: { kind: "IntValue", value: "100" }
+  `;
+  const first = patchTajribaBundleSource(generated);
+  assert.equal(first.targetCount, 4);
+  assert.equal(first.replacementCount, 4);
+  assert.match(first.source, /value: "2000"/);
+  assert.match(first.source, /unrelated: \{ kind: "IntValue", value: "100" \}/);
+
+  const second = patchTajribaBundleSource(first.source);
+  assert.equal(second.targetCount, 4);
+  assert.equal(second.replacementCount, 0);
+  assert.equal(second.source, first.source);
+});
+
+test("Tajriba install patch fails closed when only part of the generated query set matches", () => {
+  assert.doesNotThrow(() => assertExpectedTajribaQueryCount("complete fixture", 4));
+  assert.throws(
+    () => assertExpectedTajribaQueryCount("partial fixture", 3),
+    /expected 4 generated attributes\(first: \.\.\.\) queries in partial fixture; found 3/,
+  );
+});
+
+test("server install lifecycle always applies the Tajriba attribute query patch", () => {
+  const packageJson = JSON.parse(fs.readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"));
+  assert.equal(packageJson.scripts.postinstall, "node scripts/patch-tajriba-page-size.mjs");
+});
 
 /**
  * Build a fake Tajriba admin connection. The store is a flat map
@@ -136,8 +180,11 @@ function fixture() {
     attr(s, "systemInfo", { model: "MiniMax-Text-01", thresholds: { abstain: 0.4 } });
     attr(s, "llmLogIndex", ["R1", "R2"]);
     attr(s, "llmLog.R1", {
-      id: "R1", auditRequestId: "R1", outcome: "PUBLISHED", role: "Expander",
+      id: "R1", auditRequestId: "R1", outcome: "PUBLISHED",
+      roundIndex: 0, originatingRoundId: "R0", publishedMessageId: "ai-r0-1",
       reason: "", requestSuccess: true, messageAdded: true,
+      promptMetadata: { generationRole: "INFORMATION_EXPANDER" },
+      llmAction: { role: "INFORMATION_EXPANDER" },
       totalLatencyMs: 2400, humanMessageCountAtCompletion: 6, responseContextDriftMessages: 0,
       auditCompletedAt: 1723705200000,
       agentState: { cumulativeContext: "internal-only-payload" },
@@ -149,9 +196,9 @@ function fixture() {
       totalLatencyMs: null, auditCompletedAt: 1723705500000,
     });
     attr(s, "chat_round_0", [
-      { text: "I think we should focus on cost first.", sender: { id: "p1", name: "Red" }, ts: 1723705200000 },
-      { text: "Why cost?", sender: { id: "p2", name: "Pink" }, ts: 1723705210000 },
-      { text: "Consider the trade-offs across all options.", sender: { id: "ai", name: "Facilitator" }, ts: 1723705220000, role: "Expander" },
+      { messageId: "p1-r0-1", roundIndex: 0, sequencePosition: 0, speakerType: "human", text: "I think we should focus on cost first. Email red@example.com.", sender: { id: "p1", name: "Red" }, ts: 1723705200000 },
+      { messageId: "p2-r0-1", roundIndex: 0, sequencePosition: 1, speakerType: "human", text: "Why cost?", sender: { id: "p2", name: "Pink" }, ts: 1723705210000 },
+      { messageId: "ai-r0-1", roundIndex: 0, sequencePosition: 2, speakerType: "facilitator", text: "Consider the trade-offs across all options.", sender: { id: "ai", name: "Facilitator" }, ts: 1723705220000 },
     ]);
     attr(s, "chat_round_1", [
       { text: "Formal Round 2 evidence.", sender: { id: "p3", name: "Blue" }, ts: 1723705600000 },
@@ -214,6 +261,11 @@ function fixture() {
       attr(s, "initialChoice", `${id}-r0-choice`);
       attr(s, "initialConfidence", 60 + initialOffset);
       attr(s, "initialDecision", { choice: `${id}-r0-choice`, confidence: 60 + initialOffset, submittedAt: 1000 + initialOffset });
+      attr(s, "initialDecisionReceivedAt", 1000 + initialOffset);
+      attr(s, "initialDecisionAcceptedOnTime", true);
+      attr(s, "initialSubmittedAt", 1000 + initialOffset);
+      attr(s, "initialCompletionDurationMs", 20000 + initialOffset);
+      attr(s, "initialDecisionTimeoutReason", null);
       attr(s, "finalDecision", { choice: "OPT1", confidence: 70 + initialOffset, submittedAt: 2000 + initialOffset, finalDecisionOutcome: "consensus_choice" });
       attr(s, "groupFinalChoice", "OPT1");
       attr(s, "groupChoiceConfidence", 70 + initialOffset);
@@ -252,6 +304,11 @@ function fixture() {
       attr(s, "initialChoice", `${id}-r1-choice`);
       attr(s, "initialConfidence", 80 + initialOffset);
       attr(s, "initialDecision", { choice: `${id}-r1-choice`, confidence: 80 + initialOffset, submittedAt: 4000 + initialOffset });
+      attr(s, "initialDecisionReceivedAt", 4000 + initialOffset);
+      attr(s, "initialDecisionAcceptedOnTime", true);
+      attr(s, "initialSubmittedAt", 4000 + initialOffset);
+      attr(s, "initialCompletionDurationMs", 30000 + initialOffset);
+      attr(s, "initialDecisionTimeoutReason", null);
       attr(s, "finalDecision", { choice: "NO_GROUP_FINAL_DECISION", confidence: 50 + initialOffset, submittedAt: 5000 + initialOffset, finalDecisionOutcome: "declared_fail" });
       attr(s, "groupFinalChoice", "NO_GROUP_FINAL_DECISION");
       attr(s, "groupChoiceConfidence", 50 + initialOffset);
@@ -299,9 +356,12 @@ function fixture() {
       attr(s, "taskIndex", 0);
       attr(s, "taskVersion", "A");
       attr(s, "facilitation", "adaptive");
+      attr(s, "officialGroupFinalChoice", "OPT1");
       attr(s, "finalDecisionOutcome", "consensus_choice");
       attr(s, "finalDecisionMatchedChoice", "OPT1");
       attr(s, "finalDecisionConfirmed", true);
+      attr(s, "finalDecisionTimedOut", false);
+      attr(s, "finalDecisionFinalizedAt", 2100);
     }),
     makeScope("R1", "round", (s) => {
       attr(s, "gameID", T("GAME1"));
@@ -309,9 +369,12 @@ function fixture() {
       attr(s, "taskIndex", 1);
       attr(s, "taskVersion", "B");
       attr(s, "facilitation", "static");
+      attr(s, "officialGroupFinalChoice", "FAIL");
       attr(s, "finalDecisionOutcome", "declared_fail");
       attr(s, "finalDecisionMatchedChoice", "NO_GROUP_FINAL_DECISION");
       attr(s, "finalDecisionConfirmed", true);
+      attr(s, "finalDecisionTimedOut", false);
+      attr(s, "finalDecisionFinalizedAt", 5100);
     }),
   ];
   const scopes = Object.fromEntries([batch, game, ...rounds, ...players, ...playerRounds].map((scope) => [scope.id, scope]));
@@ -464,6 +527,16 @@ test("renderQuestionnaireCsv produces one row per player per round plus an end-o
   const subjectiveTextColumn = columns.indexOf("subjective_group_free_text");
   const finalChoiceColumn = columns.indexOf("final_decision_choice");
   const finalOutcomeColumn = columns.indexOf("final_decision_outcome");
+  const officialChoiceColumn = columns.indexOf("official_group_final_choice");
+  const timedOutColumn = columns.indexOf("final_decision_timed_out");
+  const finalizedAtColumn = columns.indexOf("final_decision_finalized_at");
+  const personalChoiceColumn = columns.indexOf("final_personal_choice");
+  const personalConfidenceColumn = columns.indexOf("final_personal_confidence");
+  const personalRationaleColumn = columns.indexOf("final_personal_rationale");
+  const initialReceivedColumn = columns.indexOf("initial_decision_server_received_at");
+  const initialAcceptedColumn = columns.indexOf("initial_decision_accepted_on_time");
+  const initialTimeoutColumn = columns.indexOf("initial_decision_timeout_reason");
+  const initialDurationColumn = columns.indexOf("initial_decision_completion_duration_ms");
   const parsedPerRoundRows = csvLines.slice(1)
     .map((line) => line.split(","))
     .filter((cells) => cells[slotColumn] === "per_round");
@@ -475,6 +548,15 @@ test("renderQuestionnaireCsv produces one row per player per round plus an end-o
     const round1 = rowFor(playerId, 1);
     assert.equal(round0[initialChoiceColumn], `${playerId}-r0-choice`);
     assert.equal(round1[initialChoiceColumn], `${playerId}-r1-choice`);
+    const playerOffset = Number(playerId.slice(1));
+    assert.equal(round0[initialReceivedColumn], String(1000 + playerOffset));
+    assert.equal(round1[initialReceivedColumn], String(4000 + playerOffset));
+    assert.equal(round0[initialAcceptedColumn], "true");
+    assert.equal(round1[initialAcceptedColumn], "true");
+    assert.equal(round0[initialTimeoutColumn], "");
+    assert.equal(round1[initialTimeoutColumn], "");
+    assert.equal(round0[initialDurationColumn], String(20000 + playerOffset));
+    assert.equal(round1[initialDurationColumn], String(30000 + playerOffset));
     assert.ok(round0[tlxMentalColumn]);
     assert.ok(round1[tlxMentalColumn]);
     assert.equal(round0[subjectiveTextColumn], `${playerId}-r0-subjective`);
@@ -483,6 +565,26 @@ test("renderQuestionnaireCsv produces one row per player per round plus an end-o
     assert.equal(round1[finalChoiceColumn], "NO_GROUP_FINAL_DECISION");
     assert.equal(round0[finalOutcomeColumn], "consensus_choice");
     assert.equal(round1[finalOutcomeColumn], "declared_fail");
+    assert.equal(round0[officialChoiceColumn], "OPT1");
+    assert.equal(round1[officialChoiceColumn], "FAIL");
+    assert.equal(round0[timedOutColumn], "false");
+    assert.equal(round1[timedOutColumn], "false");
+    assert.equal(round0[finalizedAtColumn], "2100");
+    assert.equal(round1[finalizedAtColumn], "5100");
+    assert.equal(round0[personalChoiceColumn], "");
+    assert.equal(round1[personalChoiceColumn], `${playerId}-r1-personal`);
+    assert.equal(round1[personalConfidenceColumn], String(90 + Number(playerId.slice(1))));
+    assert.equal(round1[personalRationaleColumn], `${playerId}-r1-rationale`);
+  }
+  const endRows = csvLines.slice(1)
+    .map((line) => line.split(","))
+    .filter((cells) => cells[slotColumn] === "end_of_game");
+  for (const row of endRows) {
+    for (const column of [finalChoiceColumn, finalOutcomeColumn, officialChoiceColumn, timedOutColumn, finalizedAtColumn,
+      personalChoiceColumn, personalConfidenceColumn, personalRationaleColumn, initialReceivedColumn,
+      initialAcceptedColumn, initialTimeoutColumn, initialDurationColumn]) {
+      assert.equal(row[column], "", `end_of_game decision column ${columns[column]} must be blank`);
+    }
   }
   assert.ok(!csv.includes("POISON-PRACTICE"));
   assert.match(csv, /I noticed Red focused on cost/);
@@ -504,6 +606,45 @@ test("renderQuestionnaireCsv with redact:false keeps the raw text", async () => 
   assert.ok(csv.includes("researcher@example.com"));
 });
 
+test("late Initial Decision audit metadata exports without misclassifying it as an on-time submission", async () => {
+  const fx = fixture();
+  const playerRound = fx.scopes["PR-R0-p1"];
+  const replace = (key, value) => {
+    playerRound.attributes.find((attribute) => attribute.key === key).value = JSON.stringify(value);
+  };
+  replace("initialDecision", {
+    choice: "p1-r0-choice",
+    confidence: 61,
+    submittedAt: 301_001,
+    serverReceivedAt: 301_001,
+    clientSubmittedAt: 299_999,
+    acceptedOnTime: false,
+  });
+  replace("initialDecisionReceivedAt", 301_001);
+  replace("initialDecisionAcceptedOnTime", false);
+  replace("initialSubmittedAt", null);
+  replace("initialCompletionDurationMs", 301_001);
+  replace("initialDecisionTimeoutReason", "late_submission");
+
+  const svc = service({ scopes: fx.scopes });
+  const bundle = await svc.getGameBundle("GAME1");
+  const data = bundle.rounds.find((round) => round.taskIndex === 0).perPlayer.p1;
+  assert.equal(data.initialDecision.choice, "p1-r0-choice", "the late response remains recoverable for audit");
+  assert.equal(data.initialDecisionReceivedAt, 301_001);
+  assert.equal(data.initialDecisionAcceptedOnTime, false);
+  assert.equal(data.initialSubmittedAt, null);
+  assert.equal(data.initialDecisionTimeoutReason, "late_submission");
+
+  const { csv, columns } = renderQuestionnaireCsv(bundle);
+  const rows = csv.trimEnd().split("\n").slice(1).map((line) => line.split(","));
+  const row = rows.find((cells) => cells[columns.indexOf("player_id")] === "p1"
+    && cells[columns.indexOf("task_index")] === "0");
+  assert.equal(row[columns.indexOf("initial_decision_submitted_at")], "");
+  assert.equal(row[columns.indexOf("initial_decision_server_received_at")], "301001");
+  assert.equal(row[columns.indexOf("initial_decision_accepted_on_time")], "false");
+  assert.equal(row[columns.indexOf("initial_decision_timeout_reason")], "late_submission");
+});
+
 test("renderTranscriptMd emits one section per round and a final LLM audit log section", async () => {
   const svc = service();
   const { markdown } = await svc.renderTranscriptMd("GAME1", { redact: true });
@@ -511,18 +652,30 @@ test("renderTranscriptMd emits one section per round and a final LLM audit log s
   assert.match(markdown, /- Treatment: main/);
   assert.match(markdown, /- Ended: 2026-08-15T10:45:00\+08:00/);
   assert.doesNotMatch(markdown, /- Ended: \(in progress\)/);
-  assert.match(markdown, /## Round 1 · Task 1/);
-  assert.match(markdown, /## Round 2 · Task 2/);
+  assert.match(markdown, /## Formal Round 1 · Task A · Adaptive/);
+  assert.match(markdown, /## Formal Round 2 · Task B · Static/);
+  assert.match(markdown, /Group decision outcome: `consensus_choice`/);
+  assert.match(markdown, /Group decision outcome: `declared_fail`/);
+  assert.match(markdown, /Official group final choice: `OPT1`/);
+  assert.match(markdown, /Final decision finalised at: 5100/);
   assert.doesNotMatch(markdown, /## Round 3|Practice \/ Orientation|Practice-only answer/);
   assert.doesNotMatch(markdown, /POISON NATIVE-INDEX TRANSCRIPT/);
   assert.match(markdown, /## LLM audit log \(2 entries\)/);
-  assert.match(markdown, /Red.*focus on cost first/);
-  assert.match(markdown, /Facilitator.*Expander/);
-  assert.match(markdown, /Blue.*Formal Round 2 evidence/);
+  assert.match(markdown, /\] Red\*\*/);
+  assert.match(markdown, /focus on cost first/);
+  assert.match(markdown, /Facilitator[\s\S]*Role: `INFORMATION_EXPANDER`/);
+  assert.match(markdown, /Trigger: `AUTOMATIC_CHECKPOINT`/);
+  assert.match(markdown, /Origin: `LLM_GENERATED`/);
+  assert.match(markdown, /Audit request ID: `R1`/);
+  assert.match(markdown, /\] Blue\*\*/);
+  assert.match(markdown, /Formal Round 2 evidence/);
+  assert.doesNotMatch(markdown, /p1-r1-rationale|p2-r1-rationale|p3-r1-rationale/);
   // Default redact must strip the email from the expFeedback mention
   // when it ends up in the bundle (transcript does not embed
   // expFeedback today, so this is a defensive check).
   assert.ok(!markdown.includes("researcher@example.com"));
+  assert.ok(!markdown.includes("red@example.com"));
+  assert.match(markdown, /\[REDACTED_EMAIL\]/);
 });
 
 test("legacy games containing only two formal rounds retain their existing export identities", async () => {
@@ -534,8 +687,10 @@ test("legacy games containing only two formal rounds retain their existing expor
     { index: 1, nativeIndex: 1, taskIndex: 1 },
   ]);
   const { markdown } = await svc.renderTranscriptMd("GAME1", { redact: true });
-  assert.match(markdown, /Red.*focus on cost first/);
-  assert.match(markdown, /Blue.*Formal Round 2 evidence/);
+  assert.match(markdown, /\] Red\*\*/);
+  assert.match(markdown, /focus on cost first/);
+  assert.match(markdown, /\] Blue\*\*/);
+  assert.match(markdown, /Formal Round 2 evidence/);
 });
 
 test("renderTranscriptMd reconstructs vector chat_round_N from indexed attributes", async () => {
@@ -544,15 +699,17 @@ test("renderTranscriptMd reconstructs vector chat_round_N from indexed attribute
   // Replace the single-array chat_round_0 with the production vector
   // shape: one indexed attribute per appended message.
   game.attributes = game.attributes.filter((a) => a.key !== "chat_round_0");
-  attrIndexed(game, "chat_round_0", 0, { text: "I think we should focus on cost first.", sender: { id: "p1", name: "Red" }, ts: 1723705200000 });
-  attrIndexed(game, "chat_round_0", 1, { text: "Why cost?", sender: { id: "p2", name: "Pink" }, ts: 1723705210000 });
-  attrIndexed(game, "chat_round_0", 2, { text: "Consider the trade-offs across all options.", sender: { id: "ai", name: "Facilitator" }, ts: 1723705220000, role: "Expander" });
+  attrIndexed(game, "chat_round_0", 0, { messageId: "p1-r0-1", roundIndex: 0, text: "I think we should focus on cost first.", sender: { id: "p1", name: "Red" }, ts: 1723705200000 });
+  attrIndexed(game, "chat_round_0", 1, { messageId: "p2-r0-1", roundIndex: 0, text: "Why cost?", sender: { id: "p2", name: "Pink" }, ts: 1723705210000 });
+  attrIndexed(game, "chat_round_0", 2, { messageId: "ai-r0-1", roundIndex: 0, text: "Consider the trade-offs across all options.", sender: { id: "ai", name: "Facilitator" }, ts: 1723705220000 });
 
   const svc = service({ scopes: fx.scopes });
   const { markdown } = await svc.renderTranscriptMd("GAME1", { redact: true });
-  assert.match(markdown, /Red.*focus on cost first/);
-  assert.match(markdown, /Pink.*Why cost\?/);
-  assert.match(markdown, /Facilitator.*Expander/);
+  assert.match(markdown, /\] Red\*\*/);
+  assert.match(markdown, /focus on cost first/);
+  assert.match(markdown, /\] Pink\*\*/);
+  assert.match(markdown, /Why cost\?/);
+  assert.match(markdown, /Role: `INFORMATION_EXPANDER`/);
 });
 
 test("renderTranscriptMd reads the current version of a multi-version scalar", async () => {
@@ -585,6 +742,154 @@ test("redactGameBundle replaces PII in submitted forms and LLM audit", async () 
   // scrubbed (the fixture's payload contains no PII so this is just a
   // structural check).
   assert.deepEqual(redacted.llmLog[0].agentState, bundle.llmLog[0].agentState);
+  assert.match(redacted.game.chat.chat_round_0[0].text, /\[REDACTED_EMAIL\]/);
+  assert.ok(!redacted.game.chat.chat_round_0[0].text.includes("red@example.com"));
+});
+
+test("historical Facilitator roles are reconstructed only from exact successful same-round audit matches", () => {
+  const round = { id: "R0", taskIndex: 0 };
+  const message = {
+    messageId: "facilitator-R0-1",
+    roundIndex: 0,
+    speakerType: "facilitator",
+  };
+  const roles = [
+    "STATIC",
+    "GENERALIST",
+    "INFORMATION_EXPANDER",
+    "EVIDENCE_CHALLENGER",
+    "INFORMATION_SYNTHESISER",
+  ];
+  for (const role of roles) {
+    const provenance = resolveFacilitatorProvenance(message, round, [{
+      auditRequestId: `audit-${role}`,
+      publishedMessageId: message.messageId,
+      roundIndex: 0,
+      originatingRoundId: "R0",
+      outcome: "PUBLISHED",
+      messageAdded: true,
+      llmAction: { role },
+      promptMetadata: { generationRole: role },
+    }]);
+    assert.equal(provenance.role, role);
+    assert.equal(provenance.attribution, "HISTORICAL_AUDIT_MATCH");
+  }
+});
+
+test("historical participant-requested, fixed, fallback, missing, and ambiguous roles remain distinct", () => {
+  const round = { id: "R0", taskIndex: 0 };
+  const requestedMessage = { messageId: "facilitator-R0-request", roundIndex: 0 };
+  const requestedAudit = {
+    auditRequestId: "audit-request",
+    publishedMessageId: requestedMessage.messageId,
+    roundIndex: 0,
+    originatingRoundId: "R0",
+    outcome: "PUBLISHED",
+    messageAdded: true,
+    triggerType: "PARTICIPANT_REQUEST",
+    llmAction: { role: "GENERALIST" },
+  };
+  assert.deepEqual(resolveFacilitatorProvenance(requestedMessage, round, [requestedAudit]), {
+    role: "GENERALIST",
+    facilitatorOrigin: "LLM_GENERATED",
+    facilitatorTrigger: "PARTICIPANT_REQUEST",
+    auditRequestId: "audit-request",
+    attribution: "HISTORICAL_AUDIT_MATCH",
+  });
+
+  const fixed = resolveFacilitatorProvenance({ messageId: "facilitator-nudge-R0-1", roundIndex: 0 }, round, []);
+  assert.equal(fixed.role, "FIXED_MESSAGE");
+  assert.equal(fixed.facilitatorTrigger, "UNRECORDED", "historical opening versus silence must not be guessed");
+
+  const fallback = resolveFacilitatorProvenance({ messageId: "facilitator-fallback-R0-1", roundIndex: 0 }, round, []);
+  assert.equal(fallback.role, "NON_LLM_FALLBACK");
+  assert.equal(fallback.facilitatorTrigger, "PARTICIPANT_REQUEST");
+
+  assert.equal(resolveFacilitatorProvenance({ messageId: "legacy-ai", roundIndex: 0 }, round, []).role, "UNRECORDED");
+  assert.equal(resolveFacilitatorProvenance(requestedMessage, round, [requestedAudit, { ...requestedAudit, auditRequestId: "duplicate" }]).role, "UNRECORDED");
+  assert.equal(resolveFacilitatorProvenance(requestedMessage, round, [{ ...requestedAudit, roundIndex: 1 }]).role, "UNRECORDED");
+  assert.equal(resolveFacilitatorProvenance(requestedMessage, round, [{ ...requestedAudit, outcome: "SILENT", messageAdded: false }]).role, "UNRECORDED");
+});
+
+test("formal transcript preserves recorded chronology, round isolation, and Practice exclusion", async () => {
+  const fx = fixture();
+  const bundle = await service({ scopes: fx.scopes }).getGameBundle("GAME1");
+  const transcript = buildFormalTranscript(bundle);
+  assert.deepEqual(transcript.rounds.map((round) => [round.taskIndex, round.taskVersion, round.facilitation]), [
+    [0, "A", "adaptive"],
+    [1, "B", "static"],
+  ]);
+  assert.deepEqual(transcript.rounds[0].messages.map((message) => message.messageId), ["p1-r0-1", "p2-r0-1", "ai-r0-1"]);
+  assert.equal(transcript.rounds[0].messages[2].provenance.role, "INFORMATION_EXPANDER");
+  assert.ok(!JSON.stringify(transcript).includes("Practice-only answer"));
+  assert.ok(!JSON.stringify(transcript).includes("POISON NATIVE-INDEX TRANSCRIPT"));
+});
+
+test("timeout_fail remains distinct and consistent across CSV, transcript data, Markdown, and ZIP metadata", async () => {
+  const fx = fixture();
+  const timeoutRound = fx.rounds.find((round) => round.id === "R1");
+  timeoutRound.attributes.find((attribute) => attribute.key === "finalDecisionOutcome").value = "timeout_fail";
+  timeoutRound.attributes.find((attribute) => attribute.key === "finalDecisionTimedOut").value = "true";
+  timeoutRound.attributes.find((attribute) => attribute.key === "finalDecisionFinalizedAt").value = "9000";
+  const svc = service({ scopes: fx.scopes });
+
+  const { csv, columns } = await svc.renderQuestionnaireCsv("GAME1", { redact: true });
+  const rows = csv.trimEnd().split("\n").slice(1).map((line) => line.split(","));
+  const outcomeColumn = columns.indexOf("final_decision_outcome");
+  const timedOutColumn = columns.indexOf("final_decision_timed_out");
+  const taskIndexColumn = columns.indexOf("task_index");
+  const slotColumn = columns.indexOf("slot");
+  const timeoutRows = rows.filter((row) => row[slotColumn] === "per_round" && row[taskIndexColumn] === "1");
+  assert.equal(timeoutRows.length, 3);
+  assert.ok(timeoutRows.every((row) => row[outcomeColumn] === "timeout_fail" && row[timedOutColumn] === "true"));
+
+  const transcript = await svc.getTranscriptView("GAME1", { redact: true });
+  assert.equal(transcript.rounds.find((round) => round.taskIndex === 1).finalDecisionOutcome, "timeout_fail");
+  const { markdown } = await svc.renderTranscriptMd("GAME1", { redact: true });
+  assert.match(markdown, /Group decision outcome: `timeout_fail`/);
+  assert.match(markdown, /The group did not confirm a final decision before time ran out\./);
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "export-outcome-"));
+  const outFile = path.join(tmpDir, "bundle.zip");
+  const output = fs.createWriteStream(outFile);
+  await svc.writeGameBundle("GAME1", { redact: true, output });
+  await new Promise((resolve) => output.on("close", resolve));
+  const meta = JSON.parse(execFileSync("unzip", ["-p", outFile, "meta.json"], { encoding: "utf8" }));
+  assert.equal(meta.rounds.find((round) => round.taskIndex === 1).finalDecisionOutcome, "timeout_fail");
+  assert.equal(meta.rounds.find((round) => round.taskIndex === 1).finalDecisionTimedOut, true);
+});
+
+test("missing Individual Assessment responses stay blank and never borrow another participant's data", async () => {
+  const fx = fixture();
+  const missing = fx.playerRounds.find((scope) => scope.id === "PR-R1-p2");
+  missing.attributes = missing.attributes.filter((attribute) => ![
+    "finalPersonalChoice",
+    "finalPersonalChoiceConfidence",
+    "finalPersonalChoiceRationale",
+  ].includes(attribute.key));
+  const { csv, columns } = await service({ scopes: fx.scopes }).renderQuestionnaireCsv("GAME1", { redact: true });
+  const rows = csv.trimEnd().split("\n").slice(1).map((line) => line.split(","));
+  const row = rows.find((cells) => cells[columns.indexOf("slot")] === "per_round"
+    && cells[columns.indexOf("player_id")] === "p2"
+    && cells[columns.indexOf("task_index")] === "1");
+  assert.equal(row[columns.indexOf("final_personal_choice")], "");
+  assert.equal(row[columns.indexOf("final_personal_confidence")], "");
+  assert.equal(row[columns.indexOf("final_personal_rationale")], "");
+  assert.ok(!csv.includes("p1-r1-rationale,p2"));
+});
+
+test("Individual Assessment rationale follows export redaction and stays out of group transcripts", async () => {
+  const fx = fixture();
+  const playerRound = fx.playerRounds.find((scope) => scope.id === "PR-R1-p1");
+  playerRound.attributes.find((attribute) => attribute.key === "finalPersonalChoiceRationale").value = "Private assessment note: contact private@example.com";
+  const svc = service({ scopes: fx.scopes });
+  const { csv } = await svc.renderQuestionnaireCsv("GAME1", { redact: true });
+  const { markdown } = await svc.renderTranscriptMd("GAME1", { redact: true });
+  assert.match(csv, /Private assessment note: contact \[REDACTED_EMAIL\]/);
+  assert.match(csv, /\[REDACTED_EMAIL\]/);
+  assert.doesNotMatch(csv, /private@example\.com/);
+  assert.doesNotMatch(markdown, /Private assessment note/);
+  assert.doesNotMatch(markdown, /private@example\.com/);
 });
 
 test("ExportService writeGameBundle produces a valid ZIP and records the audit entry", async () => {
@@ -605,6 +910,15 @@ test("ExportService writeGameBundle produces a valid ZIP and records the audit e
   assert.deepEqual(meta.rounds.map(({ id, index, nativeIndex, taskIndex }) => ({ id, index, nativeIndex, taskIndex })), [
     { id: "R0", index: 0, nativeIndex: 1, taskIndex: 0 },
     { id: "R1", index: 1, nativeIndex: 2, taskIndex: 1 },
+  ]);
+  assert.deepEqual(meta.rounds.map((round) => ({
+    outcome: round.finalDecisionOutcome,
+    officialChoice: round.officialGroupFinalChoice,
+    timedOut: round.finalDecisionTimedOut,
+    finalizedAt: round.finalDecisionFinalizedAt,
+  })), [
+    { outcome: "consensus_choice", officialChoice: "OPT1", timedOut: false, finalizedAt: "2100" },
+    { outcome: "declared_fail", officialChoice: "FAIL", timedOut: false, finalizedAt: "5100" },
   ]);
 
   // The service is request-context-free; the caller (HTTP server / CLI)

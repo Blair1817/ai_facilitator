@@ -1,9 +1,10 @@
-import { useStage, useRound } from "@empirica/core/player/classic/react";
+import { usePlayer, useStage, useRound } from "@empirica/core/player/classic/react";
 import React, { useLayoutEffect } from "react";
 import { FinalDecision } from "./stages/FinalDecision.jsx";
 import { Discussion } from "./stages/Discussion.jsx";
 import { PracticeOnboarding } from "./practice/PracticeOnboarding.jsx";
 import { PersonalFlow } from "./PersonalFlow.jsx";
+import { ConnectionRecovery } from "./intro-exit/ConnectionRecovery.jsx";
 
 // server/src/callbacks.js still creates a stage literally named "Task" for
 // the discussion stage rather than
@@ -15,9 +16,10 @@ import { PersonalFlow } from "./PersonalFlow.jsx";
 const DISCUSSION_STAGE_NAMES = ["Discussion", "Task"];
 
 export function Game() {
+  const player = usePlayer();
   const stage = useStage();
   const round = useRound();
-  const stageName = stage.get("name");
+  const stageName = stage?.get("name");
   // MIGRATED from old 2nd: a stable identity for the *current round+stage
   // combination*, used as a React key below so InitialDecision/Discussion/
   // FinalDecision fully remount (resetting all local component state)
@@ -32,6 +34,10 @@ export function Game() {
     document.getElementById("participant-scroll-root")?.scrollTo(0, 0);
     window.scrollTo(0, 0);
   }, [roundStageKey]);
+
+  if (!player?.round || !player?.stage || !round || !stage) {
+    return <ConnectionRecovery />;
+  }
 
   if (round?.get("isPractice")) {
     return stageName === "FinalDecision"

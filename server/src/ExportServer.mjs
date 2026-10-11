@@ -28,6 +28,9 @@
  *   GET <basePath>/games/:gameId/transcript.md
  *     The chat transcript as Markdown (redacted unless raw export is explicitly enabled).
  *
+ *   GET <basePath>/games/:gameId/transcript
+ *     Browser-readable formal transcript preview with Facilitator provenance.
+ *
  *   GET <basePath>/games/:gameId/bundle.zip
  *     Both + meta.json + llm-audit.jsonl in one ZIP.
  *
@@ -53,7 +56,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import http from "node:http";
 
-import { ExportService, ExportNotFoundError } from "./ExportService.mjs";
+import { describeFinalDecisionOutcome, ExportService, ExportNotFoundError } from "./ExportService.mjs";
 import { recordExportEvent } from "./ExportAudit.mjs";
 
 const MAX_LIMIT = 200;
@@ -148,6 +151,11 @@ async function route(req, res, ctx) {
   const batchGames = path.match(/^\/batches\/([^/]+)\/games$/);
   if (batchGames) {
     await handleBatchGamesJson(req, res, ctx, batchGames[1], search, auditFields, redact);
+    return;
+  }
+  const transcriptView = path.match(/^\/games\/([^/]+)\/transcript$/);
+  if (transcriptView) {
+    await handleTranscriptView(req, res, ctx, transcriptView[1], redact, auditFields);
     return;
   }
   const gameDetail = path.match(/^\/games\/([^/]+)$/);
@@ -280,6 +288,27 @@ async function handleTranscriptMd(req, res, ctx, gameId, redact, auditFields) {
   } else {
     res.end(markdown, "utf8");
   }
+}
+
+async function handleTranscriptView(req, res, ctx, gameId, redact, auditFields) {
+  const transcript = await ctx.service.getTranscriptView(gameId, { redact });
+  const html = renderTranscriptPage({
+    transcript,
+    basePath: ctx.basePath,
+    redact,
+  });
+  const sha = createHash("sha256").update(html).digest("hex");
+  const size = Buffer.byteLength(html, "utf8");
+  await recordExportEvent({
+    auditFile: ctx.auditFile,
+    record: { ...auditFields, endpoint: "transcript.html", gameId, format: "html", redact, sizeBytes: size, sha256: sha },
+  });
+  if (req.method === "HEAD") {
+    sendHeaders(res, 200, { "content-type": "text/html; charset=utf-8", etag: `"${sha}"` });
+    res.end();
+    return;
+  }
+  await sendHtml(res, 200, html);
 }
 
 async function handleBundleZip(req, res, ctx, gameId, redact, auditFields) {
@@ -501,6 +530,8 @@ function renderListPage({ batches, gamesByBatch, filter, limit, basePath, allowR
                                 <td>${escapeHtml(g.startedAt || "?")}</td>
                                 <td class="num">${g.playerCount}</td>
                                 <td>
+                                  <a href="${exportUrl(basePath, `games/${encodeURIComponent(g.id)}/transcript`)}">View transcript</a>
+                                  &nbsp;·&nbsp;
                                   <a href="${exportUrl(basePath, `games/${encodeURIComponent(g.id)}/questionnaire.csv`)}">questionnaire.csv</a>
                                   &nbsp;·&nbsp;
                                   <a href="${exportUrl(basePath, `games/${encodeURIComponent(g.id)}/transcript.md`)}">transcript.md</a>
@@ -591,6 +622,107 @@ function renderListPage({ batches, gamesByBatch, filter, limit, basePath, allowR
   <p class="sub">Showing up to ${limit} batches. Use the limit field to see more.</p>
 </body>
 </html>`;
+}
+
+function renderTranscriptPage({ transcript, basePath, redact }) {
+  const game = transcript.game;
+  const rawQuery = redact ? "" : "?raw=1";
+  const markdownUrl = `${exportUrl(basePath, `games/${encodeURIComponent(game.id)}/transcript.md`)}${rawQuery}`;
+  const bundleUrl = `${exportUrl(basePath, `games/${encodeURIComponent(game.id)}/bundle.zip`)}${rawQuery}`;
+  const roundSections = transcript.rounds.length === 0
+    ? `<p class="empty">No formal rounds were recorded for this game.</p>`
+    : transcript.rounds.map((round) => {
+      const outcomeDescription = describeFinalDecisionOutcome(round.finalDecisionOutcome);
+      const outcomeSummary = `<dl class="outcome">
+        <div><dt>Group decision outcome</dt><dd>${round.finalDecisionOutcome ? `<code>${escapeHtml(round.finalDecisionOutcome)}</code>` : `<span class="muted">not recorded</span>`}</dd></div>
+        <div><dt>Official group final choice</dt><dd>${round.officialGroupFinalChoice ? `<code>${escapeHtml(round.officialGroupFinalChoice)}</code>` : `<span class="muted">not recorded</span>`}</dd></div>
+        <div><dt>Final decision timed out</dt><dd>${round.finalDecisionTimedOut == null ? `<span class="muted">not recorded</span>` : `<code>${escapeHtml(round.finalDecisionTimedOut)}</code>`}</dd></div>
+        <div><dt>Final decision finalised at</dt><dd>${round.finalDecisionFinalizedAt == null ? `<span class="muted">not recorded</span>` : escapeHtml(round.finalDecisionFinalizedAt)}</dd></div>
+      </dl>${outcomeDescription ? `<p class="outcome-description">${escapeHtml(outcomeDescription)}</p>` : ""}`;
+      const messages = round.messages.length === 0
+        ? `<p class="empty">No messages recorded for this round.</p>`
+        : round.messages.map((message) => {
+          const provenance = message.kind === "facilitator"
+            ? `<dl class="provenance">
+                <div><dt>Role</dt><dd><code>${escapeHtml(message.provenance.role)}</code></dd></div>
+                <div><dt>Trigger</dt><dd><code>${escapeHtml(message.provenance.facilitatorTrigger)}</code></dd></div>
+                <div><dt>Origin</dt><dd><code>${escapeHtml(message.provenance.facilitatorOrigin)}</code></dd></div>
+                <div><dt>Audit request ID</dt><dd>${message.provenance.auditRequestId
+                  ? `<code>${escapeHtml(message.provenance.auditRequestId)}</code>`
+                  : `<span class="muted">not recorded</span>`}</dd></div>
+              </dl>`
+            : "";
+          return `<article class="message message-${escapeAttr(message.kind)}">
+            <header><strong>${escapeHtml(message.senderName)}</strong><time>${escapeHtml(message.timestampLabel)}</time></header>
+            ${provenance}
+            <div class="message-content">${escapeHtml(message.content || "")}</div>
+          </article>`;
+        }).join("");
+      return `<section class="round">
+        <h2>Formal Round ${round.taskIndex + 1}</h2>
+        <p class="round-meta">Task ${escapeHtml(round.taskVersion || "?")} · ${escapeHtml(titleCase(round.facilitation || "unknown"))}</p>
+        ${outcomeSummary}
+        <div class="messages">${messages}</div>
+      </section>`;
+    }).join("");
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Transcript · ${escapeHtml(game.id)}</title>
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; color: #1f2937; background: #f8fafc; }
+    main { width: min(960px, calc(100% - 2rem)); margin: 2rem auto 4rem; }
+    h1 { font-size: 1.5rem; margin: 0 0 0.5rem; overflow-wrap: anywhere; }
+    h2 { margin: 0; font-size: 1.2rem; }
+    .meta, .round-meta, .muted { color: #64748b; }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 1.25rem 0 2rem; }
+    .actions a { display: inline-block; padding: 0.55rem 0.8rem; border: 1px solid #cbd5e1; border-radius: 0.5rem; background: #fff; color: #1d4ed8; text-decoration: none; }
+    .round { margin: 1.5rem 0; padding: 1.25rem; border: 1px solid #dbe3ee; border-radius: 0.75rem; background: #fff; }
+    .round-meta { margin: 0.3rem 0 1rem; }
+    .outcome { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 0.7rem 1rem; margin: 0 0 0.7rem; padding: 0.9rem; border-radius: 0.5rem; background: #f8fafc; }
+    .outcome div { min-width: 0; }
+    .outcome dt { color: #64748b; font-size: 0.82rem; }
+    .outcome dd { margin: 0.2rem 0 0; overflow-wrap: anywhere; }
+    .outcome-description { margin: 0 0 1rem; color: #475569; }
+    .messages { display: grid; gap: 0.8rem; }
+    .message { padding: 0.8rem 0; border-top: 1px solid #e5e7eb; }
+    .message:first-child { border-top: 0; }
+    .message header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.5rem 1rem; margin-bottom: 0.4rem; }
+    .message time { color: #64748b; font-size: 0.85rem; }
+    .message-facilitator { padding: 0.9rem; border: 1px solid #bfdbfe; border-radius: 0.5rem; background: #eff6ff; }
+    .message-content { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; }
+    .provenance { display: flex; flex-wrap: wrap; gap: 0.35rem 1.25rem; margin: 0.35rem 0 0.7rem; font-size: 0.82rem; }
+    .provenance div { display: flex; gap: 0.35rem; min-width: 0; }
+    .provenance dt { color: #64748b; }
+    .provenance dd { margin: 0; overflow-wrap: anywhere; }
+    code { font-size: 0.8rem; }
+    .empty { color: #94a3b8; font-style: italic; }
+    a { color: #1d4ed8; }
+    @media (max-width: 520px) { main { width: min(100% - 1rem, 960px); margin-top: 1rem; } .round { padding: 0.8rem; } }
+  </style>
+</head>
+<body>
+  <main>
+    <p><a href="${exportUrl(basePath)}">← Back to exports</a></p>
+    <h1>Game ${escapeHtml(game.id)} transcript</h1>
+    <p class="meta">Sequence ${escapeHtml(game.sequenceId || "unknown")} · Started ${escapeHtml(game.startedAt || "unknown")} · ${redact ? "PII-redacted view" : "Authorised raw view"}</p>
+    <div class="actions">
+      <a href="${escapeAttr(markdownUrl)}">Download Markdown</a>
+      <a href="${escapeAttr(bundleUrl)}">Download ZIP bundle</a>
+    </div>
+    ${roundSections}
+  </main>
+</body>
+</html>`;
+}
+
+function titleCase(value) {
+  const text = String(value);
+  return text ? text[0].toUpperCase() + text.slice(1) : text;
 }
 
 function escapeHtml(value) {

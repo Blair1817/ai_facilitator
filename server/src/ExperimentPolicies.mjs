@@ -8,12 +8,18 @@ export const MESSAGE_TYPES = Object.freeze({
   TIMER_REMINDER: "timer_reminder",
 });
 
-export const BREAK_READY_WINDOW_MS = 45_000;
-export const NO_GROUP_FINAL_DECISION = "NO_GROUP_FINAL_DECISION";
+export const FACILITATOR_ROLES = Object.freeze({
+  STATIC: "STATIC",
+  GENERALIST: "GENERALIST",
+  INFORMATION_EXPANDER: "INFORMATION_EXPANDER",
+  EVIDENCE_CHALLENGER: "EVIDENCE_CHALLENGER",
+  INFORMATION_SYNTHESISER: "INFORMATION_SYNTHESISER",
+  FIXED_MESSAGE: "FIXED_MESSAGE",
+  NON_LLM_FALLBACK: "NON_LLM_FALLBACK",
+  UNRECORDED: "UNRECORDED",
+});
 
-export function canConfirmBreak(scheduledEndAt, now) {
-  return Number.isFinite(scheduledEndAt) && now >= scheduledEndAt - BREAK_READY_WINDOW_MS;
-}
+export const NO_GROUP_FINAL_DECISION = "NO_GROUP_FINAL_DECISION";
 
 export function summarizeFinalDecisionDrafts(drafts, requiredParticipants = 3) {
   const choices = Array.isArray(drafts) ? drafts.map((draft) => draft?.choice || "") : [];
@@ -100,6 +106,10 @@ export function buildCanonicalMessage({
   content,
   presentation,
   sender,
+  role,
+  facilitatorOrigin,
+  facilitatorTrigger,
+  auditRequestId,
 }) {
   const canonicalSpeakerId = participantId ?? speakerId;
   if (typeof messageId !== "string" || !messageId) throw new Error("messageId is required");
@@ -113,6 +123,11 @@ export function buildCanonicalMessage({
   if (!Number.isSafeInteger(sequencePosition) || sequencePosition < 0) throw new Error("sequencePosition must be a non-negative integer");
   if (typeof content !== "string" || !content.trim()) throw new Error("content is required");
   if (!sender || typeof sender !== "object") throw new Error("sender is required for display compatibility");
+  for (const [key, value] of Object.entries({ role, facilitatorOrigin, facilitatorTrigger, auditRequestId })) {
+    if (value !== undefined && (typeof value !== "string" || !value.trim())) {
+      throw new Error(`${key} must be a non-empty string when provided`);
+    }
+  }
 
   return {
     messageId,
@@ -129,6 +144,10 @@ export function buildCanonicalMessage({
     text: content,
     ts: timestamp,
     sender,
+    ...(role !== undefined ? { role } : {}),
+    ...(facilitatorOrigin !== undefined ? { facilitatorOrigin } : {}),
+    ...(facilitatorTrigger !== undefined ? { facilitatorTrigger } : {}),
+    ...(auditRequestId !== undefined ? { auditRequestId } : {}),
   };
 }
 

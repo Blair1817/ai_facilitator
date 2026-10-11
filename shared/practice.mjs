@@ -3,6 +3,8 @@ export const PRACTICE = Object.freeze({
   enabled: true,
   readingReminderSeconds: 60,
   discussionSeconds: 240,
+  discussionReminderSeconds: 60,
+  finalDecisionSeconds: 90,
   earlyFinishSeconds: 120,
   messagesPerParticipant: 1,
   totalMessages: 6,

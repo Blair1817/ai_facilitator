@@ -12,7 +12,6 @@ const callbacksSource = readFileSync(path.join(dirname, "callbacks.js"), "utf8")
 const viteConfigSource = readFileSync(path.join(clientRoot, "../vite.config.js"), "utf8");
 
 const clientFinalizedRoundForms = [
-  ["stages/InitialDecision.jsx", "initialDecision"],
   ["intro-exit/TLX.jsx", "tlxSurvey"],
   ["intro-exit/SubjectiveSurvey.jsx", "subjectiveSurvey"],
 ];
@@ -25,6 +24,17 @@ test("client-finalized round research forms restore a browser-local draft and st
     assert.match(source, /submittedAt: Date\.now\(\)/);
     assert.match(source, /clearDraftKeys/);
   }
+});
+
+test("formal InitialDecision keeps a local draft but the server authors receipt and acceptance metadata", () => {
+  const clientSource = read("stages/InitialDecision.jsx");
+  const personalFlowSource = readFileSync(path.join(dirname, "PersonalFlow.mjs"), "utf8");
+  assert.match(clientSource, /usePersistentDraft/);
+  assert.match(clientSource, /onNext\(\{ initialDecision: \{ choice, confidence, clientSubmittedAt \} \}\)/);
+  assert.match(personalFlowSource, /player\.round\.set\("initialDecision", \{/);
+  assert.match(personalFlowSource, /submittedAt: receivedAt/);
+  assert.match(personalFlowSource, /serverReceivedAt: receivedAt/);
+  assert.match(personalFlowSource, /initialDecisionAcceptedOnTime/);
 });
 
 test("FinalDecision restores private local drafts but only the server writes its finalized timestamped record", () => {

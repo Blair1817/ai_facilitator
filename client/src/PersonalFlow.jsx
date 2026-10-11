@@ -1,6 +1,12 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { usePlayer, useRound, useStage } from "@empirica/core/player/classic/react";
-import { personalPages, personalProgressKey } from "../../shared/personalFlow.mjs";
+import {
+  beginPersonalPageRequest,
+  FORMAL_INITIAL_DECISION_SECONDS,
+  nextPersonalPageRequestAttempt,
+  personalPages,
+  personalProgressKey,
+} from "../../shared/personalFlow.mjs";
 import { Introduction } from "./intro-exit/Introduction";
 import { ReviewQuiz } from "./stages/ReviewQuiz";
 import { InitialDecision } from "./stages/InitialDecision";
@@ -10,10 +16,14 @@ import { SubjectiveSurvey } from "./intro-exit/SubjectiveSurvey";
 import { FinalQuestions } from "./intro-exit/FinalQuestions";
 import { ExpFeedback } from "./intro-exit/ExpFeedback";
 import { Debriefing } from "./intro-exit/Debriefing";
-import { Timer } from "./components/Timer";
+import { Break } from "./stages/Break";
 
 const components = { TaskInformation: Introduction, ReviewQuiz, InitialDecision,
   IndividualAssessment, TLX, SubjectiveSurvey, FinalQuestions, ExpFeedback, Debriefing };
+
+function personalPageRequestStorageKey(playerId, roundId, stageId, index) {
+  return `personalPageRequest:${playerId}:${roundId}:${stageId}:${index}`;
+}
 
 export function StudyComplete() {
   return <main className="flex h-full items-center justify-center p-8 text-center"><div>
@@ -33,19 +43,47 @@ export function PersonalFlow() {
 }
 
 function PersonalPage({ player, round, stage, stageName, progress, pages }) {
-  const [pending, setPending] = useState(false);
-  const [skipBreak, setSkipBreak] = useState(false);
-  const [now, setNow] = useState(Date.now());
-  const onNext = useCallback(() => setPending(true), []);
-  const onSkip = useCallback(() => { setSkipBreak(true); setPending(true); }, []);
   const page = pages[progress.index];
-  const deadline = progress.startedAt + (page === "InitialDecision" ? 180000 : 300000);
+  const pendingStorageKey = personalPageRequestStorageKey(
+    player.id, round.id, stage.id, progress.index,
+  );
+  const [pending, setPending] = useState(() => {
+    if (page !== "InitialDecision") return false;
+    try {
+      const stored = JSON.parse(globalThis.sessionStorage?.getItem(pendingStorageKey) || "null");
+      return stored && typeof stored.requestId === "string" ? stored : false;
+    } catch {
+      return false;
+    }
+  });
+  const pendingRef = useRef(pending || null);
+  const [now, setNow] = useState(Date.now());
+  const onNext = useCallback((details = {}) => {
+    const { request, created } = beginPersonalPageRequest(
+      pendingRef.current,
+      details,
+      () => globalThis.crypto?.randomUUID?.() ?? `${player.id}-${Date.now()}`,
+    );
+    if (!created) return;
+    pendingRef.current = request;
+    if (request.initialDecision) {
+      try {
+        globalThis.sessionStorage?.setItem(pendingStorageKey, JSON.stringify(request));
+      } catch {
+        // In-memory retries still protect the currently mounted page.
+      }
+    }
+    setPending(request);
+  }, [pendingStorageKey, player.id]);
+  const deadline = page === "InitialDecision"
+    ? progress.startedAt + FORMAL_INITIAL_DECISION_SECONDS * 1000
+    : undefined;
   useEffect(() => {
     document.getElementById("participant-scroll-root")?.scrollTo(0, 0);
     window.scrollTo(0, 0);
   }, []);
   useEffect(() => {
-    if (!["InitialDecision", "Break"].includes(page)) return;
+    if (page !== "InitialDecision") return;
     const timer = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(timer);
   }, [page]);
@@ -53,16 +91,42 @@ function PersonalPage({ player, round, stage, stageName, progress, pages }) {
     if (page === "InitialDecision" && now >= deadline) onNext();
   }, [page, now, deadline, onNext]);
   useEffect(() => {
+    const previousIndex = progress.index - 1;
+    if (previousIndex < 0 || pages[previousIndex] !== "InitialDecision") return;
+    const completedStorageKey = personalPageRequestStorageKey(
+      player.id, round.id, stage.id, previousIndex,
+    );
+    try {
+      globalThis.sessionStorage?.removeItem(completedStorageKey);
+    } catch {
+      // The authoritative cursor has advanced; stale storage is harmless.
+    }
+  }, [pages, player.id, progress.index, round.id, stage.id]);
+  useEffect(() => {
     if (!pending || !page) return;
-    const send = () => player.set("personalPageRequest", {
-      requestId: crypto.randomUUID(), roundId: round.id, stageId: stage.id, index: progress.index,
-      skipBreak: page === "Break" && skipBreak,
-    });
+    const send = () => {
+      const attempt = nextPersonalPageRequestAttempt(pendingRef.current, {
+        roundId: round.id,
+        stageId: stage.id,
+        index: progress.index,
+      });
+      pendingRef.current = attempt.pending;
+      if (attempt.pending.initialDecision) {
+        try {
+          globalThis.sessionStorage?.setItem(
+            pendingStorageKey, JSON.stringify(attempt.pending),
+          );
+        } catch {
+          // In-memory retries still protect the currently mounted page.
+        }
+      }
+      player.set("personalPageRequest", attempt.transmission);
+    };
     send();
     // A dropped request or response write arriving later must not strand the page.
     const retry = setInterval(send, 2000);
     return () => clearInterval(retry);
-  }, [pending, player, round.id, stage.id, progress.index, page, skipBreak]);
+  }, [pending, pendingStorageKey, player, round.id, stage.id, progress.index, page]);
 
   if (!page) {
     if (stageName === "Followup" && round.get("taskIndex") === 1) return <StudyComplete />;
@@ -73,25 +137,18 @@ function PersonalPage({ player, round, stage, stageName, progress, pages }) {
         : "The next task will start when all three participants are ready."}</p>
     </div></main>;
   }
-  if (page === "Break") return <main className="relative flex h-full items-center justify-center p-8 text-center"><div>
-    <h1 className="text-2xl font-bold">Break</h1>
-    <p className="my-4">Take a five-minute break, then confirm you are ready for the next task.</p>
-    <div className="my-4 flex items-center justify-center gap-2" role="status">
-      <span className="font-semibold">Time remaining:</span>
-      <Timer deadline={deadline} />
-    </div>
-    <button className="mt-6 rounded bg-blue-700 px-5 py-3 text-white disabled:opacity-50"
-      disabled={now < deadline || pending} onClick={onNext}>I’m back and ready to continue</button>
-    {/* Deliberately discreet early-skip: a small faint chevron in the corner.
-        Clicking it ends this participant's own break early (server records
-        breakSkippedAt). Other participants and the group gate are unaffected. */}
-    <button type="button" onClick={onSkip} disabled={pending}
-      aria-label="Skip the rest of the break" title="Skip"
-      className="absolute bottom-3 right-4 select-none text-gray-400 hover:text-gray-600 focus-visible:text-gray-600"
-      style={{ fontSize: "13px", lineHeight: 1, opacity: 0.45 }}>&rsaquo;</button>
-  </div></main>;
+  if (page === "Break") return <Break progress={progress} />;
   const Component = components[page];
+  const outcome = round.get("finalDecisionOutcome");
+  const showDecisionNotice = stageName === "Followup"
+    && ((outcome === "consensus_choice" && page === "TLX")
+      || (["declared_fail", "timeout_fail"].includes(outcome) && page === "IndividualAssessment"));
   return <div className="relative h-full">
+    {showDecisionNotice && <p role="status" className={`mx-auto mt-4 max-w-3xl rounded-md p-4 text-sm font-semibold ${outcome === "timeout_fail" ? "bg-amber-50 text-amber-900" : "bg-green-50 text-green-800"}`}>
+      {outcome === "timeout_fail"
+        ? "Time is up. Your group did not confirm a final decision."
+        : "Your group decision has been submitted."}
+    </p>}
     <Component onNext={onNext} next={onNext} deadline={deadline} />
     {pending && <div role="status" className="absolute inset-0 flex items-center justify-center bg-white/90">Saving your responses…</div>}
   </div>;

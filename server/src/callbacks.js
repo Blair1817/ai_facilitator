@@ -42,9 +42,9 @@ import {
 } from "./InFlightAudit.mjs";
 import { appendToAttribute, ensureAppendOnlyAttribute } from "./AppendOnlyAttribute.mjs";
 import {
-  canConfirmBreak,
   allFinalDecisionConfirmationsMatch,
   classifyFinalDecision,
+  FACILITATOR_ROLES,
   MESSAGE_TYPES,
   NO_GROUP_FINAL_DECISION,
   allocateSequencePosition,
@@ -53,6 +53,10 @@ import {
   reviewHumanMessageRequest,
   summarizeFinalDecisionDrafts,
 } from "./ExperimentPolicies.mjs";
+import {
+  FORMAL_INITIAL_DECISION_SECONDS,
+  GROUP_DECISION_SECONDS,
+} from "../../shared/personalFlow.mjs";
 import {
   buildGlobalResponseRow,
   buildInterventionMirror,
@@ -67,7 +71,7 @@ import { countLobbyReadyPlayers } from "./LobbyReadiness.mjs";
 import { addPracticeRound, initialisePractice, handlePracticeStageStart, registerPractice, handlePracticeMessage, logPractice } from "./PracticeOnboarding.mjs";
 import { handlePersonalFlowStageStart, registerPersonalFlow } from "./PersonalFlow.mjs";
 
-registerPractice(Empirica);
+registerPractice(Empirica, appendCanonicalMessage);
 registerPersonalFlow(Empirica, (player, round, stageName) => {
   const rows = buildRoundResponseRows({ gameId: round.currentGame.id, roundId: round.id,
     participantId: player.id, stageName, read: (key) => player.round.get(key) });
@@ -85,13 +89,12 @@ function queueResearchMirror(operation, task) {
   return researchMirrorQueue;
 }
 
-function finalizeAuditLog(store, entry) {
-  finalizeAuditLogBase(store, entry);
+async function finalizeAuditLog(store, entry) {
   const round = store.currentRound;
+  const formalRoundIndex = round?.get("taskIndex");
+  const chat = round ? [...(store.get(`chat_round_${formalRoundIndex}`) || [])] : [];
+  const completed = await finalizeAuditLogBase(store, entry, () => Empirica.flush());
   if (!round) return;
-  const formalRoundIndex = round.get("taskIndex");
-  const chat = store.get(`chat_round_${formalRoundIndex}`) || [];
-  const completed = { ...entry, auditCompletedAt: Date.now() };
   queueResearchMirror("intervention", async () => {
     const persistence = researchPersistence();
     for (const message of chat) {
@@ -107,13 +110,11 @@ function finalizeAuditLog(store, entry) {
 }
 
 async function whileFacilitatorPublishesVisibleResponse(game, logEntry, task) {
-  setVisibleResponsePending(game, logEntry.auditRequestId, true);
-  await Empirica.flush();
+  await setVisibleResponsePending(game, logEntry.auditRequestId, true, () => Empirica.flush());
   try {
     return await task();
   } finally {
-    setVisibleResponsePending(game, logEntry.auditRequestId, false);
-    await Empirica.flush();
+    await setVisibleResponsePending(game, logEntry.auditRequestId, false, () => Empirica.flush());
   }
 }
 
@@ -723,19 +724,6 @@ const SEQUENCES = {
   },
 };
 const SEQUENCE_IDS = Object.keys(SEQUENCES);
-const REVIEW_QUIZ_SAFETY_DURATION_SECONDS = 24 * 60 * 60;
-const TASK_INFORMATION_DURATION_SECONDS = 10 * 60;
-const INITIAL_DECISION_DURATION_SECONDS = 3 * 60;
-// The visible Break countdown is controlled by breakScheduledEndAt. This long
-// safety duration prevents Empirica's timer from ending the stage before the
-// server-validated readiness gate is satisfied; clients submit synchronously
-// only after both the five-minute minimum and full-group readiness are true.
-const BREAK_STAGE_SAFETY_DURATION_SECONDS = 24 * 60 * 60;
-const TLX_DURATION_SECONDS = 10 * 60;
-const SUBJECTIVE_SURVEY_DURATION_SECONDS = 10 * 60;
-const BREAK_DURATION_SECONDS = 300;
-const INDIVIDUAL_ASSESSMENT_DURATION_SECONDS = 10 * 60;
-
 // ── Restart-safe randomized-block S1-S4 allocation (one claim per Game) ─────
 //
 // Every 4 Games get a shuffled permutation of {S1,S2,S3,S4} (a permuted
@@ -821,6 +809,9 @@ Empirica.onGameStart(({ game }) => {
       throw new Error(`[onGameStart] game ${game.id}'s treatment has an invalid/missing ${key} (${JSON.stringify(value)}). Check .empirica/treatments.yaml.`);
     }
   }
+  if (phase1Duration * 60 !== FORMAL_INITIAL_DECISION_SECONDS) {
+    throw new Error(`[onGameStart] phase1Duration must be ${FORMAL_INITIAL_DECISION_SECONDS / 60} minutes; got ${JSON.stringify(phase1Duration)}.`);
+  }
 
   // Initialize game-level state
   // `llmLog` and `operationalEvents` use the bounded per-entry storage
@@ -884,7 +875,7 @@ Empirica.onGameStart(({ game }) => {
   });
   round1.addStage({ name: "Preparation", duration: 1e9 });
   round1.addStage({ name: "Task",                     duration: gameDuration * 60 });
-  round1.addStage({ name: "FinalDecision",            duration: 90 });
+  round1.addStage({ name: "FinalDecision",            duration: GROUP_DECISION_SECONDS });
   round1.addStage({ name: "Followup", duration: 1e9 });
 
   const round2 = game.addRound({
@@ -895,7 +886,7 @@ Empirica.onGameStart(({ game }) => {
   });
   round2.addStage({ name: "Preparation", duration: 1e9 });
   round2.addStage({ name: "Task",                     duration: gameDuration * 60 });
-  round2.addStage({ name: "FinalDecision",            duration: 90 });
+  round2.addStage({ name: "FinalDecision",            duration: GROUP_DECISION_SECONDS });
   round2.addStage({ name: "Followup", duration: 1e9 });
 
   // Restore the original stable colour aliases. The shuffled slot controls the
@@ -1029,18 +1020,6 @@ function assignedHumanPlayers(game) {
   return game.players;
 }
 
-function updateBreakReadySummary(stage) {
-  if (!stage || stage.get("name") !== "Break") return { readyCount: 0, totalCount: 0, allReady: false };
-  const requiredPlayers = assignedHumanPlayers(stage.currentGame);
-  const readyCount = requiredPlayers.filter((participant) => participant.round?.get("breakReadyStatus") === "ready").length;
-  const totalCount = requiredPlayers.length;
-  const allReady = totalCount > 0 && readyCount === totalCount;
-  stage.round.set("breakReadyCount", readyCount);
-  stage.round.set("breakRequiredCount", totalCount);
-  stage.round.set("breakAllReady", allReady);
-  return { readyCount, totalCount, allReady };
-}
-
 function finalDecisionDrafts(game) {
   return assignedHumanPlayers(game).map((participant) => ({
     participantId: participant.id,
@@ -1062,7 +1041,7 @@ function clearFinalDecisionConfirmations(game) {
   }
 }
 
-function finalizeGroupDecision(stage, { timedOut = false, now = Date.now() } = {}) {
+function finalizeGroupDecision(stage, { timedOut = false, now = Date.now(), endStage = true } = {}) {
   const round = stage?.round;
   const game = stage?.currentGame;
   if (!round || !game || round.get("finalDecisionConfirmed")) return false;
@@ -1094,7 +1073,7 @@ function finalizeGroupDecision(stage, { timedOut = false, now = Date.now() } = {
     });
     if (!participant.stage?.get("submit")) participant.stage?.set("submit", true);
   }
-  stage.set("ended", true);
+  if (endStage) stage.set("ended", true);
   Empirica.flush();
   return true;
 }
@@ -1159,7 +1138,7 @@ function appendTimedMessage(stage, attribute, content, messageType = MESSAGE_TYP
 // treatment as the opening message historically had (see
 // IMPLEMENTATION_LOGIC.md section 8) and as the "minutes remain" timer
 // reminders already get.
-function appendFacilitatorNudge(stage, attribute, content, onceFlagKey) {
+function appendFacilitatorNudge(stage, attribute, content, onceFlagKey, facilitatorTrigger = "SILENCE_NUDGE") {
   if (!stage?.isCurrent?.()) return false;
   const game = stage.currentGame;
   if (onceFlagKey && game.get(onceFlagKey)) return false;
@@ -1174,6 +1153,9 @@ function appendFacilitatorNudge(stage, attribute, content, onceFlagKey) {
     speakerType: MESSAGE_TYPES.FACILITATOR,
     timestamp,
     content,
+    role: FACILITATOR_ROLES.FIXED_MESSAGE,
+    facilitatorOrigin: "DETERMINISTIC_FIXED",
+    facilitatorTrigger,
     sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
   });
   if (onceFlagKey) game.set(onceFlagKey, true);
@@ -1240,7 +1222,7 @@ function armSilenceWatchdog(stage, chatKey) {
     const content = hasTalked ? SILENCE_NUDGE_LULL : SILENCE_NUDGE_OPENING;
     // No once-flag: a fresh silence episode (rearmed after the group talks
     // again) is allowed to post another nudge later in the same round.
-    appendFacilitatorNudge(stage, chatKey, content, null);
+    appendFacilitatorNudge(stage, chatKey, content, null, "SILENCE_NUDGE");
   }, SILENCE_NUDGE_DELAY_MS);
   silenceWatchdogTimers.set(timerKey, handle);
 }
@@ -1286,7 +1268,7 @@ export function handleFormalStageStart(stage) {
     // Opening message: one fixed, non-LLM Facilitator message at the very
     // start of every Task-stage discussion. Independent of the checkpoint
     // pipeline (no Generator/Validator call, no CheckpointManager state).
-    appendFacilitatorNudge(stage, chatKey, TASK_OPENING_MESSAGE, `openingPosted_${chatKey}`);
+    appendFacilitatorNudge(stage, chatKey, TASK_OPENING_MESSAGE, `openingPosted_${chatKey}`, "DISCUSSION_OPENING");
 
     // Silence watchdog: covers both a dead-silent opening AND a later lull
     // after the group has already been talking (see armSilenceWatchdog).
@@ -1305,19 +1287,15 @@ export function handleFormalStageStart(stage) {
     stage.round.set("finalDecisionFinalizedAt", null);
     stage.round.set("finalDecisionDraftChoices", []);
     stage.round.set("finalDecisionConfirmed", false);
+    stage.round.set("finalDecisionDeadline", now + GROUP_DECISION_SECONDS * 1000);
     for (const participant of assignedHumanPlayers(game)) {
       participant.round.set("groupFinalChoice", "");
       participant.round.set("groupChoiceConfidence", null);
       participant.round.set("groupFinalConfirmedChoice", null);
       participant.round.set("groupFinalConfirmedAt", null);
     }
-    // Empirica owns the visible stage clock; this server timer is the
-    // authoritative fail-safe and remains valid across client refreshes.
-    if (!stage.round.get("isPractice")) setTimeout(() => {
-      if (stage.get("name") === "FinalDecision" && !stage.round.get("finalDecisionConfirmed")) {
-        finalizeGroupDecision(stage, { timedOut: true });
-      }
-    }, 90_000);
+    // Empirica's native 90-second stage timer is the single mechanism that
+    // ends this stage. onStageEnded below records timeout_fail exactly once.
     Empirica.flush();
   }
   if (stageName === "IndividualAssessment" && stage.round.get("finalDecisionOutcome") === "consensus_choice") {
@@ -1327,40 +1305,12 @@ export function handleFormalStageStart(stage) {
     stage.set("ended", true);
     Empirica.flush();
   }
-  if (stageName === "Break") {
-    const round = stage.round;
-    if (!round.get("breakStartedAt")) {
-      round.set("breakStartedAt", now);
-      round.set("breakScheduledEndAt", now + BREAK_DURATION_SECONDS * 1000);
-      for (const player of assignedHumanPlayers(game)) {
-        player.round.set("breakReadyStatus", "not_ready");
-      }
-      updateBreakReadySummary(stage);
-    }
-  }
 }
 
 Empirica.onStageStart(({ stage }) => {
   handlePracticeStageStart(stage, appendCanonicalMessage, Empirica);
   handlePersonalFlowStageStart(stage);
   handleFormalStageStart(stage);
-});
-
-Empirica.on("player", "breakReadyRequest", (ctx, { player }) => {
-  const stage = player.currentGame?.currentStage;
-  if (!stage || stage.get("name") !== "Break") return;
-  const round = stage.round;
-  const now = Date.now();
-  const scheduledEnd = round.get("breakScheduledEndAt");
-  if (!canConfirmBreak(scheduledEnd, now)) {
-    player.round.set("breakReadyRejectedAt", now);
-    return;
-  }
-  if (player.round.get("breakReadyStatus") !== "ready") {
-    player.round.set("breakReadyStatus", "ready");
-    player.round.set("breakReadyConfirmedAt", now);
-  }
-  updateBreakReadySummary(stage);
 });
 
 Empirica.on("player", "discussionAdvanceRequest", (_ctx, { player, discussionAdvanceRequest }) => {
@@ -1393,6 +1343,10 @@ Empirica.on("player", "finalDecisionDraftRequest", (_ctx, { player, finalDecisio
   const stage = game?.currentStage;
   if (!game || !round || !stage || stage.get("name") !== "FinalDecision" || round.get("finalDecisionConfirmed")) return;
   if (!request || request.roundId !== round.id || request.stageId !== stage.id) return;
+  if (Date.now() >= round.get("finalDecisionDeadline")) {
+    finalizeGroupDecision(stage, { timedOut: true });
+    return;
+  }
 
   const validChoices = new Set([
     ...(round.get("decisionOptions") || []).map((option) => option.id),
@@ -1421,6 +1375,10 @@ Empirica.on("player", "finalDecisionConfirmRequest", (_ctx, { player, finalDecis
   const stage = game?.currentStage;
   if (!game || !round || !stage || stage.get("name") !== "FinalDecision" || round.get("finalDecisionConfirmed")) return;
   if (!request || request.roundId !== round.id || request.stageId !== stage.id) return;
+  if (Date.now() >= round.get("finalDecisionDeadline")) {
+    finalizeGroupDecision(stage, { timedOut: true });
+    return;
+  }
 
   const drafts = finalDecisionDrafts(game);
   const review = reviewFinalDecisionConfirmation({
@@ -1537,6 +1495,12 @@ async function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole
       speakerType: MESSAGE_TYPES.FACILITATOR,
       timestamp: publishedAt,
       content: llmAction.message,
+      role: llmAction.role,
+      facilitatorOrigin: "LLM_GENERATED",
+      facilitatorTrigger: logEntry.triggerType === "PARTICIPANT_REQUEST"
+        ? "PARTICIPANT_REQUEST"
+        : "AUTOMATIC_CHECKPOINT",
+      auditRequestId: logEntry.auditRequestId,
       presentation: llmAction.presentation,
       sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
     });
@@ -1564,6 +1528,10 @@ async function postParticipantRequestFallback(game, chatKey, logEntry) {
       speakerType: MESSAGE_TYPES.FACILITATOR,
       timestamp: publishedAt,
       content: "I can’t tell you which option is correct. That’s for your group to decide, but I’m glad to help organise or clarify what’s already been discussed. Could you point me to the specific option, claim, or message you’d like help with?",
+      role: FACILITATOR_ROLES.NON_LLM_FALLBACK,
+      facilitatorOrigin: "NON_LLM_FALLBACK",
+      facilitatorTrigger: "PARTICIPANT_REQUEST",
+      auditRequestId: logEntry.auditRequestId,
       sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
     });
     logEntry.messageAdded = true;
@@ -1578,8 +1546,12 @@ async function postParticipantRequestFallback(game, chatKey, logEntry) {
 
 async function handleChat(env, { game }) {
   if (game.currentRound?.get("isPractice")) return;
-  const recovered = recoverInterruptedInFlight(game, CALLBACKS_INSTANCE_ID);
-  if (recovered.length > 0) Empirica.flush();
+  await recoverInterruptedInFlight(
+    game,
+    CALLBACKS_INSTANCE_ID,
+    Date.now(),
+    () => Empirica.flush(),
+  );
   const previousCallbacksInstanceId = game.get("activeCallbacksInstanceId");
   if (previousCallbacksInstanceId && previousCallbacksInstanceId !== CALLBACKS_INSTANCE_ID) {
     recordOperationalEvent(game, {
@@ -1733,14 +1705,16 @@ async function handleChat(env, { game }) {
     // Not an error -- just "not yet" / "this round is full" / etc.
     // Still log so the audit can see the trigger conditions per
     // human message.
-    finalizeAuditLog(game, logEntry);
-    Empirica.flush();
+    await finalizeAuditLog(game, logEntry);
     return;
   }
 
   logEntry.serverInstanceId = CALLBACKS_INSTANCE_ID;
-  beginInFlight(game, { ...logEntry, outcome: "PENDING" });
-  Empirica.flush();
+  await beginInFlight(
+    game,
+    { ...logEntry, outcome: "PENDING" },
+    () => Empirica.flush(),
+  );
 
   // Explicit @Facilitator request: answer with the participant-requested
   // Generalist before either condition's automatic policy. This path uses
@@ -1790,8 +1764,7 @@ async function handleChat(env, { game }) {
         now,
       });
     }
-    finalizeAuditLog(game, logEntry);
-    Empirica.flush();
+    await finalizeAuditLog(game, logEntry);
     return;
   }
 
@@ -1835,8 +1808,7 @@ async function handleChat(env, { game }) {
     if (result.published) {
       recordPublish(game, { role: "STATIC", messageId: result.candidate?.messageId ?? null, now });
     }
-    finalizeAuditLog(game, logEntry);
-    Empirica.flush();
+    await finalizeAuditLog(game, logEntry);
     return;
   }
 
@@ -1844,8 +1816,7 @@ async function handleChat(env, { game }) {
   // either policy. The real S1-S4 table assigns only static/adaptive.
   if (facilitation !== "adaptive") {
     logEntry.reason = `Unrecognized facilitation condition: ${JSON.stringify(facilitation)}`;
-    finalizeAuditLog(game, logEntry);
-    Empirica.flush();
+    await finalizeAuditLog(game, logEntry);
     return;
   }
 
@@ -1870,8 +1841,7 @@ async function handleChat(env, { game }) {
     game.currentStage?.get("name") !== "Task"
   ) {
     logEntry.reason = "Discarded stale LLM detector result after the originating Discussion stage ended";
-    finalizeAuditLog(game, logEntry);
-    Empirica.flush();
+    await finalizeAuditLog(game, logEntry);
     return;
   }
   logEntry.detectorLatency = Date.now() - assessorStart;
@@ -1912,8 +1882,7 @@ async function handleChat(env, { game }) {
 
   if (gateResult.decision === "abstain") {
     logEntry.reason = gateResult.reason;
-    finalizeAuditLog(game, logEntry);
-    Empirica.flush();
+    await finalizeAuditLog(game, logEntry);
     return;
   }
 
@@ -1935,8 +1904,7 @@ async function handleChat(env, { game }) {
       recordPublish(game, { role: "GENERALIST", messageId: result.candidate?.messageId ?? null, now });
     }
 
-    finalizeAuditLog(game, logEntry);
-    Empirica.flush();
+    await finalizeAuditLog(game, logEntry);
     return;
   }
 
@@ -2034,8 +2002,7 @@ async function handleChat(env, { game }) {
     }
   }
 
-  finalizeAuditLog(game, logEntry);
-  Empirica.flush();
+  await finalizeAuditLog(game, logEntry);
 }
 
 Empirica.on("game", "chat_round_0", handleChat);
@@ -2045,6 +2012,9 @@ Empirica.onStageEnded(({ stage }) => {
   const round = stage.round;
   const game = stage.currentGame;
   const stageName = stage.get("name");
+  if (stageName === "FinalDecision" && !round.get("finalDecisionConfirmed")) {
+    finalizeGroupDecision(stage, { timedOut: true, endStage: false });
+  }
   if (round.get("isPractice")) {
     if (stageName === "PracticeDiscussion" && !round.get("practiceDiscussionEnded")) {
       round.set("practiceDiscussionEnded", "timeout");
@@ -2060,7 +2030,6 @@ Empirica.onStageEnded(({ stage }) => {
   }
 
   if (stageName === "FinalDecision") {
-    if (!round.get("finalDecisionConfirmed")) finalizeGroupDecision(stage, { timedOut: true });
     for (const player of assignedHumanPlayers(game)) {
       if (round.get("finalDecisionTimedOut")) player.round.set("groupFinalTimeoutReason", "stage_timeout");
     }
@@ -2068,7 +2037,9 @@ Empirica.onStageEnded(({ stage }) => {
 
   if (stageName === "InitialDecision") {
     for (const player of assignedHumanPlayers(game)) {
-      if (!player.round.get("initialSubmittedAt")) player.round.set("initialDecisionTimeoutReason", "stage_timeout");
+      if (!player.round.get("initialSubmittedAt") && !player.round.get("initialDecisionTimeoutReason")) {
+        player.round.set("initialDecisionTimeoutReason", "stage_timeout");
+      }
     }
   }
 

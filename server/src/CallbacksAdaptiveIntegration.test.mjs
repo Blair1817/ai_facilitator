@@ -115,6 +115,42 @@ test("every chat audit entry receives its stable id before either early finaliza
   assert.doesNotMatch(handleChatBody.slice(begin), /logEntry\.auditRequestId\s*=/);
 });
 
+test("every in-flight lifecycle mutation is awaited and committed through the serialized flush boundary", () => {
+  const finalizeWrapperStart = callbacksSource.indexOf("async function finalizeAuditLog");
+  const finalizeWrapperEnd = callbacksSource.indexOf("\n}\n", finalizeWrapperStart) + 3;
+  const finalizeWrapper = callbacksSource.slice(finalizeWrapperStart, finalizeWrapperEnd);
+  const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
+
+  const roundSnapshot = finalizeWrapper.indexOf("const round = store.currentRound");
+  const chatSnapshot = finalizeWrapper.indexOf("const chat =");
+  const terminalCommit = finalizeWrapper.indexOf("const completed = await finalizeAuditLogBase");
+  assert.ok(
+    roundSnapshot !== -1 && chatSnapshot > roundSnapshot && terminalCommit > chatSnapshot,
+    "round identity and chat must be captured before a queued terminal commit can cross a round transition",
+  );
+
+  assert.match(
+    handleChatBody,
+    /await recoverInterruptedInFlight\([\s\S]*?\(\) => Empirica\.flush\(\)[\s\S]*?\);/,
+  );
+  assert.match(
+    handleChatBody,
+    /await beginInFlight\([\s\S]*?\(\) => Empirica\.flush\(\)[\s\S]*?\);/,
+  );
+
+  const finalizations = [
+    ...handleChatBody.matchAll(/(^|\n)\s*(await\s+)?finalizeAuditLog\(game, logEntry\);/g),
+  ];
+  assert.equal(finalizations.length, 8, "all eight terminal callback paths must remain covered");
+  assert.ok(
+    finalizations.every((match) => match[2] === "await "),
+    "no terminal callback path may release its lifecycle commit without awaiting it",
+  );
+
+  assert.doesNotMatch(handleChatBody, /(^|\n)\s*(?!await\s+)beginInFlight\(/m);
+  assert.doesNotMatch(handleChatBody, /(^|\n)\s*(?!await\s+)recoverInterruptedInFlight\(/m);
+});
+
 test("routing: Static reaches generation before and without every Adaptive assessment/selection function", () => {
   const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
   const staticStart = handleChatBody.indexOf('if (facilitation === "static")');
@@ -174,9 +210,14 @@ test("validated publication sets typing immediately around append and always cle
   const helperStart = callbacksSource.indexOf("function whileFacilitatorPublishesVisibleResponse");
   const helperEnd = callbacksSource.indexOf("\n}\n", helperStart) + 3;
   const helperBody = callbacksSource.slice(helperStart, helperEnd);
-  assert.match(helperBody, /setVisibleResponsePending\(game, logEntry\.auditRequestId, true\)/);
-  assert.match(helperBody, /setVisibleResponsePending\(game, logEntry\.auditRequestId, true\);\s*await Empirica\.flush\(\)/);
-  assert.match(helperBody, /try\s*\{[\s\S]*?return await task\(\);[\s\S]*?\}\s*finally\s*\{[\s\S]*?setVisibleResponsePending\(game, logEntry\.auditRequestId, false\);\s*await Empirica\.flush\(\)/);
+  assert.match(
+    helperBody,
+    /await setVisibleResponsePending\(game, logEntry\.auditRequestId, true, \(\) => Empirica\.flush\(\)\)/,
+  );
+  assert.match(
+    helperBody,
+    /try\s*\{[\s\S]*?return await task\(\);[\s\S]*?\}\s*finally\s*\{[\s\S]*?await setVisibleResponsePending\(game, logEntry\.auditRequestId, false, \(\) => Empirica\.flush\(\)\)/,
+  );
 
   const publishStart = callbacksSource.indexOf("function postGeneratorResultIfValid");
   const publishEnd = callbacksSource.indexOf("\n}\n", publishStart) + 3;
