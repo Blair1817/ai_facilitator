@@ -205,6 +205,12 @@ test("client preserves hidden-to-forced timer behaviour across refresh and shows
   assert.equal((practiceClientSource.match(/Time remaining:/g) || []).length, 1);
   assert.match(reportSource, /Some information may be different from what other group members see\./);
 });
+test("Practice readiness control remains clear of the fixed bottom-left Empirica menu", () => {
+  assert.match(
+    practiceClientSource,
+    /eligible && <section className="[^"]*pb-14[^"]*">/,
+  );
+});
 test("practice completion waits for all participants before the main experiment", () => {
   const f = fixture("PracticeComplete");
   f.players.slice(0, 2).forEach((p) => f.request(p, "continue"));

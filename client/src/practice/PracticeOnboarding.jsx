@@ -200,7 +200,7 @@ function PracticeDiscussion({ game, player, players, round, stage, now, config, 
           <h1 className="text-center text-lg font-bold">Compare the rooms with your group.</h1>
         </div>
         <PlayerSpecificInfo mode="compact" className="min-h-0 flex-1" />
-        {eligible && <section className="mt-4 flex-none border-t border-gray-200 pt-4">
+        {eligible && <section className="mt-4 flex-none border-t border-gray-200 pb-14 pt-4">
           <h2 className="font-semibold">Ready to decide?</h2>
           <p className="text-sm text-gray-600">If your group has finished discussing the options, indicate that you are ready to make a decision.</p>
           <GroupProgress players={players} progress={ready} pending="Discussing…" />

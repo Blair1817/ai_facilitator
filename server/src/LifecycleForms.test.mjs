@@ -99,6 +99,8 @@ test("one technical practice container wraps the current Practice flow and forma
   }
   assert.match(gameSource, /round\?\.get\("isPractice"\)/);
   assert.match(gameSource, /<PracticeOnboarding key=\{roundStageKey\}/);
+  assert.match(gameSource, /if \(!player\?\.round \|\| !player\?\.stage \|\| !round \|\| !stage\)/);
+  assert.match(gameSource, /return <ConnectionRecovery \/>/);
   assert.match(reviewQuizSource, /player\.stage\.set\("submit", true\)/);
 });
 

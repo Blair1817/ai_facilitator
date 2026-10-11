@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   ExportService,
@@ -15,6 +16,47 @@ import {
   ExportNotFoundError,
 } from "./ExportService.mjs";
 import { recordExportEvent } from "./ExportAudit.mjs";
+import {
+  assertExpectedTajribaQueryCount,
+  patchTajribaBundleSource,
+} from "../scripts/patch-tajriba-page-size.mjs";
+
+test("Tajriba install patch raises only nested attribute query limits and is idempotent", () => {
+  const generatedAttributeQuery = `
+    name: { kind: "Name", value: "attributes" },
+    arguments: [{
+      name: { kind: "Name", value: "first" },
+      value: { kind: "IntValue", value: "100" }
+    }]
+  `;
+  const generated = `
+    ${Array.from({ length: 4 }, () => generatedAttributeQuery).join("\n")}
+    unrelated: { kind: "IntValue", value: "100" }
+  `;
+  const first = patchTajribaBundleSource(generated);
+  assert.equal(first.targetCount, 4);
+  assert.equal(first.replacementCount, 4);
+  assert.match(first.source, /value: "2000"/);
+  assert.match(first.source, /unrelated: \{ kind: "IntValue", value: "100" \}/);
+
+  const second = patchTajribaBundleSource(first.source);
+  assert.equal(second.targetCount, 4);
+  assert.equal(second.replacementCount, 0);
+  assert.equal(second.source, first.source);
+});
+
+test("Tajriba install patch fails closed when only part of the generated query set matches", () => {
+  assert.doesNotThrow(() => assertExpectedTajribaQueryCount("complete fixture", 4));
+  assert.throws(
+    () => assertExpectedTajribaQueryCount("partial fixture", 3),
+    /expected 4 generated attributes\(first: \.\.\.\) queries in partial fixture; found 3/,
+  );
+});
+
+test("server install lifecycle always applies the Tajriba attribute query patch", () => {
+  const packageJson = JSON.parse(fs.readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"));
+  assert.equal(packageJson.scripts.postinstall, "node scripts/patch-tajriba-page-size.mjs");
+});
 
 /**
  * Build a fake Tajriba admin connection. The store is a flat map
