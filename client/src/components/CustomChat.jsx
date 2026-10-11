@@ -9,6 +9,7 @@ import { MentionsInput, Mention } from 'react-mentions';
 import ReactMentionsStyling from "./ReactMentionsStyling.jsx";
 import reactStringReplace from "react-string-replace";
 import { draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
+import { FacilitatorMessageContent } from "./FacilitatorMessageContent.jsx";
 
 
 
@@ -208,9 +209,7 @@ function MessageComp({ attribute }) {
                         <span className="ai-facilitator-message-title">Facilitator</span>
                         <span className="ai-facilitator-message-time">{ts && relTime(ts)}</span>
                     </header>
-                    <p className="ai-facilitator-message-content">
-                        {renderMessageWithMentions(msg.content ?? msg.text)}
-                    </p>
+                    <FacilitatorMessageContent message={msg} renderPlainText={renderMessageWithMentions} />
                 </article>
             </div>
         );

@@ -16,10 +16,27 @@
       "description": "STATIC 用于 Static AI facilitator（Alsobay 复刻）；GENERALIST 是 Adaptive AI facilitator 的频率控制模式（在 Specialist 不清晰 / margin 不足时使用）；其余三项是 Adaptive AI facilitator 的三个 Specialist 角色。该值必须与输入的 SELECTED_ROLE 完全一致。Static 条件下 role 必须为 STATIC；Adaptive 条件下 role 必须为 GENERALIST / INFORMATION_EXPANDER / EVIDENCE_CHALLENGER / INFORMATION_SYNTHESISER 之一。"
     },
     "message": {
-      "type": "string",
+      "type": ["string", "object"],
       "minLength": 1,
       "maxLength": 1500,
-      "description": "唯一显示给参与者的字段。字数上限在 Stage 9 pilot 后冻结：1500 字符足够覆盖 15-20 条公开消息的总结/对比/梳理（requested_generalist 角色实测自然输出 500-700 字符）；其他角色（Static、Generalist）由各自提示词内的\"concise / at most two sentences\"软约束控制实际输出长度，1500 只是天花板不是目标。不得包含 rationale、角色名、内部推理、markdown。"
+      "description": "参与者可见的一条干预。优先输出结构化对象 summary、sections（title/body）、question；兼容旧纯文本字符串。所有字段合并后的纯文本上限为1500字符，自动介入仍受40词及角色长度约束。不得包含 rationale、角色名、内部推理。仅支持字段内 **重点**，不支持HTML或块级Markdown。",
+      "properties": {
+        "summary": { "type": "string", "minLength": 1, "maxLength": 1500 },
+        "sections": {
+          "type": "array", "maxItems": 6,
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string", "minLength": 1, "maxLength": 100 },
+              "body": { "type": "string", "minLength": 1, "maxLength": 1500 }
+            },
+            "required": ["title", "body"], "additionalProperties": false
+          }
+        },
+        "question": { "type": "string", "maxLength": 1500 }
+      },
+      "required": ["summary", "sections", "question"],
+      "additionalProperties": false
     },
     "groundingMessageIds": {
       "type": "array",

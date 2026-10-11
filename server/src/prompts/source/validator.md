@@ -13,8 +13,14 @@ choose roles, do NOT evaluate participants' decisions or preferences.
 The deterministic validator (`GeneratorContract.runDeterministicValidation`)
 has already passed the candidate on mechanical checks (JSON shape,
 schema, role match, character limit, grounding-ID validity, no
-markdown, no exact-duplicate against recent AI messages). You only
+block-level markdown, no exact-duplicate against recent AI messages). You only
 judge the **semantic** criteria below.
+
+Structured messages are flattened into `message` before this audit: summary,
+every section title and body, then the closing question. `presentation`, when
+present, is the same content with layout and optional inline bold. Audit all
+visible words, including titles, for grounding, neutrality and length; section
+labels are not extra sentences merely because they appear on separate lines.
 
 You are the last defence against facilitator messages that would
 distort the discussion. On a failed audit the runtime regenerates

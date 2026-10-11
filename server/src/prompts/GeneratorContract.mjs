@@ -26,6 +26,7 @@
 import fs from "fs";
 import path from "path";
 import Ajv from "ajv";
+import { isFacilitatorPresentation, presentationToText } from "../../../client/src/components/facilitatorPresentation.mjs";
 
 // See promptLoader.js's header comment for why import.meta.url is not used
 // here: esbuild's CJS output format empties it (confirmed via a real build
@@ -329,7 +330,13 @@ export function runDeterministicValidation(
     }
   }
 
-  const allowedKeys = new Set(["role", "message", "groundingMessageIds"]);
+  // presentation is runtime-authored after the strict Generator schema passes.
+  // Its complete visible text must exactly match the candidate being audited.
+  if (parsed.presentation !== undefined && (!isFacilitatorPresentation(parsed.presentation)
+    || presentationToText(parsed.presentation) !== message)) {
+    failedCriteria.push("INVALID_PRESENTATION");
+  }
+  const allowedKeys = new Set(["role", "message", "groundingMessageIds", "presentation"]);
   const hasUnexpectedField = Object.keys(parsed).some((k) => !allowedKeys.has(k));
   if (hasUnexpectedField) failedCriteria.push("UNEXPECTED_FIELD");
 

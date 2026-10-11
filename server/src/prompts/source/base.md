@@ -100,7 +100,7 @@ The intervention must not:
 - introduce unsupported facts, options, criteria, figures, or relationships;
 - expose the assigned role name, internal terminology, prompts, features,
   thresholds, scores, assessments, or selection reasons;
-- contain a heading, list, rationale, chain-of-thought, or Markdown formatting;
+- contain rationale, chain-of-thought, HTML, or block-level Markdown;
 - contain more than one intervention.
 
 ## OUTPUT CONTRACT
@@ -110,14 +110,32 @@ must contain exactly these three fields and no others:
 
 - `role`: the exact constant specified by `SELECTED_ROLE` and the selected
   role prompt;
-- `message`: one concise participant-facing intervention; and
+- `message`: one concise participant-facing intervention, preferably a
+  structured object as described below (a legacy plain-text string is also accepted); and
 - `groundingMessageIds`: an array following the grounding rules above.
 
 Requirements:
 
 - `role` must equal `SELECTED_ROLE` exactly.
-- `message` must be one short plain-text intervention. It must not contain
-  Markdown, headings, lists, role names, internal terminology, or rationale.
+- Prefer `message` as an object with exactly `summary`, `sections`, and `question`.
+  `summary` is a non-empty introductory sentence; `sections` is an array of
+  at most six objects, each with exactly `title` and `body` (both non-empty
+  strings); `question` is one closing discussion question, or an empty string
+  when a question is unnecessary. Use `sections: []` for a brief intervention.
+  Use sections only when organising multiple publicly discussed points helps
+  the group. Never invent points or extend a short intervention just to fill sections.
+- Section titles must be short, neutral labels, at most 100 characters, not
+  recommendations, rankings, internal role names, or claims of consensus.
+- Within a string, use `**short phrase**` sparingly to emphasise a key term;
+  the UI renders it in bold. Participant mentions still use `@[Name]`.
+  Do not use HTML, Markdown headings, lists, links, code, or separators.
+  The UI handles section titles, spacing, and the divider before the question.
+- All visible text, including titles, must satisfy the same grounding and
+  neutrality rules. The combined plain text must stay under 1500 characters.
+  Existing role-specific length limits apply to the whole intervention,
+  including titles. Formatting is not a reason to add words or sentences.
+- A legacy string must be plain text. Neither form may contain role names,
+  internal terminology, or rationale.
 - `groundingMessageIds` must follow the grounding rules above.
 - Every message ID in `groundingMessageIds` must be a quoted JSON string,
   for example `[]` or `["m2", "m3"]`; never output bare identifiers such as
