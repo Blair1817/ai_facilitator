@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { PRACTICE, PRACTICE_STAGES, PRACTICE_CHAT, practiceReadiness } from "../../shared/practice.mjs";
 import { resolveTimerVisibility } from "../../shared/timerVisibility.mjs";
-import { addPracticeRound, initialisePractice, handlePracticeStageStart, registerPractice, handlePracticeMessage } from "./PracticeOnboarding.mjs";
+import { addPracticeRound, deliverPracticeDiscussionReminder, initialisePractice, handlePracticeStageStart, registerPractice, handlePracticeMessage } from "./PracticeOnboarding.mjs";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const practiceClientSource = readFileSync(path.join(dirname, "../../client/src/practice/PracticeOnboarding.jsx"), "utf8");
@@ -31,7 +31,7 @@ function fixture(name = "PracticeDiscussion") {
     on: (_kind, key, fn) => listeners.set(key, fn),
     flush: () => {},
   };
-  registerPractice(api);
+  registerPractice(api, append);
   listeners.set("start", ({ stage: startedStage }) => handlePracticeStageStart(startedStage, append, api));
   const request = (player, action, fields = {}) => listeners.get("practiceRequest")({}, {
     player, practiceRequest: { action, stageId: stage.id, roundId: round.id, ...fields },
@@ -47,6 +47,7 @@ test("practice replaces the old icebreaker with a single non-formal rehearsal", 
   addPracticeRound({ addRound: (value) => { attributes = value; return { addStage: (s) => stages.push(s) }; } });
   assert.deepEqual(stages.map((s) => s.name), PRACTICE_STAGES);
   assert.equal(stages.find((s) => s.name === "PracticeDiscussion").duration, 240);
+  assert.equal(stages.find((s) => s.name === "FinalDecision").duration, 90);
   assert.equal(attributes.isPractice, true);
   assert.equal(attributes.ai_intervention_enabled, false);
   assert.equal(attributes.taskIndex, undefined);
@@ -142,6 +143,35 @@ test("deadline recovery is authoritative and cannot skip discussion early", () =
   f.request(f.players[0], "deadline");
   assert.equal(f.stage.get("ended"), true);
   assert.equal(f.round.get("practiceDiscussionEnded"), "timeout");
+});
+test("Practice Discussion posts exactly one server-authored one-minute timer message", () => {
+  const f = fixture();
+  f.listeners.get("start")({ stage: f.stage });
+  const deadline = f.round.get("practiceDeadline");
+  const append = (_game, attribute, value) => f.messages.push({ attribute, ...value });
+  const api = { flush() {} };
+
+  assert.equal(deliverPracticeDiscussionReminder(f.stage, append, api, deadline - 120_000), false);
+  assert.equal(deliverPracticeDiscussionReminder(f.stage, append, api, deadline - 60_000), true);
+  assert.equal(deliverPracticeDiscussionReminder(f.stage, append, api, deadline - 59_000), false);
+  assert.equal(deliverPracticeDiscussionReminder(f.stage, append, api, deadline - 30_000), false);
+
+  const reminders = f.messages.filter((message) => message.messageType === "timer_reminder");
+  assert.equal(reminders.length, 1);
+  assert.equal(reminders[0].content, "One minute remains in the discussion.");
+  assert.equal(reminders[0].attribute, PRACTICE_CHAT);
+  assert.equal(reminders[0].exclude_from_primary_analysis, true);
+  assert.equal(f.game.get("humanMessageCount"), undefined);
+});
+test("Practice reminder is never posted after early completion", () => {
+  const f = fixture();
+  f.listeners.get("start")({ stage: f.stage });
+  const deadline = f.round.get("practiceDeadline");
+  f.round.set("practiceDiscussionEnded", "early");
+  f.stage.set("ended", true);
+  const append = (_game, attribute, value) => f.messages.push({ attribute, ...value });
+  assert.equal(deliverPracticeDiscussionReminder(f.stage, append, { flush() {} }, deadline - 60_000), false);
+  assert.equal(f.messages.filter((message) => message.messageType === "timer_reminder").length, 0);
 });
 test("timer is initially hidden, toggles per participant, and cannot hide in final 30 seconds", () => {
   const f = fixture();

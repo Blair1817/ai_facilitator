@@ -304,9 +304,12 @@ function fixture() {
       attr(s, "taskIndex", 0);
       attr(s, "taskVersion", "A");
       attr(s, "facilitation", "adaptive");
+      attr(s, "officialGroupFinalChoice", "OPT1");
       attr(s, "finalDecisionOutcome", "consensus_choice");
       attr(s, "finalDecisionMatchedChoice", "OPT1");
       attr(s, "finalDecisionConfirmed", true);
+      attr(s, "finalDecisionTimedOut", false);
+      attr(s, "finalDecisionFinalizedAt", 2100);
     }),
     makeScope("R1", "round", (s) => {
       attr(s, "gameID", T("GAME1"));
@@ -314,9 +317,12 @@ function fixture() {
       attr(s, "taskIndex", 1);
       attr(s, "taskVersion", "B");
       attr(s, "facilitation", "static");
+      attr(s, "officialGroupFinalChoice", "FAIL");
       attr(s, "finalDecisionOutcome", "declared_fail");
       attr(s, "finalDecisionMatchedChoice", "NO_GROUP_FINAL_DECISION");
       attr(s, "finalDecisionConfirmed", true);
+      attr(s, "finalDecisionTimedOut", false);
+      attr(s, "finalDecisionFinalizedAt", 5100);
     }),
   ];
   const scopes = Object.fromEntries([batch, game, ...rounds, ...players, ...playerRounds].map((scope) => [scope.id, scope]));
@@ -469,6 +475,12 @@ test("renderQuestionnaireCsv produces one row per player per round plus an end-o
   const subjectiveTextColumn = columns.indexOf("subjective_group_free_text");
   const finalChoiceColumn = columns.indexOf("final_decision_choice");
   const finalOutcomeColumn = columns.indexOf("final_decision_outcome");
+  const officialChoiceColumn = columns.indexOf("official_group_final_choice");
+  const timedOutColumn = columns.indexOf("final_decision_timed_out");
+  const finalizedAtColumn = columns.indexOf("final_decision_finalized_at");
+  const personalChoiceColumn = columns.indexOf("final_personal_choice");
+  const personalConfidenceColumn = columns.indexOf("final_personal_confidence");
+  const personalRationaleColumn = columns.indexOf("final_personal_rationale");
   const parsedPerRoundRows = csvLines.slice(1)
     .map((line) => line.split(","))
     .filter((cells) => cells[slotColumn] === "per_round");
@@ -488,6 +500,24 @@ test("renderQuestionnaireCsv produces one row per player per round plus an end-o
     assert.equal(round1[finalChoiceColumn], "NO_GROUP_FINAL_DECISION");
     assert.equal(round0[finalOutcomeColumn], "consensus_choice");
     assert.equal(round1[finalOutcomeColumn], "declared_fail");
+    assert.equal(round0[officialChoiceColumn], "OPT1");
+    assert.equal(round1[officialChoiceColumn], "FAIL");
+    assert.equal(round0[timedOutColumn], "false");
+    assert.equal(round1[timedOutColumn], "false");
+    assert.equal(round0[finalizedAtColumn], "2100");
+    assert.equal(round1[finalizedAtColumn], "5100");
+    assert.equal(round0[personalChoiceColumn], "");
+    assert.equal(round1[personalChoiceColumn], `${playerId}-r1-personal`);
+    assert.equal(round1[personalConfidenceColumn], String(90 + Number(playerId.slice(1))));
+    assert.equal(round1[personalRationaleColumn], `${playerId}-r1-rationale`);
+  }
+  const endRows = csvLines.slice(1)
+    .map((line) => line.split(","))
+    .filter((cells) => cells[slotColumn] === "end_of_game");
+  for (const row of endRows) {
+    for (const column of [finalChoiceColumn, finalOutcomeColumn, officialChoiceColumn, timedOutColumn, finalizedAtColumn, personalChoiceColumn, personalConfidenceColumn, personalRationaleColumn]) {
+      assert.equal(row[column], "", `end_of_game decision column ${columns[column]} must be blank`);
+    }
   }
   assert.ok(!csv.includes("POISON-PRACTICE"));
   assert.match(csv, /I noticed Red focused on cost/);
@@ -518,6 +548,10 @@ test("renderTranscriptMd emits one section per round and a final LLM audit log s
   assert.doesNotMatch(markdown, /- Ended: \(in progress\)/);
   assert.match(markdown, /## Formal Round 1 · Task A · Adaptive/);
   assert.match(markdown, /## Formal Round 2 · Task B · Static/);
+  assert.match(markdown, /Group decision outcome: `consensus_choice`/);
+  assert.match(markdown, /Group decision outcome: `declared_fail`/);
+  assert.match(markdown, /Official group final choice: `OPT1`/);
+  assert.match(markdown, /Final decision finalised at: 5100/);
   assert.doesNotMatch(markdown, /## Round 3|Practice \/ Orientation|Practice-only answer/);
   assert.doesNotMatch(markdown, /POISON NATIVE-INDEX TRANSCRIPT/);
   assert.match(markdown, /## LLM audit log \(2 entries\)/);
@@ -529,6 +563,7 @@ test("renderTranscriptMd emits one section per round and a final LLM audit log s
   assert.match(markdown, /Audit request ID: `R1`/);
   assert.match(markdown, /\] Blue\*\*/);
   assert.match(markdown, /Formal Round 2 evidence/);
+  assert.doesNotMatch(markdown, /p1-r1-rationale|p2-r1-rationale|p3-r1-rationale/);
   // Default redact must strip the email from the expFeedback mention
   // when it ends up in the bundle (transcript does not embed
   // expFeedback today, so this is a defensive check).
@@ -684,6 +719,73 @@ test("formal transcript preserves recorded chronology, round isolation, and Prac
   assert.ok(!JSON.stringify(transcript).includes("POISON NATIVE-INDEX TRANSCRIPT"));
 });
 
+test("timeout_fail remains distinct and consistent across CSV, transcript data, Markdown, and ZIP metadata", async () => {
+  const fx = fixture();
+  const timeoutRound = fx.rounds.find((round) => round.id === "R1");
+  timeoutRound.attributes.find((attribute) => attribute.key === "finalDecisionOutcome").value = "timeout_fail";
+  timeoutRound.attributes.find((attribute) => attribute.key === "finalDecisionTimedOut").value = "true";
+  timeoutRound.attributes.find((attribute) => attribute.key === "finalDecisionFinalizedAt").value = "9000";
+  const svc = service({ scopes: fx.scopes });
+
+  const { csv, columns } = await svc.renderQuestionnaireCsv("GAME1", { redact: true });
+  const rows = csv.trimEnd().split("\n").slice(1).map((line) => line.split(","));
+  const outcomeColumn = columns.indexOf("final_decision_outcome");
+  const timedOutColumn = columns.indexOf("final_decision_timed_out");
+  const taskIndexColumn = columns.indexOf("task_index");
+  const slotColumn = columns.indexOf("slot");
+  const timeoutRows = rows.filter((row) => row[slotColumn] === "per_round" && row[taskIndexColumn] === "1");
+  assert.equal(timeoutRows.length, 3);
+  assert.ok(timeoutRows.every((row) => row[outcomeColumn] === "timeout_fail" && row[timedOutColumn] === "true"));
+
+  const transcript = await svc.getTranscriptView("GAME1", { redact: true });
+  assert.equal(transcript.rounds.find((round) => round.taskIndex === 1).finalDecisionOutcome, "timeout_fail");
+  const { markdown } = await svc.renderTranscriptMd("GAME1", { redact: true });
+  assert.match(markdown, /Group decision outcome: `timeout_fail`/);
+  assert.match(markdown, /The group did not confirm a final decision before time ran out\./);
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "export-outcome-"));
+  const outFile = path.join(tmpDir, "bundle.zip");
+  const output = fs.createWriteStream(outFile);
+  await svc.writeGameBundle("GAME1", { redact: true, output });
+  await new Promise((resolve) => output.on("close", resolve));
+  const meta = JSON.parse(execFileSync("unzip", ["-p", outFile, "meta.json"], { encoding: "utf8" }));
+  assert.equal(meta.rounds.find((round) => round.taskIndex === 1).finalDecisionOutcome, "timeout_fail");
+  assert.equal(meta.rounds.find((round) => round.taskIndex === 1).finalDecisionTimedOut, true);
+});
+
+test("missing Individual Assessment responses stay blank and never borrow another participant's data", async () => {
+  const fx = fixture();
+  const missing = fx.playerRounds.find((scope) => scope.id === "PR-R1-p2");
+  missing.attributes = missing.attributes.filter((attribute) => ![
+    "finalPersonalChoice",
+    "finalPersonalChoiceConfidence",
+    "finalPersonalChoiceRationale",
+  ].includes(attribute.key));
+  const { csv, columns } = await service({ scopes: fx.scopes }).renderQuestionnaireCsv("GAME1", { redact: true });
+  const rows = csv.trimEnd().split("\n").slice(1).map((line) => line.split(","));
+  const row = rows.find((cells) => cells[columns.indexOf("slot")] === "per_round"
+    && cells[columns.indexOf("player_id")] === "p2"
+    && cells[columns.indexOf("task_index")] === "1");
+  assert.equal(row[columns.indexOf("final_personal_choice")], "");
+  assert.equal(row[columns.indexOf("final_personal_confidence")], "");
+  assert.equal(row[columns.indexOf("final_personal_rationale")], "");
+  assert.ok(!csv.includes("p1-r1-rationale,p2"));
+});
+
+test("Individual Assessment rationale follows export redaction and stays out of group transcripts", async () => {
+  const fx = fixture();
+  const playerRound = fx.playerRounds.find((scope) => scope.id === "PR-R1-p1");
+  playerRound.attributes.find((attribute) => attribute.key === "finalPersonalChoiceRationale").value = "Private assessment note: contact private@example.com";
+  const svc = service({ scopes: fx.scopes });
+  const { csv } = await svc.renderQuestionnaireCsv("GAME1", { redact: true });
+  const { markdown } = await svc.renderTranscriptMd("GAME1", { redact: true });
+  assert.match(csv, /Private assessment note: contact \[REDACTED_EMAIL\]/);
+  assert.match(csv, /\[REDACTED_EMAIL\]/);
+  assert.doesNotMatch(csv, /private@example\.com/);
+  assert.doesNotMatch(markdown, /Private assessment note/);
+  assert.doesNotMatch(markdown, /private@example\.com/);
+});
+
 test("ExportService writeGameBundle produces a valid ZIP and records the audit entry", async () => {
   const fx = fixture();
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "export-bundle-"));
@@ -702,6 +804,15 @@ test("ExportService writeGameBundle produces a valid ZIP and records the audit e
   assert.deepEqual(meta.rounds.map(({ id, index, nativeIndex, taskIndex }) => ({ id, index, nativeIndex, taskIndex })), [
     { id: "R0", index: 0, nativeIndex: 1, taskIndex: 0 },
     { id: "R1", index: 1, nativeIndex: 2, taskIndex: 1 },
+  ]);
+  assert.deepEqual(meta.rounds.map((round) => ({
+    outcome: round.finalDecisionOutcome,
+    officialChoice: round.officialGroupFinalChoice,
+    timedOut: round.finalDecisionTimedOut,
+    finalizedAt: round.finalDecisionFinalizedAt,
+  })), [
+    { outcome: "consensus_choice", officialChoice: "OPT1", timedOut: false, finalizedAt: "2100" },
+    { outcome: "declared_fail", officialChoice: "FAIL", timedOut: false, finalizedAt: "5100" },
   ]);
 
   // The service is request-context-free; the caller (HTTP server / CLI)

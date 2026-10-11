@@ -3,6 +3,11 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import {
+  FORMAL_INITIAL_DECISION_SECONDS,
+  SHARED_BREAK_READY_WINDOW_SECONDS,
+  SHARED_BREAK_SECONDS,
+} from "../../shared/personalFlow.mjs";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const callbacksSource = readFileSync(path.join(dirname, "callbacks.js"), "utf8");
@@ -97,13 +102,14 @@ test("one technical practice container wraps the current Practice flow and forma
   assert.match(reviewQuizSource, /player\.stage\.set\("submit", true\)/);
 });
 
-test("InitialDecision page allows 180 seconds, shows a countdown, and advances without waiting for others", () => {
-  // The 180s budget moved from a dedicated stage into the Preparation
+test("InitialDecision page allows 300 seconds, shows a countdown, and advances without waiting for others", () => {
+  // The 300s budget lives in the Preparation
   // personal flow: the client derives the deadline from the server-owned
   // page cursor and auto-advances on expiry; the server re-checks it.
-  assert.match(personalFlowClient, /page === "InitialDecision" \? 180000 : 300000/);
+  assert.equal(FORMAL_INITIAL_DECISION_SECONDS, 300);
+  assert.match(personalFlowClient, /FORMAL_INITIAL_DECISION_SECONDS \* 1000/);
   assert.match(personalFlowClient, /if \(page === "InitialDecision" && now >= deadline\) onNext\(\)/);
-  assert.match(personalFlowServer, /progress\.startedAt \+ 180000/);
+  assert.match(personalFlowServer, /progress\.startedAt \+ FORMAL_INITIAL_DECISION_SECONDS \* 1000/);
 
   assert.match(initialDecisionSource, /import \{ Timer \} from "\.\.\/components\/Timer"/);
   assert.match(initialDecisionSource, /Time remaining:/);
@@ -134,15 +140,17 @@ test("R3-R7/R19: personal pages advance individually; only group activities gate
   assert.match(personalFlowShared, /players\.every\(\(p\) => \(p\.round\.get\(personalProgressKey\(stageName\)\)\?\.index \?\? 0\) >= length\)/);
   // The ReviewQuiz page cannot be passed without passing the quiz.
   assert.match(personalFlowServer, /page === "ReviewQuiz" && player\.round\.get\("reviewQuizPassed"\) !== true/);
-  // The Break page keeps its validated five-minute minimum before Round 2,
-  // with a deliberate discreet corner-arrow skip that only ends the
-  // participant's OWN break and is recorded for research.
-  assert.match(personalFlowServer, /page === "Break" && now < progress\.startedAt \+ 300000/);
-  assert.match(personalFlowServer, /if \(!request\.skipBreak\) return;/);
-  assert.match(personalFlowServer, /player\.round\.set\("breakSkippedAt", now\)/);
-  assert.match(personalFlowClient, /skipBreak: page === "Break" && skipBreak/);
-  assert.match(personalFlowClient, /Skip the rest of the break/);
-  assert.match(personalFlowClient, /<span className="font-semibold">Time remaining:<\/span>/);
+  // Break is one shared five-minute barrier, starts only after all three
+  // arrive, and cannot be skipped by the retired request field.
+  assert.equal(SHARED_BREAK_SECONDS, 300);
+  assert.equal(SHARED_BREAK_READY_WINDOW_SECONDS, 30);
+  assert.match(personalFlowServer, /Empirica\.on\("player", "sharedBreakRequest"/);
+  assert.match(personalFlowServer, /sharedBreakDeadline/);
+  assert.match(personalFlowClient, /<Break progress=\{progress\} \/>/);
+  assert.doesNotMatch(personalFlowClient, /skipBreak|Skip the rest of the break/);
+  assert.doesNotMatch(personalFlowServer, /breakSkippedAt|breakSkipAfterMs/);
+  assert.match(breakSource, /Please wait for the other group members before the break starts\./);
+  assert.match(breakSource, /I'm back and ready to continue/);
   assert.match(callbacksSource, /addPracticeRound\(game\)/);
   assert.equal((callbacksSource.match(/name: "Preparation", duration: 1e9/g) ?? []).length, 2);
   assert.doesNotMatch(callbacksSource, /name: "TaskInformation",\s+duration: TASK_INFORMATION_DURATION_SECONDS/);

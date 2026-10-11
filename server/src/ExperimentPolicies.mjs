@@ -17,12 +17,7 @@ export const FACILITATOR_ROLES = Object.freeze({
   UNRECORDED: "UNRECORDED",
 });
 
-export const BREAK_READY_WINDOW_MS = 45_000;
 export const NO_GROUP_FINAL_DECISION = "NO_GROUP_FINAL_DECISION";
-
-export function canConfirmBreak(scheduledEndAt, now) {
-  return Number.isFinite(scheduledEndAt) && now >= scheduledEndAt - BREAK_READY_WINDOW_MS;
-}
 
 export function summarizeFinalDecisionDrafts(drafts, requiredParticipants = 3) {
   const choices = Array.isArray(drafts) ? drafts.map((draft) => draft?.choice || "") : [];

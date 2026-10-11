@@ -92,7 +92,7 @@ test("three PracticeComplete participants enter formal Preparation with personal
     on: (_kind, key, callback) => listeners.set(key, callback),
     flush() {},
   };
-  registerPractice(api);
+  registerPractice(api, () => {});
   for (const player of game.players) {
     listeners.get("practiceRequest")({}, {
       player,
@@ -143,5 +143,6 @@ test("Practice FinalDecision still passes through the existing FinalDecision ini
   assert.match(handler, /if \(stageName === "FinalDecision"\)/);
   assert.match(handler, /finalDecisionAgreementStatus", "not_agreed"/);
   assert.match(handler, /for \(const participant of assignedHumanPlayers\(game\)\)/);
-  assert.match(handler, /if \(!stage\.round\.get\("isPractice"\)\) setTimeout/);
+  assert.match(handler, /finalDecisionDeadline", now \+ GROUP_DECISION_SECONDS \* 1000/);
+  assert.doesNotMatch(handler, /setTimeout\([\s\S]*finalizeGroupDecision/);
 });

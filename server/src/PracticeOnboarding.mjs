@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { appendToAttribute } from "./AppendOnlyAttribute.mjs";
-import { FACILITATOR_ROLES } from "./ExperimentPolicies.mjs";
+import { FACILITATOR_ROLES, MESSAGE_TYPES } from "./ExperimentPolicies.mjs";
 import { PRACTICE, PRACTICE_CHAT, PRACTICE_STAGES, PRACTICE_PERSONAL_PAGES, practiceReadiness } from "../../shared/practice.mjs";
 
 // Research metadata only: never stored on a participant-visible scope or sent to an LLM.
@@ -37,7 +37,12 @@ export function addPracticeRound(game) {
   for (const name of PRACTICE_STAGES) {
     // Empirica 1.12 requires an integer duration (5..1e9). Its maximum is a
     // framework sentinel for untimed teaching steps (~31 years), not a reading deadline.
-    round.addStage({ name, duration: name === "PracticeDiscussion" ? PRACTICE.discussionSeconds : 1e9 });
+    const duration = name === "PracticeDiscussion"
+      ? PRACTICE.discussionSeconds
+      : name === "FinalDecision"
+        ? PRACTICE.finalDecisionSeconds
+        : 1e9;
+    round.addStage({ name, duration });
   }
 }
 export function initialisePractice(round) {
@@ -64,6 +69,45 @@ function finishPracticeDiscussion(stage, Empirica, now = Date.now()) {
   logPractice(game, timedOut ? "discussion_timeout" : "discussion_ended_early");
   stage.set("ended", true);
   Empirica.flush();
+}
+
+export function deliverPracticeDiscussionReminder(stage, appendMessage, Empirica, now = Date.now()) {
+  const round = stage?.round;
+  const deadline = round?.get("practiceDeadline");
+  if (!round?.get("isPractice")
+    || stage.get("name") !== "PracticeDiscussion"
+    || !stage.isCurrent()
+    || stage.get("ended")
+    || round.get("practiceDiscussionEnded")
+    || round.get("practiceMinuteReminderSentAt")
+    || !Number.isFinite(deadline)
+    || now < deadline - PRACTICE.discussionReminderSeconds * 1000
+    || now >= deadline - PRACTICE.forceTimerSeconds * 1000
+    || now >= deadline) return false;
+
+  const messageId = `practice-timer-${PRACTICE.discussionReminderSeconds}-${round.id}`;
+  // Persist the delivery guard before appending so concurrent reconnect and
+  // scheduled callbacks cannot publish the same reminder twice.
+  round.set("practiceMinuteReminderSentAt", now);
+  round.set("practiceMinuteReminderMessageId", messageId);
+  appendMessage(stage.currentGame, PRACTICE_CHAT, {
+    messageId,
+    groupId: stage.currentGame.id,
+    speakerId: `system-${MESSAGE_TYPES.TIMER_REMINDER}`,
+    roundIndex: round.get("index"),
+    stage: "PracticeDiscussion",
+    messageType: MESSAGE_TYPES.TIMER_REMINDER,
+    speakerType: MESSAGE_TYPES.TIMER_REMINDER,
+    timestamp: now,
+    phase: "practice",
+    source: "server_timer",
+    exclude_from_primary_analysis: true,
+    content: "One minute remains in the discussion.",
+    sender: { id: `system-${MESSAGE_TYPES.TIMER_REMINDER}`, name: "Timer", hexCode: "4B5563", avatar: "⏱️" },
+  });
+  logPractice(stage.currentGame, "discussion_one_minute_reminder", null, { message_id: messageId });
+  Empirica?.flush?.();
+  return true;
 }
 
 export function handlePracticeStageStart(stage, appendMessage, Empirica) {
@@ -121,12 +165,18 @@ export function handlePracticeStageStart(stage, appendMessage, Empirica) {
         sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
       });
     }
+    const reminderAt = round.get("practiceDeadline") - PRACTICE.discussionReminderSeconds * 1000;
+    const reminder = setTimeout(
+      () => deliverPracticeDiscussionReminder(stage, appendMessage, Empirica),
+      Math.max(0, reminderAt - Date.now()),
+    );
+    reminder.unref?.();
     const timeout = setTimeout(() => finishPracticeDiscussion(stage, Empirica), Math.max(0, round.get("practiceDeadline") - Date.now()));
     timeout.unref?.();
   }
 }
 
-export function registerPractice(Empirica) {
+export function registerPractice(Empirica, appendMessage) {
   Empirica.on("player", "practiceRequest", (_ctx, { player, practiceRequest: request }) => {
     const game = player.currentGame, round = game?.currentRound, stage = game?.currentStage;
     if (!round?.get("isPractice") || !stage || stage.get("ended") || !request
@@ -138,6 +188,10 @@ export function registerPractice(Empirica) {
     const action = request.action;
     const now = Date.now();
     if (action === "deadline") { finishPracticeDiscussion(stage, Empirica, now); return; }
+    if (action === "reminder_due" && name === "PracticeDiscussion") {
+      deliverPracticeDiscussionReminder(stage, appendMessage, Empirica, now);
+      return;
+    }
     if (action === "ready" && name === "PracticeDiscussion") {
       finishPracticeDiscussion(stage, Empirica, now);
       if (round.get("practiceDiscussionEnded")) return;

@@ -127,6 +127,11 @@ export function PracticeOnboarding() {
       <p className="text-sm font-semibold uppercase tracking-wide text-blue-700">Before the main tasks</p>
       <h1 className="text-3xl font-bold text-gray-900">{complete ? "Practice complete" : "Practice Round"}</h1>
       {complete ? <>
+        {round.get("finalDecisionOutcome") === "timeout_fail"
+          ? <p role="status" className="rounded-lg bg-amber-50 p-4 font-semibold text-amber-900">Time is up. Your group did not confirm a final decision.</p>
+          : round.get("finalDecisionConfirmed") === true
+            ? <p role="status" className="rounded-lg bg-green-50 p-4 font-semibold text-green-800">Your group decision has been submitted.</p>
+            : null}
         <p>You have now practised reading your task information, making an initial choice, chatting with your group, and reaching a group decision.</p>
         <p>The main tasks follow the same general process, but contain more information and allow more time for discussion.</p>
       </> : null}
@@ -150,6 +155,10 @@ function PracticeDiscussion({ game, player, players, round, stage, now, config, 
     startedAt, now, counts: round.get("practiceMessageCounts") || {},
     participantIds: players.map((p) => p.id), config,
   });
+  const minuteReminderSent = Boolean(round.get("practiceMinuteReminderSentAt"));
+  const minuteReminderDue = !tutorial && remaining !== null
+    && remaining > config.forceTimerSeconds
+    && remaining <= (config.discussionReminderSeconds ?? PRACTICE.discussionReminderSeconds);
   const forcedSent = useRef(false);
   useEffect(() => {
     if (forced && !forcedSent.current && !player.round.get("practiceTimerForced")) {
@@ -157,6 +166,16 @@ function PracticeDiscussion({ game, player, players, round, stage, now, config, 
       request("timer_forced_visible");
     }
   }, [forced]);
+  useEffect(() => {
+    if (!minuteReminderDue || minuteReminderSent) return undefined;
+    // The client only asks the server to re-check its persisted deadline. The
+    // server authors the timestamp and de-duplicates delivery, including after
+    // a refresh or callbacks restart.
+    const send = () => request("reminder_due");
+    send();
+    const timer = setInterval(send, 2000);
+    return () => clearInterval(timer);
+  }, [minuteReminderDue, minuteReminderSent]);
   useEffect(() => {
     if (tutorial || remaining !== 0) return;
     // Retries recover a deadline missed during a callbacks restart, without moving the client itself.

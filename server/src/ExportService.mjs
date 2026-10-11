@@ -373,9 +373,11 @@ export class ExportService {
       isPractice,
       taskVersion,
       facilitation,
+      officialGroupFinalChoice: attrs.officialGroupFinalChoice ?? null,
       finalDecisionOutcome: attrs.finalDecisionOutcome ?? null,
       finalDecisionMatchedChoice: attrs.finalDecisionMatchedChoice ?? null,
       finalDecisionConfirmed: pickBool(attrs.finalDecisionConfirmed),
+      finalDecisionTimedOut: pickBool(attrs.finalDecisionTimedOut),
       finalDecisionFinalizedAt: attrs.finalDecisionFinalizedAt ?? null,
       perPlayer,
     };
@@ -489,6 +491,10 @@ export class ExportService {
         taskIndex: r.taskIndex,
         taskVersion: r.taskVersion,
         facilitation: r.facilitation,
+        officialGroupFinalChoice: r.officialGroupFinalChoice,
+        finalDecisionOutcome: r.finalDecisionOutcome,
+        finalDecisionTimedOut: r.finalDecisionTimedOut,
+        finalDecisionFinalizedAt: r.finalDecisionFinalizedAt,
       })),
       llmLogEntryCount: redacted.llmLog.length,
     };
@@ -696,11 +702,16 @@ export function renderQuestionnaireCsv(bundle) {
       subjective_facilitator_option_push: data.subjectiveSurvey?.facilitatorOptionPush ?? "",
       final_decision_choice: data.finalDecision?.choice ?? "",
       final_decision_confidence: data.finalDecision?.confidence ?? "",
-      final_decision_outcome: round.finalDecisionOutcome
-        ?? data.finalDecision?.finalDecisionOutcome
-        ?? data.finalDecision?.outcome
-        ?? "",
+      final_decision_outcome: round.finalDecisionOutcome ?? "",
       final_decision_submitted_at: data.finalDecision?.submittedAt ?? "",
+      official_group_final_choice: round.officialGroupFinalChoice ?? "",
+      final_decision_timed_out: round.finalDecisionTimedOut == null
+        ? ""
+        : round.finalDecisionTimedOut ? "true" : "false",
+      final_decision_finalized_at: round.finalDecisionFinalizedAt ?? "",
+      final_personal_choice: data.finalPersonalChoice ?? "",
+      final_personal_confidence: data.finalPersonalChoiceConfidence ?? "",
+      final_personal_rationale: data.finalPersonalChoiceRationale ?? "",
       slot,
     };
   };
@@ -758,10 +769,16 @@ export function renderQuestionnaireCsv(bundle) {
       subjective_facilitator_need_fit: "",
       subjective_facilitator_timing: "",
       subjective_facilitator_option_push: "",
-      final_decision_choice: player.finalQuestions?.firstTaskCarryover ?? "",
-      final_decision_confidence: player.finalQuestions?.preferredFacilitator ?? "",
-      final_decision_outcome: player.finalQuestions?.facilitatorDifference ?? "",
-      final_decision_submitted_at: player.finalQuestions?.submittedAt ?? "",
+      final_decision_choice: "",
+      final_decision_confidence: "",
+      final_decision_outcome: "",
+      final_decision_submitted_at: "",
+      official_group_final_choice: "",
+      final_decision_timed_out: "",
+      final_decision_finalized_at: "",
+      final_personal_choice: "",
+      final_personal_confidence: "",
+      final_personal_rationale: "",
       first_task_carryover: player.finalQuestions?.firstTaskCarryover ?? "",
       first_task_carryover_description: player.finalQuestions?.firstTaskCarryoverDescription ?? "",
       facilitator_difference: player.finalQuestions?.facilitatorDifference ?? "",
@@ -788,6 +805,8 @@ export function renderQuestionnaireCsv(bundle) {
     "final_decision_choice", "final_decision_confidence", "final_decision_outcome", "final_decision_submitted_at",
     "first_task_carryover", "first_task_carryover_description", "facilitator_difference", "preferred_facilitator",
     "final_questions_submitted_at", "exp_feedback", "exp_feedback_submitted_at",
+    "official_group_final_choice", "final_decision_timed_out", "final_decision_finalized_at",
+    "final_personal_choice", "final_personal_confidence", "final_personal_rationale",
   ];
   const csv = toCsv(rows, columns);
   return { csv, columns, rowCount: rows.length };
@@ -810,6 +829,13 @@ export function renderTranscriptMd(bundle) {
 
   for (const round of transcript.rounds) {
     lines.push(`## Formal Round ${round.taskIndex + 1} · Task ${round.taskVersion || "?"} · ${titleCase(round.facilitation || "unknown")}`);
+    lines.push("");
+    lines.push(`- Group decision outcome: ${round.finalDecisionOutcome ? `\`${round.finalDecisionOutcome}\`` : "_(not recorded)_"}`);
+    lines.push(`- Official group final choice: ${round.officialGroupFinalChoice ? `\`${round.officialGroupFinalChoice}\`` : "_(not recorded)_"}`);
+    lines.push(`- Final decision timed out: ${round.finalDecisionTimedOut == null ? "_(not recorded)_" : `\`${round.finalDecisionTimedOut}\``}`);
+    lines.push(`- Final decision finalised at: ${round.finalDecisionFinalizedAt ?? "_(not recorded)_"}`);
+    const outcomeDescription = describeFinalDecisionOutcome(round.finalDecisionOutcome);
+    if (outcomeDescription) lines.push(`- ${outcomeDescription}`);
     lines.push("");
     if (round.messages.length === 0) {
       lines.push("_No messages recorded for this round._");
@@ -865,6 +891,10 @@ export function buildFormalTranscript(bundle) {
       taskIndex: round.taskIndex,
       taskVersion: round.taskVersion,
       facilitation: round.facilitation,
+      officialGroupFinalChoice: round.officialGroupFinalChoice ?? null,
+      finalDecisionOutcome: round.finalDecisionOutcome ?? null,
+      finalDecisionTimedOut: round.finalDecisionTimedOut ?? null,
+      finalDecisionFinalizedAt: round.finalDecisionFinalizedAt ?? null,
       messages: collectRoundMessages(round, bundle, game),
     }));
   return {
@@ -1078,6 +1108,13 @@ function nonEmptyString(value) {
 function titleCase(value) {
   const text = String(value);
   return text ? text[0].toUpperCase() + text.slice(1) : text;
+}
+
+export function describeFinalDecisionOutcome(outcome) {
+  if (outcome === "consensus_choice") return "All three participants confirmed the same option.";
+  if (outcome === "declared_fail") return "All three participants confirmed that the group did not reach a final decision.";
+  if (outcome === "timeout_fail") return "The group did not confirm a final decision before time ran out.";
+  return null;
 }
 
 function scopeAttributes(scope) {

@@ -7,6 +7,7 @@ import { PlayerSpecificInfo } from "../components/PlayerSpecificInfo";
 import { Profile } from "../Profile";
 import { ConfidenceSlider, NO_GROUP_FINAL_DECISION_OPTION, OptionChoice } from "../components/DecisionControls";
 import { draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
+import { Timer } from "../components/Timer";
 
 export function FinalDecision() {
   const game = useGame();
@@ -31,8 +32,14 @@ export function FinalDecision() {
   const recordedChoice = player.round.get("groupFinalChoice") ?? "";
   const recordedConfidence = player.round.get("groupChoiceConfidence") ?? null;
   const confirmedChoice = player.round.get("groupFinalConfirmedChoice") ?? null;
+  const finalDecisionOutcome = round?.get("finalDecisionOutcome") ?? null;
+  const finalized = round?.get("finalDecisionConfirmed") === true;
+  const deadline = round?.get("finalDecisionDeadline");
   const agreed = agreementStatus === "agreed" && Boolean(choice) && matchedChoice === choice;
   const ownConfirmationCurrent = agreed && confirmedChoice === matchedChoice;
+  const ownConfirmationRecorded = Boolean(confirmedChoice)
+    && confirmedChoice === choice
+    && confirmedChoice === recordedChoice;
   const localConfidenceValid = Number.isFinite(confidence) && confidence >= 0 && confidence <= 100;
   const confidenceAcknowledged = localConfidenceValid
     && Number.isFinite(recordedConfidence)
@@ -43,6 +50,19 @@ export function FinalDecision() {
   const draftAcknowledged = choiceAcknowledged && confidenceAcknowledged;
   const canConfirm = agreed && draftAcknowledged && !ownConfirmationCurrent;
   const savingCurrentDraft = Boolean(choice) && localConfidenceValid && !draftAcknowledged;
+  const primaryFeedback = finalized
+    ? finalDecisionOutcome === "timeout_fail"
+      ? "Time is up. Your group did not confirm a final decision."
+      : "Your group decision has been submitted."
+    : ownConfirmationRecorded
+      ? "You've confirmed your choice. Waiting for the others."
+      : savingCurrentDraft
+        ? "Saving your choice…"
+        : draftAcknowledged
+          ? "Your choice has been saved."
+          : choice
+            ? "Choose a confidence level."
+            : "Choose an option.";
 
   // Persist this participant's current private draft promptly. The server
   // publishes only aggregate agreement status and invalidates confirmations
@@ -107,22 +127,22 @@ export function FinalDecision() {
           <form onSubmit={confirm} className="block min-w-0 w-full rounded-lg border border-gray-200 bg-white p-5 shadow-sm sm:p-6">
             <h1 className="text-2xl font-bold text-gray-900">{practice ? "Make your group decision" : "Group Final Decision"}</h1>
             <p className="mt-2 text-sm text-gray-600">{practice ? "Select the room your group agreed on. As in the main tasks, everyone selects the same outcome, records their confidence, and confirms." : "Select your group’s current outcome and record your own confidence in that group outcome."}</p>
+            <div className="mt-4 flex items-center justify-between gap-3 rounded-md bg-gray-100 px-3 py-2 text-gray-700" role="status">
+              <span className="font-semibold">Time remaining:</span>
+              <Timer deadline={deadline} />
+            </div>
             <div className="mt-6"><OptionChoice legend="Which outcome did your group select?" options={groupDecisionOptions} value={choice} onChange={setChoice} name="groupFinalChoice" /></div>
             <ConfidenceSlider name="groupChoiceConfidence" label="How confident are you that your group’s final outcome is appropriate based on the information discussed?" value={confidence} onChange={setConfidence} />
 
-            <div className={`mt-6 rounded-md p-4 text-sm font-semibold ${agreed ? "bg-green-50 text-green-800" : "bg-amber-50 text-amber-800"}`} aria-live="polite">
-              {savingCurrentDraft
-                ? "Saving your response…"
-                : agreed
-                  ? localConfidenceValid
-                  ? "Everyone selected the same outcome. You can now confirm the group decision."
-                  : "Everyone selected the same outcome. Select your confidence before confirming."
-                : "Your group has not yet selected the same outcome."}
+            <div className={`mt-6 rounded-md p-4 text-sm font-semibold ${finalized || ownConfirmationRecorded || draftAcknowledged ? "bg-green-50 text-green-800" : "bg-amber-50 text-amber-800"}`} aria-live="polite">
+              <p>{primaryFeedback}</p>
+              {!finalized && draftAcknowledged && !ownConfirmationRecorded && !agreed && <p className="mt-2">Not everyone has chosen the same answer yet.</p>}
+              {!finalized && draftAcknowledged && !ownConfirmationRecorded && agreed && <p className="mt-2">Everyone has chosen the same answer. You can now confirm the group decision.</p>}
             </div>
             <p className="mt-3 text-sm font-semibold text-gray-700">If your group cannot agree on one option, each member should select “Fail to reach a final decision”.</p>
 
-            {ownConfirmationCurrent ? (
-              <p className="mt-7 rounded-md bg-gray-100 p-4 text-center text-sm text-gray-700">Your confirmation has been recorded. Waiting for the group decision to be confirmed.</p>
+            {ownConfirmationRecorded ? (
+              <p className="mt-7 rounded-md bg-gray-100 p-4 text-center text-sm text-gray-700">You've confirmed your choice. Waiting for the others.</p>
             ) : (
               <div className="mt-8 text-right"><Button className={practice ? "ml-0 bg-blue-700 text-white hover:bg-blue-800" : "ml-0"} type="submit" disabled={!canConfirm || confirming}>{practice ? "Confirm group choice" : "Confirm group decision"}</Button></div>
             )}

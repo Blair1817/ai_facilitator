@@ -56,7 +56,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import http from "node:http";
 
-import { ExportService, ExportNotFoundError } from "./ExportService.mjs";
+import { describeFinalDecisionOutcome, ExportService, ExportNotFoundError } from "./ExportService.mjs";
 import { recordExportEvent } from "./ExportAudit.mjs";
 
 const MAX_LIMIT = 200;
@@ -632,6 +632,13 @@ function renderTranscriptPage({ transcript, basePath, redact }) {
   const roundSections = transcript.rounds.length === 0
     ? `<p class="empty">No formal rounds were recorded for this game.</p>`
     : transcript.rounds.map((round) => {
+      const outcomeDescription = describeFinalDecisionOutcome(round.finalDecisionOutcome);
+      const outcomeSummary = `<dl class="outcome">
+        <div><dt>Group decision outcome</dt><dd>${round.finalDecisionOutcome ? `<code>${escapeHtml(round.finalDecisionOutcome)}</code>` : `<span class="muted">not recorded</span>`}</dd></div>
+        <div><dt>Official group final choice</dt><dd>${round.officialGroupFinalChoice ? `<code>${escapeHtml(round.officialGroupFinalChoice)}</code>` : `<span class="muted">not recorded</span>`}</dd></div>
+        <div><dt>Final decision timed out</dt><dd>${round.finalDecisionTimedOut == null ? `<span class="muted">not recorded</span>` : `<code>${escapeHtml(round.finalDecisionTimedOut)}</code>`}</dd></div>
+        <div><dt>Final decision finalised at</dt><dd>${round.finalDecisionFinalizedAt == null ? `<span class="muted">not recorded</span>` : escapeHtml(round.finalDecisionFinalizedAt)}</dd></div>
+      </dl>${outcomeDescription ? `<p class="outcome-description">${escapeHtml(outcomeDescription)}</p>` : ""}`;
       const messages = round.messages.length === 0
         ? `<p class="empty">No messages recorded for this round.</p>`
         : round.messages.map((message) => {
@@ -654,6 +661,7 @@ function renderTranscriptPage({ transcript, basePath, redact }) {
       return `<section class="round">
         <h2>Formal Round ${round.taskIndex + 1}</h2>
         <p class="round-meta">Task ${escapeHtml(round.taskVersion || "?")} · ${escapeHtml(titleCase(round.facilitation || "unknown"))}</p>
+        ${outcomeSummary}
         <div class="messages">${messages}</div>
       </section>`;
     }).join("");
@@ -675,6 +683,11 @@ function renderTranscriptPage({ transcript, basePath, redact }) {
     .actions a { display: inline-block; padding: 0.55rem 0.8rem; border: 1px solid #cbd5e1; border-radius: 0.5rem; background: #fff; color: #1d4ed8; text-decoration: none; }
     .round { margin: 1.5rem 0; padding: 1.25rem; border: 1px solid #dbe3ee; border-radius: 0.75rem; background: #fff; }
     .round-meta { margin: 0.3rem 0 1rem; }
+    .outcome { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 0.7rem 1rem; margin: 0 0 0.7rem; padding: 0.9rem; border-radius: 0.5rem; background: #f8fafc; }
+    .outcome div { min-width: 0; }
+    .outcome dt { color: #64748b; font-size: 0.82rem; }
+    .outcome dd { margin: 0.2rem 0 0; overflow-wrap: anywhere; }
+    .outcome-description { margin: 0 0 1rem; color: #475569; }
     .messages { display: grid; gap: 0.8rem; }
     .message { padding: 0.8rem 0; border-top: 1px solid #e5e7eb; }
     .message:first-child { border-top: 0; }

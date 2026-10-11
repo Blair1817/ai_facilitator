@@ -89,7 +89,10 @@ function fixture() {
     attr(s, "taskIndex", 0);
     attr(s, "taskVersion", "A");
     attr(s, "facilitation", "adaptive");
+    attr(s, "officialGroupFinalChoice", "A");
     attr(s, "finalDecisionOutcome", "consensus_choice");
+    attr(s, "finalDecisionTimedOut", false);
+    attr(s, "finalDecisionFinalizedAt", 2);
   });
   const round1 = makeScope("R1", "round", (s) => {
     attr(s, "gameID", T("GAME1"));
@@ -97,7 +100,10 @@ function fixture() {
     attr(s, "taskIndex", 1);
     attr(s, "taskVersion", "B");
     attr(s, "facilitation", "static");
+    attr(s, "officialGroupFinalChoice", "FAIL");
     attr(s, "finalDecisionOutcome", "declared_fail");
+    attr(s, "finalDecisionTimedOut", false);
+    attr(s, "finalDecisionFinalizedAt", 3);
   });
   const playerRound = makeScope("PR-R0-p1", "playerRound", (s) => {
     attr(s, "gameID", T("GAME1"));
@@ -195,8 +201,9 @@ function fetchText(url, headers = {}, { authenticate = true } = {}) {
 async function makeRunningServer(options = {}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "export-server-"));
   const auditFile = path.join(tmpDir, "audit.jsonl");
-  const service = new ExportService({ admin: makeMockAdmin(fixture()) });
-  const handle = await startServer(service, auditFile, options);
+  const { scopes = fixture(), ...serverOptions } = options;
+  const service = new ExportService({ admin: makeMockAdmin(scopes) });
+  const handle = await startServer(service, auditFile, serverOptions);
   return { ...handle, auditFile, tmpDir };
 }
 
@@ -333,6 +340,12 @@ test("GET /games/:id/transcript renders an authenticated escaped and audited for
     assert.match(body, /Task A · Adaptive/);
     assert.match(body, /Formal Round 2/);
     assert.match(body, /Task B · Static/);
+    assert.match(body, /Group decision outcome/);
+    assert.match(body, /consensus_choice/);
+    assert.match(body, /declared_fail/);
+    assert.match(body, /Official group final choice/);
+    assert.match(body, /All three participants confirmed the same option\./);
+    assert.match(body, /All three participants confirmed that the group did not reach a final decision\./);
     assert.match(body, /EVIDENCE_CHALLENGER/);
     assert.match(body, /FIXED_MESSAGE/);
     assert.match(body, /Timer/);
@@ -351,6 +364,25 @@ test("GET /games/:id/transcript renders an authenticated escaped and audited for
     assert.equal(previewAudit.redact, true);
     assert.equal(previewAudit.format, "html");
     assert.equal(previewAudit.sizeBytes, Buffer.byteLength(body, "utf8"));
+  } finally {
+    await srv.close();
+  }
+});
+
+test("browser transcript keeps timeout_fail distinct and explains it without exposing private assessments", async () => {
+  const scopes = fixture();
+  const timeoutRound = scopes.find((scope) => scope.id === "R1");
+  timeoutRound.attributes.find((attribute) => attribute.key === "finalDecisionOutcome").value = "timeout_fail";
+  timeoutRound.attributes.find((attribute) => attribute.key === "finalDecisionTimedOut").value = "true";
+  const privateRound = scopes.find((scope) => scope.id === "PR-R1-p1");
+  attr(privateRound, "finalPersonalChoiceRationale", "Private rationale must not appear");
+  const srv = await makeRunningServer({ scopes });
+  try {
+    const { status, body } = await fetchText(srv.base + "/games/GAME1/transcript");
+    assert.equal(status, 200);
+    assert.match(body, /timeout_fail/);
+    assert.match(body, /The group did not confirm a final decision before time ran out\./);
+    assert.doesNotMatch(body, /Private rationale must not appear/);
   } finally {
     await srv.close();
   }

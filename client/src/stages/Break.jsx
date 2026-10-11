@@ -1,41 +1,58 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { usePlayer, usePlayers, useRound } from "@empirica/core/player/classic/react";
+import { usePlayer, usePlayers, useRound, useStage } from "@empirica/core/player/classic/react";
+import {
+  SHARED_BREAK_READY_WINDOW_SECONDS,
+  canConfirmSharedBreak,
+} from "../../../shared/personalFlow.mjs";
 
-function remainingSeconds(endAt, now) {
-  return Math.max(0, Math.ceil((endAt - now) / 1000));
+export function remainingBreakSeconds(deadline, now) {
+  return Number.isFinite(deadline) ? Math.max(0, Math.ceil((deadline - now) / 1000)) : null;
 }
 
-export function Break() {
+export function Break({ progress }) {
   const player = usePlayer();
   const players = usePlayers();
   const round = useRound();
-  const scheduledEnd = round?.get("breakScheduledEndAt");
+  const stage = useStage();
+  const deadline = round?.get("sharedBreakDeadline");
+  const arrivalCount = round?.get("sharedBreakArrivalCount") ?? 0;
+  const requiredCount = round?.get("sharedBreakRequiredCount") ?? players.length;
+  const readyCount = round?.get("sharedBreakReadyCount") ?? 0;
+  const ready = player.round?.get("sharedBreakReadyStatus") === "ready";
   const [now, setNow] = useState(Date.now());
   const [requesting, setRequesting] = useState(false);
-  const readyRequestAt = useRef(0);
-  const ready = player.round?.get("breakReadyStatus") === "ready";
-  const derivedReadyCount = players.filter((participant) => participant.round?.get("breakReadyStatus") === "ready").length;
-  const readyCount = round?.get("breakReadyCount") ?? derivedReadyCount;
-  const requiredCount = round?.get("breakRequiredCount") ?? players.length;
-  const allReady = round?.get("breakAllReady") === true || (requiredCount > 0 && readyCount === requiredCount);
-  const remaining = Number.isFinite(scheduledEnd) ? remainingSeconds(scheduledEnd, now) : null;
-  const canConfirm = remaining !== null && remaining <= 45;
+  const requestStartedAt = useRef(0);
+  const remaining = remainingBreakSeconds(deadline, now);
+  const canConfirm = canConfirmSharedBreak(deadline, now);
+
+  const send = (action = "sync") => player.set("sharedBreakRequest", {
+    action,
+    requestId: globalThis.crypto?.randomUUID?.() ?? `${player.id}-${Date.now()}`,
+    roundId: round.id,
+    stageId: stage.id,
+    index: progress.index,
+    requestedAt: Date.now(),
+  });
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
+    setNow(Date.now());
+    const clock = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(clock);
   }, []);
 
   useEffect(() => {
-    if (remaining === 0 && ready && allReady && !player.stage.get("submit")) {
-      player.stage.set("submit", true);
-    }
-  }, [allReady, player, ready, remaining]);
+    send("sync");
+    // Re-check persisted state after reconnect or a callbacks restart. The
+    // server remains the only authority that starts or completes the break.
+    const sync = setInterval(() => send("sync"), 2000);
+    return () => clearInterval(sync);
+  }, [player, round.id, stage.id, progress.index]);
 
   useEffect(() => {
-    const rejectedAt = player.round?.get("breakReadyRejectedAt") ?? 0;
-    if (rejectedAt >= readyRequestAt.current && readyRequestAt.current > 0) setRequesting(false);
-  }, [player.round?.get("breakReadyRejectedAt")]);
+    if (ready) setRequesting(false);
+    const rejectedAt = player.round?.get("sharedBreakReadyRejectedAt") ?? 0;
+    if (requestStartedAt.current > 0 && rejectedAt >= requestStartedAt.current) setRequesting(false);
+  }, [ready, player.round?.get("sharedBreakReadyRejectedAt")]);
 
   const formatted = useMemo(() => {
     if (remaining === null) return "--:--";
@@ -44,24 +61,38 @@ export function Break() {
 
   const confirm = () => {
     if (!canConfirm || ready || requesting) return;
-    readyRequestAt.current = Date.now();
+    requestStartedAt.current = Date.now();
     setRequesting(true);
-    player.set("breakReadyRequest", `${round.id}:${readyRequestAt.current}`);
+    send("ready");
   };
 
   return (
-    <div className="flex h-full w-full items-center justify-center bg-gray-50 px-4 py-8">
-      <main className="w-full max-w-2xl rounded-lg border border-gray-200 bg-white p-8 text-center shadow-sm">
+    <main className="flex h-full items-center justify-center bg-gray-50 px-4 py-8 text-center">
+      <section className="w-full max-w-2xl rounded-lg border border-gray-200 bg-white p-8 shadow-sm">
         <h1 className="text-2xl font-bold text-gray-900">Break</h1>
-        <div className="mt-6 text-5xl font-bold tabular-nums text-blue-800" aria-live="polite">{formatted}</div>
-        {!canConfirm && <><p className="mt-6 text-gray-700">Please take a short break.</p><p className="mt-2 text-gray-700">Please return before the countdown ends. A confirmation button will appear during the final 45 seconds.</p></>}
-        {canConfirm && !ready && <><p className="mt-6 text-gray-700">Please confirm that you are back. The second task will begin once the break has ended and all group members are ready.</p>{remaining === 0 && <p className="mt-3 font-semibold text-amber-800">The break has ended. Please confirm that you are ready to continue.</p>}<button type="button" onClick={confirm} disabled={requesting} className="ml-0 mt-6 rounded-md bg-blue-700 px-5 py-3 font-semibold text-white hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700 disabled:opacity-60">I’m back and ready to continue</button></>}
-        {ready && !allReady && <p className="mt-6 rounded-md bg-green-50 p-4 font-semibold text-green-800">Ready. Waiting for the other group members ({readyCount} of {requiredCount}).</p>}
-        {ready && allReady && remaining > 0 && <p className="mt-6 rounded-md bg-green-50 p-4 font-semibold text-green-800">Everyone is ready. The second task will begin when the countdown ends.</p>}
-        {ready && allReady && remaining === 0 && <p className="mt-6 rounded-md bg-green-50 p-4 font-semibold text-green-800">Everyone is ready. Starting the second task…</p>}
-      </main>
-    </div>
+        {!Number.isFinite(deadline) ? (
+          <>
+            <p className="mt-6 text-gray-700">Please wait for the other group members before the break starts.</p>
+            <p className="mt-3 text-sm text-gray-600">{arrivalCount} of {requiredCount} group members are ready for the break.</p>
+            <button type="button" disabled className="mt-6 rounded-md bg-blue-700 px-5 py-3 font-semibold text-white opacity-50">
+              I'm back and ready to continue
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="mt-6 text-5xl font-bold tabular-nums text-blue-800" role="timer" aria-label={`${formatted} remaining`}>{formatted}</div>
+            {!ready && <p className="mt-6 text-gray-700">Please take a five-minute break. You can confirm that you are back during the final {SHARED_BREAK_READY_WINDOW_SECONDS} seconds.</p>}
+            {!ready && <button type="button" onClick={confirm} disabled={!canConfirm || requesting}
+              className="mt-6 rounded-md bg-blue-700 px-5 py-3 font-semibold text-white hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+              I'm back and ready to continue
+            </button>}
+            {ready && remaining > 0 && <p className="mt-6 rounded-md bg-green-50 p-4 font-semibold text-green-800">You're ready. Please wait for the break to end.</p>}
+            {ready && remaining === 0 && <p className="mt-6 rounded-md bg-green-50 p-4 font-semibold text-green-800">You're ready. Waiting for the others.</p>}
+            {!ready && remaining === 0 && <p className="mt-4 font-semibold text-amber-800">The break has ended. Please confirm that you are ready to continue.</p>}
+            <p className="mt-4 text-sm text-gray-600">{readyCount} of {requiredCount} group members have confirmed.</p>
+          </>
+        )}
+      </section>
+    </main>
   );
 }
-
-export { remainingSeconds };

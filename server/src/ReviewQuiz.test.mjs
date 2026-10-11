@@ -31,6 +31,10 @@ const personalFlowShared = readFileSync(path.join(dirname, "../../shared/persona
 const hptConfig = JSON.parse(readFileSync(path.join(dirname, "HPTConfig.json"), "utf8"));
 
 const SHORT_DECISION_RULE = "None of the listed drawbacks would rule out an option as a host. Treat each strength and drawback as equally important, then choose the best host overall.";
+const TASK_OBJECTIVES = {
+  A: "Choose the best city to host the International Youth Games. Give equal weight to each listed strength and drawback. A drawback does not automatically rule out a city.",
+  B: "Choose the best university campus to host the Global Innovation Summit. Give equal weight to each listed strength and drawback. A drawback does not automatically rule out a campus.",
+};
 const EVIDENCE_RULE = "Use only the facts provided, without outside knowledge or assumptions.";
 const INFORMATION_DIFFERENCE_NOTICE = "Some information may be different from what other group members see.";
 
@@ -186,7 +190,7 @@ test("failed submission clearing removes only incorrect answers and preserves co
   assert.equal(cleared.discussionMinutes, undefined);
   assert.equal(cleared.alternativeCount, "3");
   assert.equal(cleared.mandatoryRequirements, "yes");
-  assert.equal(cleared.objective, "option3");
+  assert.equal(cleared.objective, "option4");
   assert.equal(answers.outsideKnowledge, "yes", "the helper must not mutate the previous local state object");
 });
 
@@ -205,7 +209,8 @@ test("all five questions map to canonical remediation, duplicate sources collaps
   assert.doesNotMatch(JSON.stringify(getReviewQuiz("A").remediation), /International Innovation Council|Global Innovation Summit/);
   assert.doesNotMatch(JSON.stringify(getReviewQuiz("B").remediation), /International Youth Sports Council|International Youth Games/);
   assert.equal(getReviewQuizRemediation("A", ["outsideKnowledge"])[0].content, EVIDENCE_RULE);
-  assert.equal(getReviewQuizRemediation("B", ["objective"])[0].content, SHORT_DECISION_RULE);
+  assert.equal(getReviewQuizRemediation("A", ["objective"])[0].content, TASK_OBJECTIVES.A);
+  assert.equal(getReviewQuizRemediation("B", ["objective"])[0].content, TASK_OBJECTIVES.B);
 });
 
 test("taskVersion selection fails closed for every non-canonical value", () => {
@@ -248,7 +253,7 @@ test("both Rounds implement the approved task lifecycle in order", () => {
   // Break is a Round 1 Followup page, not a stage.
   assert.doesNotMatch(callbacksSource, /name: "Break"/);
   assert.match(callbacksSource, /name: "Task",\s+duration: gameDuration \* 60/);
-  assert.equal((callbacksSource.match(/name: "FinalDecision",\s+duration: 90/g) ?? []).length, 2);
+  assert.equal((callbacksSource.match(/name: "FinalDecision",\s+duration: GROUP_DECISION_SECONDS/g) ?? []).length, 2);
   assert.doesNotMatch(callbacksSource, /heldStagePauseTransition|heldStageCompletionTransitions|breakProgressRequest/);
   assert.doesNotMatch(callbacksSource, /365 \* 24 \* 60 \* 60/);
   assert.match(treatmentsSource, /gameDuration:\s+15/);
@@ -323,7 +328,7 @@ test("stale async Discussion results are discarded after their originating stage
 
 test("Discussion lasts 15 minutes and retains unanimous participant early-ready wiring", () => {
   assert.match(treatmentsSource, /gameDuration:\s+15/);
-  assert.match(treatmentsSource, /phase1Duration:\s+3/);
+  assert.match(treatmentsSource, /phase1Duration:\s+5/);
   assert.equal([...callbacksSource.matchAll(/name: "Task",\s+duration: gameDuration \* 60/g)].length, 2);
   assert.match(callbacksSource, /now \+ gameDuration \* 60 \* 1000/);
   assert.match(discussionSource, /player\.stage\.set\("submit", !isReady\)/);
@@ -367,10 +372,23 @@ ${EVIDENCE_RULE}`,
 
   for (const version of ["A", "B"]) {
     assert.equal(getReviewQuiz(version).remediation.evidenceRule.content, EVIDENCE_RULE);
-    assert.equal(getReviewQuiz(version).remediation.objective.content, SHORT_DECISION_RULE);
-    assert.equal(getReviewQuiz(version).questions.find((question) => question.id === "objective").options.find((option) => option.value === "option3").label,
-      "Treat each strength and drawback as equally important, then choose the best host overall.");
+    assert.equal(getReviewQuiz(version).remediation.objective.content, TASK_OBJECTIVES[version]);
+    assert.deepEqual(
+      getReviewQuiz(version).questions.slice(0, 4).map(({ id, correctAnswer }) => ({ id, correctAnswer })),
+      [
+        { id: "outsideKnowledge", correctAnswer: "no" },
+        { id: "alternativeCount", correctAnswer: "3" },
+        { id: "mandatoryRequirements", correctAnswer: "yes" },
+        { id: "discussionMinutes", correctAnswer: "15" },
+      ],
+    );
   }
+  const objectiveA = getReviewQuiz("A").questions.find((question) => question.id === "objective");
+  const objectiveB = getReviewQuiz("B").questions.find((question) => question.id === "objective");
+  assert.equal(objectiveA.correctAnswer, "option2");
+  assert.equal(objectiveB.correctAnswer, "option4");
+  assert.match(objectiveA.options.find((option) => option.value === objectiveA.correctAnswer).label, /International Youth Games/);
+  assert.match(objectiveB.options.find((option) => option.value === objectiveB.correctAnswer).label, /Global Innovation Summit/);
 });
 
 test("all proofread formal facts and the 9 plus 7 allocation match exactly", () => {

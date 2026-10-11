@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  canConfirmBreak,
   allFinalDecisionConfirmationsMatch,
   classifyFinalDecision,
   FACILITATOR_ROLES,
@@ -14,13 +13,6 @@ import {
   reviewHumanMessageRequest,
   summarizeFinalDecisionDrafts,
 } from "./ExperimentPolicies.mjs";
-
-const breakEnd = 1_000_000;
-
-test("T32-T33: readiness opens exactly 45 seconds before the scheduled end", () => {
-  assert.equal(canConfirmBreak(breakEnd, breakEnd - 45_001), false);
-  assert.equal(canConfirmBreak(breakEnd, breakEnd - 45_000), true);
-});
 
 test("FinalDecision requires exactly three identical non-empty drafts", () => {
   assert.deepEqual(summarizeFinalDecisionDrafts([
