@@ -88,13 +88,12 @@ function queueResearchMirror(operation, task) {
   return researchMirrorQueue;
 }
 
-function finalizeAuditLog(store, entry) {
-  finalizeAuditLogBase(store, entry);
+async function finalizeAuditLog(store, entry) {
   const round = store.currentRound;
+  const formalRoundIndex = round?.get("taskIndex");
+  const chat = round ? [...(store.get(`chat_round_${formalRoundIndex}`) || [])] : [];
+  const completed = await finalizeAuditLogBase(store, entry, () => Empirica.flush());
   if (!round) return;
-  const formalRoundIndex = round.get("taskIndex");
-  const chat = store.get(`chat_round_${formalRoundIndex}`) || [];
-  const completed = { ...entry, auditCompletedAt: Date.now() };
   queueResearchMirror("intervention", async () => {
     const persistence = researchPersistence();
     for (const message of chat) {
@@ -110,13 +109,11 @@ function finalizeAuditLog(store, entry) {
 }
 
 async function whileFacilitatorPublishesVisibleResponse(game, logEntry, task) {
-  setVisibleResponsePending(game, logEntry.auditRequestId, true);
-  await Empirica.flush();
+  await setVisibleResponsePending(game, logEntry.auditRequestId, true, () => Empirica.flush());
   try {
     return await task();
   } finally {
-    setVisibleResponsePending(game, logEntry.auditRequestId, false);
-    await Empirica.flush();
+    await setVisibleResponsePending(game, logEntry.auditRequestId, false, () => Empirica.flush());
   }
 }
 
@@ -1546,8 +1543,12 @@ async function postParticipantRequestFallback(game, chatKey, logEntry) {
 
 async function handleChat(env, { game }) {
   if (game.currentRound?.get("isPractice")) return;
-  const recovered = recoverInterruptedInFlight(game, CALLBACKS_INSTANCE_ID);
-  if (recovered.length > 0) Empirica.flush();
+  await recoverInterruptedInFlight(
+    game,
+    CALLBACKS_INSTANCE_ID,
+    Date.now(),
+    () => Empirica.flush(),
+  );
   const previousCallbacksInstanceId = game.get("activeCallbacksInstanceId");
   if (previousCallbacksInstanceId && previousCallbacksInstanceId !== CALLBACKS_INSTANCE_ID) {
     recordOperationalEvent(game, {
@@ -1701,14 +1702,16 @@ async function handleChat(env, { game }) {
     // Not an error -- just "not yet" / "this round is full" / etc.
     // Still log so the audit can see the trigger conditions per
     // human message.
-    finalizeAuditLog(game, logEntry);
-    Empirica.flush();
+    await finalizeAuditLog(game, logEntry);
     return;
   }
 
   logEntry.serverInstanceId = CALLBACKS_INSTANCE_ID;
-  beginInFlight(game, { ...logEntry, outcome: "PENDING" });
-  Empirica.flush();
+  await beginInFlight(
+    game,
+    { ...logEntry, outcome: "PENDING" },
+    () => Empirica.flush(),
+  );
 
   // Explicit @Facilitator request: answer with the participant-requested
   // Generalist before either condition's automatic policy. This path uses
@@ -1758,8 +1761,7 @@ async function handleChat(env, { game }) {
         now,
       });
     }
-    finalizeAuditLog(game, logEntry);
-    Empirica.flush();
+    await finalizeAuditLog(game, logEntry);
     return;
   }
 
@@ -1803,8 +1805,7 @@ async function handleChat(env, { game }) {
     if (result.published) {
       recordPublish(game, { role: "STATIC", messageId: result.candidate?.messageId ?? null, now });
     }
-    finalizeAuditLog(game, logEntry);
-    Empirica.flush();
+    await finalizeAuditLog(game, logEntry);
     return;
   }
 
@@ -1812,8 +1813,7 @@ async function handleChat(env, { game }) {
   // either policy. The real S1-S4 table assigns only static/adaptive.
   if (facilitation !== "adaptive") {
     logEntry.reason = `Unrecognized facilitation condition: ${JSON.stringify(facilitation)}`;
-    finalizeAuditLog(game, logEntry);
-    Empirica.flush();
+    await finalizeAuditLog(game, logEntry);
     return;
   }
 
@@ -1838,8 +1838,7 @@ async function handleChat(env, { game }) {
     game.currentStage?.get("name") !== "Task"
   ) {
     logEntry.reason = "Discarded stale LLM detector result after the originating Discussion stage ended";
-    finalizeAuditLog(game, logEntry);
-    Empirica.flush();
+    await finalizeAuditLog(game, logEntry);
     return;
   }
   logEntry.detectorLatency = Date.now() - assessorStart;
@@ -1880,8 +1879,7 @@ async function handleChat(env, { game }) {
 
   if (gateResult.decision === "abstain") {
     logEntry.reason = gateResult.reason;
-    finalizeAuditLog(game, logEntry);
-    Empirica.flush();
+    await finalizeAuditLog(game, logEntry);
     return;
   }
 
@@ -1903,8 +1901,7 @@ async function handleChat(env, { game }) {
       recordPublish(game, { role: "GENERALIST", messageId: result.candidate?.messageId ?? null, now });
     }
 
-    finalizeAuditLog(game, logEntry);
-    Empirica.flush();
+    await finalizeAuditLog(game, logEntry);
     return;
   }
 
@@ -2002,8 +1999,7 @@ async function handleChat(env, { game }) {
     }
   }
 
-  finalizeAuditLog(game, logEntry);
-  Empirica.flush();
+  await finalizeAuditLog(game, logEntry);
 }
 
 Empirica.on("game", "chat_round_0", handleChat);
