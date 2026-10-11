@@ -33,10 +33,33 @@ export function PersonalFlow() {
 }
 
 function PersonalPage({ player, round, stage, stageName, progress, pages }) {
-  const [pending, setPending] = useState(false);
-  const [now, setNow] = useState(Date.now());
-  const onNext = useCallback(() => setPending(true), []);
   const page = pages[progress.index];
+  const pendingStorageKey = `personalPageRequest:${player.id}:${round.id}:${stage.id}:${progress.index}`;
+  const [pending, setPending] = useState(() => {
+    if (page !== "InitialDecision") return false;
+    try {
+      const stored = JSON.parse(globalThis.sessionStorage?.getItem(pendingStorageKey) || "null");
+      return stored && typeof stored.requestId === "string" ? stored : false;
+    } catch {
+      return false;
+    }
+  });
+  const [now, setNow] = useState(Date.now());
+  const onNext = useCallback((details = {}) => setPending((current) => {
+    if (current) return current;
+    const request = {
+      requestId: globalThis.crypto?.randomUUID?.() ?? `${player.id}-${Date.now()}`,
+      ...(details?.initialDecision ? { initialDecision: details.initialDecision } : {}),
+    };
+    if (details?.initialDecision) {
+      try {
+        globalThis.sessionStorage?.setItem(pendingStorageKey, JSON.stringify(request));
+      } catch {
+        // In-memory retries still protect the currently mounted page.
+      }
+    }
+    return request;
+  }), [pendingStorageKey, player.id]);
   const deadline = page === "InitialDecision"
     ? progress.startedAt + FORMAL_INITIAL_DECISION_SECONDS * 1000
     : undefined;
@@ -55,7 +78,7 @@ function PersonalPage({ player, round, stage, stageName, progress, pages }) {
   useEffect(() => {
     if (!pending || !page) return;
     const send = () => player.set("personalPageRequest", {
-      requestId: crypto.randomUUID(), roundId: round.id, stageId: stage.id, index: progress.index,
+      ...pending, roundId: round.id, stageId: stage.id, index: progress.index,
     });
     send();
     // A dropped request or response write arriving later must not strand the page.

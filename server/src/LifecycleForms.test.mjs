@@ -110,6 +110,9 @@ test("InitialDecision page allows 300 seconds, shows a countdown, and advances w
   assert.match(personalFlowClient, /FORMAL_INITIAL_DECISION_SECONDS \* 1000/);
   assert.match(personalFlowClient, /if \(page === "InitialDecision" && now >= deadline\) onNext\(\)/);
   assert.match(personalFlowServer, /progress\.startedAt \+ FORMAL_INITIAL_DECISION_SECONDS \* 1000/);
+  assert.match(personalFlowServer, /initialDecisionReceivedAt/);
+  assert.match(personalFlowServer, /acceptedOnTime = receivedAt < deadline/);
+  assert.match(personalFlowServer, /clientSubmittedAt/);
 
   assert.match(initialDecisionSource, /import \{ Timer \} from "\.\.\/components\/Timer"/);
   assert.match(initialDecisionSource, /Time remaining:/);
@@ -121,9 +124,13 @@ test("InitialDecision page allows 300 seconds, shows a countdown, and advances w
   for (const key of ["initialChoice", "initialConfidence", "initialDecision"]) {
     assert.match(initialDecisionSource, new RegExp(key));
   }
-  // In the personal flow the page advances as soon as this participant is
-  // done; the synchronous stage submit remains only as a defensive fallback.
-  assert.match(initialDecisionSource, /if \(onNext\) onNext\(\); else player\.stage\.set\("submit", true\)/);
+  // The current formal path sends the response and stable page request
+  // together so the server can timestamp receipt authoritatively. Native
+  // stage submit remains only as a defensive fallback.
+  assert.match(initialDecisionSource, /onNext\(\{ initialDecision: \{ choice, confidence, clientSubmittedAt \} \}\)/);
+  assert.match(personalFlowClient, /\.\.\.pending, roundId: round\.id, stageId: stage\.id, index: progress\.index/);
+  assert.match(personalFlowClient, /sessionStorage\?\.setItem\(pendingStorageKey, JSON\.stringify\(request\)\)/);
+  assert.match(initialDecisionSource, /player\.stage\.set\("submit", true\)/);
   assert.match(initialDecisionSource, /Your initial decision has been submitted\./);
 });
 
@@ -151,6 +158,11 @@ test("R3-R7/R19: personal pages advance individually; only group activities gate
   assert.doesNotMatch(personalFlowServer, /breakSkippedAt|breakSkipAfterMs/);
   assert.match(breakSource, /Please wait for the other group members before the break starts\./);
   assert.match(breakSource, /I'm back and ready to continue/);
+  assert.match(breakSource, /sessionStorage\?\.setItem\(pendingReadyStorageKey, requestId\)/);
+  assert.match(breakSource, /send\("ready", readyRequestId\)/);
+  assert.match(breakSource, /setInterval\(retry, 2000\)/);
+  assert.match(personalFlowServer, /sharedBreakReadyRequestId/);
+  assert.match(personalFlowServer, /sharedBreakReadyRejectedRequestId/);
   assert.match(callbacksSource, /addPracticeRound\(game\)/);
   assert.equal((callbacksSource.match(/name: "Preparation", duration: 1e9/g) ?? []).length, 2);
   assert.doesNotMatch(callbacksSource, /name: "TaskInformation",\s+duration: TASK_INFORMATION_DURATION_SECONDS/);

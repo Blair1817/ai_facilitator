@@ -219,6 +219,11 @@ function fixture() {
       attr(s, "initialChoice", `${id}-r0-choice`);
       attr(s, "initialConfidence", 60 + initialOffset);
       attr(s, "initialDecision", { choice: `${id}-r0-choice`, confidence: 60 + initialOffset, submittedAt: 1000 + initialOffset });
+      attr(s, "initialDecisionReceivedAt", 1000 + initialOffset);
+      attr(s, "initialDecisionAcceptedOnTime", true);
+      attr(s, "initialSubmittedAt", 1000 + initialOffset);
+      attr(s, "initialCompletionDurationMs", 20000 + initialOffset);
+      attr(s, "initialDecisionTimeoutReason", null);
       attr(s, "finalDecision", { choice: "OPT1", confidence: 70 + initialOffset, submittedAt: 2000 + initialOffset, finalDecisionOutcome: "consensus_choice" });
       attr(s, "groupFinalChoice", "OPT1");
       attr(s, "groupChoiceConfidence", 70 + initialOffset);
@@ -257,6 +262,11 @@ function fixture() {
       attr(s, "initialChoice", `${id}-r1-choice`);
       attr(s, "initialConfidence", 80 + initialOffset);
       attr(s, "initialDecision", { choice: `${id}-r1-choice`, confidence: 80 + initialOffset, submittedAt: 4000 + initialOffset });
+      attr(s, "initialDecisionReceivedAt", 4000 + initialOffset);
+      attr(s, "initialDecisionAcceptedOnTime", true);
+      attr(s, "initialSubmittedAt", 4000 + initialOffset);
+      attr(s, "initialCompletionDurationMs", 30000 + initialOffset);
+      attr(s, "initialDecisionTimeoutReason", null);
       attr(s, "finalDecision", { choice: "NO_GROUP_FINAL_DECISION", confidence: 50 + initialOffset, submittedAt: 5000 + initialOffset, finalDecisionOutcome: "declared_fail" });
       attr(s, "groupFinalChoice", "NO_GROUP_FINAL_DECISION");
       attr(s, "groupChoiceConfidence", 50 + initialOffset);
@@ -481,6 +491,10 @@ test("renderQuestionnaireCsv produces one row per player per round plus an end-o
   const personalChoiceColumn = columns.indexOf("final_personal_choice");
   const personalConfidenceColumn = columns.indexOf("final_personal_confidence");
   const personalRationaleColumn = columns.indexOf("final_personal_rationale");
+  const initialReceivedColumn = columns.indexOf("initial_decision_server_received_at");
+  const initialAcceptedColumn = columns.indexOf("initial_decision_accepted_on_time");
+  const initialTimeoutColumn = columns.indexOf("initial_decision_timeout_reason");
+  const initialDurationColumn = columns.indexOf("initial_decision_completion_duration_ms");
   const parsedPerRoundRows = csvLines.slice(1)
     .map((line) => line.split(","))
     .filter((cells) => cells[slotColumn] === "per_round");
@@ -492,6 +506,15 @@ test("renderQuestionnaireCsv produces one row per player per round plus an end-o
     const round1 = rowFor(playerId, 1);
     assert.equal(round0[initialChoiceColumn], `${playerId}-r0-choice`);
     assert.equal(round1[initialChoiceColumn], `${playerId}-r1-choice`);
+    const playerOffset = Number(playerId.slice(1));
+    assert.equal(round0[initialReceivedColumn], String(1000 + playerOffset));
+    assert.equal(round1[initialReceivedColumn], String(4000 + playerOffset));
+    assert.equal(round0[initialAcceptedColumn], "true");
+    assert.equal(round1[initialAcceptedColumn], "true");
+    assert.equal(round0[initialTimeoutColumn], "");
+    assert.equal(round1[initialTimeoutColumn], "");
+    assert.equal(round0[initialDurationColumn], String(20000 + playerOffset));
+    assert.equal(round1[initialDurationColumn], String(30000 + playerOffset));
     assert.ok(round0[tlxMentalColumn]);
     assert.ok(round1[tlxMentalColumn]);
     assert.equal(round0[subjectiveTextColumn], `${playerId}-r0-subjective`);
@@ -515,7 +538,9 @@ test("renderQuestionnaireCsv produces one row per player per round plus an end-o
     .map((line) => line.split(","))
     .filter((cells) => cells[slotColumn] === "end_of_game");
   for (const row of endRows) {
-    for (const column of [finalChoiceColumn, finalOutcomeColumn, officialChoiceColumn, timedOutColumn, finalizedAtColumn, personalChoiceColumn, personalConfidenceColumn, personalRationaleColumn]) {
+    for (const column of [finalChoiceColumn, finalOutcomeColumn, officialChoiceColumn, timedOutColumn, finalizedAtColumn,
+      personalChoiceColumn, personalConfidenceColumn, personalRationaleColumn, initialReceivedColumn,
+      initialAcceptedColumn, initialTimeoutColumn, initialDurationColumn]) {
       assert.equal(row[column], "", `end_of_game decision column ${columns[column]} must be blank`);
     }
   }
@@ -537,6 +562,45 @@ test("renderQuestionnaireCsv with redact:false keeps the raw text", async () => 
   const svc = service();
   const { csv } = await svc.renderQuestionnaireCsv("GAME1", { redact: false });
   assert.ok(csv.includes("researcher@example.com"));
+});
+
+test("late Initial Decision audit metadata exports without misclassifying it as an on-time submission", async () => {
+  const fx = fixture();
+  const playerRound = fx.scopes["PR-R0-p1"];
+  const replace = (key, value) => {
+    playerRound.attributes.find((attribute) => attribute.key === key).value = JSON.stringify(value);
+  };
+  replace("initialDecision", {
+    choice: "p1-r0-choice",
+    confidence: 61,
+    submittedAt: 301_001,
+    serverReceivedAt: 301_001,
+    clientSubmittedAt: 299_999,
+    acceptedOnTime: false,
+  });
+  replace("initialDecisionReceivedAt", 301_001);
+  replace("initialDecisionAcceptedOnTime", false);
+  replace("initialSubmittedAt", null);
+  replace("initialCompletionDurationMs", 301_001);
+  replace("initialDecisionTimeoutReason", "late_submission");
+
+  const svc = service({ scopes: fx.scopes });
+  const bundle = await svc.getGameBundle("GAME1");
+  const data = bundle.rounds.find((round) => round.taskIndex === 0).perPlayer.p1;
+  assert.equal(data.initialDecision.choice, "p1-r0-choice", "the late response remains recoverable for audit");
+  assert.equal(data.initialDecisionReceivedAt, 301_001);
+  assert.equal(data.initialDecisionAcceptedOnTime, false);
+  assert.equal(data.initialSubmittedAt, null);
+  assert.equal(data.initialDecisionTimeoutReason, "late_submission");
+
+  const { csv, columns } = renderQuestionnaireCsv(bundle);
+  const rows = csv.trimEnd().split("\n").slice(1).map((line) => line.split(","));
+  const row = rows.find((cells) => cells[columns.indexOf("player_id")] === "p1"
+    && cells[columns.indexOf("task_index")] === "0");
+  assert.equal(row[columns.indexOf("initial_decision_submitted_at")], "");
+  assert.equal(row[columns.indexOf("initial_decision_server_received_at")], "301001");
+  assert.equal(row[columns.indexOf("initial_decision_accepted_on_time")], "false");
+  assert.equal(row[columns.indexOf("initial_decision_timeout_reason")], "late_submission");
 });
 
 test("renderTranscriptMd emits one section per round and a final LLM audit log section", async () => {

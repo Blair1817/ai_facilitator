@@ -26,15 +26,16 @@ export function InitialDecision({ onNext, deadline } = {}) {
     event.preventDefault();
     if (!canSubmit || submitting.current) return;
     submitting.current = true;
+    const clientSubmittedAt = Date.now();
+    if (onNext) {
+      onNext({ initialDecision: { choice, confidence, clientSubmittedAt } });
+      return;
+    }
     player.round.set("initialChoice", choice);
     player.round.set("initialConfidence", confidence);
-    player.round.set("initialDecision", {
-      choice,
-      confidence,
-      submittedAt: Date.now(),
-    });
+    player.round.set("initialDecision", { choice, confidence, submittedAt: clientSubmittedAt });
     clearDraftKeys([choiceDraftKey, confidenceDraftKey]);
-    if (onNext) onNext(); else player.stage.set("submit", true);
+    player.stage.set("submit", true);
   };
 
   if (player.stage.get("submit")) return players.length === 1 ? <Loading /> : <Waiting text="Your initial decision has been submitted." />;

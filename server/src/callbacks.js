@@ -2038,7 +2038,9 @@ Empirica.onStageEnded(({ stage }) => {
 
   if (stageName === "InitialDecision") {
     for (const player of assignedHumanPlayers(game)) {
-      if (!player.round.get("initialSubmittedAt")) player.round.set("initialDecisionTimeoutReason", "stage_timeout");
+      if (!player.round.get("initialSubmittedAt") && !player.round.get("initialDecisionTimeoutReason")) {
+        player.round.set("initialDecisionTimeoutReason", "stage_timeout");
+      }
     }
   }
 

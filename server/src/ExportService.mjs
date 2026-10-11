@@ -349,6 +349,14 @@ export class ExportService {
         initialChoice: playerAttrs.initialChoice ?? null,
         initialConfidence: playerAttrs.initialConfidence ?? null,
         initialDecision: playerAttrs.initialDecision || null,
+        initialDecisionReceivedAt: numberOrNull(playerAttrs.initialDecisionReceivedAt),
+        initialDecisionAcceptedOnTime: pickBool(playerAttrs.initialDecisionAcceptedOnTime),
+        initialSubmittedAt: numberOrNull(playerAttrs.initialSubmittedAt),
+        initialCompletionDurationMs: numberOrNull(playerAttrs.initialCompletionDurationMs),
+        initialDecisionTimeoutReason: typeof playerAttrs.initialDecisionTimeoutReason === "string"
+          && playerAttrs.initialDecisionTimeoutReason !== "null"
+          ? playerAttrs.initialDecisionTimeoutReason
+          : null,
         finalDecision: playerAttrs.finalDecision || null,
         finalDecisionDraft: playerAttrs.finalDecisionDraft || null,
         groupFinalChoice: playerAttrs.groupFinalChoice ?? null,
@@ -644,6 +652,11 @@ export function redactGameBundle(bundle) {
         tlxSurvey: data.tlxSurvey ? redactDeep(data.tlxSurvey) : null,
         subjectiveSurvey: data.subjectiveSurvey ? redactDeep(data.subjectiveSurvey) : null,
         initialDecision: data.initialDecision ? redactDeep(data.initialDecision) : null,
+        initialDecisionReceivedAt: data.initialDecisionReceivedAt,
+        initialDecisionAcceptedOnTime: data.initialDecisionAcceptedOnTime,
+        initialSubmittedAt: data.initialSubmittedAt,
+        initialCompletionDurationMs: data.initialCompletionDurationMs,
+        initialDecisionTimeoutReason: data.initialDecisionTimeoutReason,
         finalDecision: data.finalDecision ? redactDeep(data.finalDecision) : null,
         finalDecisionDraft: data.finalDecisionDraft ? redactDeep(data.finalDecisionDraft) : null,
         initialChoice: data.initialChoice,
@@ -678,7 +691,9 @@ export function renderQuestionnaireCsv(bundle) {
       facilitation: round.facilitation,
       initial_choice: data.initialChoice ?? "",
       initial_confidence: data.initialConfidence ?? "",
-      initial_decision_submitted_at: data.initialDecision?.submittedAt ?? "",
+      initial_decision_submitted_at: data.initialDecisionAcceptedOnTime === false
+        ? ""
+        : data.initialSubmittedAt ?? data.initialDecision?.submittedAt ?? "",
       review_quiz_passed: data.reviewQuizPassed === null ? "" : data.reviewQuizPassed ? "true" : "false",
       tlx_mental: data.tlxSurvey?.tlxMentalDemand ?? "",
       tlx_physical: data.tlxSurvey?.tlxPhysicalDemand ?? "",
@@ -712,6 +727,12 @@ export function renderQuestionnaireCsv(bundle) {
       final_personal_choice: data.finalPersonalChoice ?? "",
       final_personal_confidence: data.finalPersonalChoiceConfidence ?? "",
       final_personal_rationale: data.finalPersonalChoiceRationale ?? "",
+      initial_decision_server_received_at: data.initialDecisionReceivedAt ?? "",
+      initial_decision_accepted_on_time: data.initialDecisionAcceptedOnTime == null
+        ? ""
+        : data.initialDecisionAcceptedOnTime ? "true" : "false",
+      initial_decision_timeout_reason: data.initialDecisionTimeoutReason ?? "",
+      initial_decision_completion_duration_ms: data.initialCompletionDurationMs ?? "",
       slot,
     };
   };
@@ -779,6 +800,10 @@ export function renderQuestionnaireCsv(bundle) {
       final_personal_choice: "",
       final_personal_confidence: "",
       final_personal_rationale: "",
+      initial_decision_server_received_at: "",
+      initial_decision_accepted_on_time: "",
+      initial_decision_timeout_reason: "",
+      initial_decision_completion_duration_ms: "",
       first_task_carryover: player.finalQuestions?.firstTaskCarryover ?? "",
       first_task_carryover_description: player.finalQuestions?.firstTaskCarryoverDescription ?? "",
       facilitator_difference: player.finalQuestions?.facilitatorDifference ?? "",
@@ -807,6 +832,8 @@ export function renderQuestionnaireCsv(bundle) {
     "final_questions_submitted_at", "exp_feedback", "exp_feedback_submitted_at",
     "official_group_final_choice", "final_decision_timed_out", "final_decision_finalized_at",
     "final_personal_choice", "final_personal_confidence", "final_personal_rationale",
+    "initial_decision_server_received_at", "initial_decision_accepted_on_time",
+    "initial_decision_timeout_reason", "initial_decision_completion_duration_ms",
   ];
   const csv = toCsv(rows, columns);
   return { csv, columns, rowCount: rows.length };

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { usePlayer, usePlayers, useRound, useStage } from "@empirica/core/player/classic/react";
 import {
   SHARED_BREAK_READY_WINDOW_SECONDS,
@@ -20,14 +20,21 @@ export function Break({ progress }) {
   const readyCount = round?.get("sharedBreakReadyCount") ?? 0;
   const ready = player.round?.get("sharedBreakReadyStatus") === "ready";
   const [now, setNow] = useState(Date.now());
-  const [requesting, setRequesting] = useState(false);
-  const requestStartedAt = useRef(0);
+  const pendingReadyStorageKey = `sharedBreakReadyRequest:${player.id}:${round.id}:${stage.id}`;
+  const [readyRequestId, setReadyRequestId] = useState(() => {
+    try {
+      return globalThis.sessionStorage?.getItem(pendingReadyStorageKey) || null;
+    } catch {
+      return null;
+    }
+  });
+  const requesting = Boolean(readyRequestId);
   const remaining = remainingBreakSeconds(deadline, now);
   const canConfirm = canConfirmSharedBreak(deadline, now);
 
-  const send = (action = "sync") => player.set("sharedBreakRequest", {
+  const send = (action = "sync", requestId = null) => player.set("sharedBreakRequest", {
     action,
-    requestId: globalThis.crypto?.randomUUID?.() ?? `${player.id}-${Date.now()}`,
+    requestId: requestId ?? globalThis.crypto?.randomUUID?.() ?? `${player.id}-${Date.now()}`,
     roundId: round.id,
     stageId: stage.id,
     index: progress.index,
@@ -49,10 +56,25 @@ export function Break({ progress }) {
   }, [player, round.id, stage.id, progress.index]);
 
   useEffect(() => {
-    if (ready) setRequesting(false);
-    const rejectedAt = player.round?.get("sharedBreakReadyRejectedAt") ?? 0;
-    if (requestStartedAt.current > 0 && rejectedAt >= requestStartedAt.current) setRequesting(false);
-  }, [ready, player.round?.get("sharedBreakReadyRejectedAt")]);
+    const rejectedRequestId = player.round?.get("sharedBreakReadyRejectedRequestId") ?? null;
+    if (!ready && (!readyRequestId || rejectedRequestId !== readyRequestId)) return;
+    try {
+      globalThis.sessionStorage?.removeItem(pendingReadyStorageKey);
+    } catch {
+      // Storage may be unavailable in privacy-restricted browser contexts.
+    }
+    setReadyRequestId(null);
+  }, [ready, readyRequestId, pendingReadyStorageKey,
+    player.round?.get("sharedBreakReadyRejectedRequestId")]);
+
+  useEffect(() => {
+    if (!readyRequestId || ready) return undefined;
+    const retry = () => send("ready", readyRequestId);
+    retry();
+    // A lost request or delayed acknowledgement is retried with the same ID.
+    const retryTimer = setInterval(retry, 2000);
+    return () => clearInterval(retryTimer);
+  }, [readyRequestId, ready, player, round.id, stage.id, progress.index]);
 
   const formatted = useMemo(() => {
     if (remaining === null) return "--:--";
@@ -61,9 +83,13 @@ export function Break({ progress }) {
 
   const confirm = () => {
     if (!canConfirm || ready || requesting) return;
-    requestStartedAt.current = Date.now();
-    setRequesting(true);
-    send("ready");
+    const requestId = globalThis.crypto?.randomUUID?.() ?? `${player.id}-${Date.now()}`;
+    try {
+      globalThis.sessionStorage?.setItem(pendingReadyStorageKey, requestId);
+    } catch {
+      // In-memory retry still protects the current mounted page.
+    }
+    setReadyRequestId(requestId);
   };
 
   return (

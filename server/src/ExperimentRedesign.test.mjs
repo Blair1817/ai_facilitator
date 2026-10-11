@@ -320,11 +320,16 @@ test("Group Final Decision is a 90-second server-authoritative unanimous confirm
   assert.match(finalDecision, /Saving your choice…/);
   assert.match(finalDecision, /Your choice has been saved\./);
   assert.match(finalDecision, /Everyone has chosen the same answer\. You can now confirm the group decision\./);
+  assert.equal((finalDecision.match(/You've confirmed your choice\. Waiting for the others\./g) ?? []).length, 1,
+    "server-recorded confirmation feedback must be rendered once");
   assert.match(decisionControls, /Move the slider to record your confidence\./);
   assert.match(decisionControls, /value=\{hasSelectedValue \? value : 50\}/);
   assert.match(decisionControls, /onChange=\{\(_event, next\) => onChange\(Number\(next\)\)\}/);
   assert.match(decisionControls, /Selected value: \{hasSelectedValue \? value : "Not selected"\}/);
   assert.match(callbacks, /finalDecisionDeadline", now \+ GROUP_DECISION_SECONDS \* 1000/);
+  assert.equal((callbacks.match(/Date\.now\(\) >= round\.get\("finalDecisionDeadline"\)/g) ?? []).length, 2,
+    "both Draft and Confirm handlers must close at the exact deadline");
+  assert.match(callbacks, /if \(!round \|\| !game \|\| round\.get\("finalDecisionConfirmed"\)\) return false;/);
   assert.match(callbacks, /onStageEnded[\s\S]*stageName === "FinalDecision"[\s\S]*finalizeGroupDecision\(stage, \{ timedOut: true, endStage: false \}\)/);
   const finalDecisionStart = callbacks.indexOf('if (stageName === "FinalDecision") {', callbacks.indexOf("export function handleFormalStageStart"));
   const finalDecisionEnd = callbacks.indexOf('if (stageName === "IndividualAssessment"', finalDecisionStart);

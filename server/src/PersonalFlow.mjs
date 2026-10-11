@@ -10,6 +10,12 @@ import {
 
 const sharedBreakDeadlineTimers = new Map();
 
+function setIfChanged(scope, key, value) {
+  if (scope.get(key) === value) return false;
+  scope.set(key, value);
+  return true;
+}
+
 function currentPersonalPage(player, stageName, taskIndex) {
   const progress = player.round.get(personalProgressKey(stageName));
   return progress ? personalPages(stageName, taskIndex)[progress.index] ?? null : null;
@@ -29,11 +35,18 @@ export function sharedBreakState(players, stageName, taskIndex) {
 
 function clearSharedBreakTimer(roundId) {
   const existing = sharedBreakDeadlineTimers.get(roundId);
-  if (existing) clearTimeout(existing);
+  if (existing) clearTimeout(existing.timeout);
   sharedBreakDeadlineTimers.delete(roundId);
 }
 
+function isCurrentSharedBreakStage(stage) {
+  if (!stage || stage.get("ended")) return false;
+  if (typeof stage.isCurrent === "function") return stage.isCurrent();
+  return stage.currentGame?.currentStage?.id === stage.id;
+}
+
 function advanceSharedBreak(stage, mirrorResponse, now = Date.now()) {
+  if (!isCurrentSharedBreakStage(stage)) return false;
   const round = stage.round;
   const game = stage.currentGame;
   const stageName = stage.get("name");
@@ -62,16 +75,23 @@ function advanceSharedBreak(stage, mirrorResponse, now = Date.now()) {
   return true;
 }
 
-function armSharedBreakDeadline(stage, mirrorResponse, Empirica) {
+function armSharedBreakDeadline(stage, mirrorResponse, Empirica, now = Date.now()) {
   const deadline = stage.round.get("sharedBreakDeadline");
-  if (!Number.isFinite(deadline) || deadline <= Date.now() || stage.round.get("sharedBreakCompletedAt")) return;
+  if (!Number.isFinite(deadline) || deadline <= now
+    || stage.round.get("sharedBreakCompletedAt") || !isCurrentSharedBreakStage(stage)) return;
+  const existing = sharedBreakDeadlineTimers.get(stage.round.id);
+  if (existing?.deadline === deadline && existing.stageId === stage.id) return;
   clearSharedBreakTimer(stage.round.id);
-  const timeout = setTimeout(() => {
+  const timerRecord = { deadline, stageId: stage.id, timeout: null };
+  timerRecord.timeout = setTimeout(() => {
+    if (sharedBreakDeadlineTimers.get(stage.round.id) !== timerRecord) return;
+    sharedBreakDeadlineTimers.delete(stage.round.id);
+    if (!isCurrentSharedBreakStage(stage)) return;
     advanceSharedBreak(stage, mirrorResponse);
     Empirica.flush();
-  }, Math.max(0, deadline - Date.now()));
-  timeout.unref?.();
-  sharedBreakDeadlineTimers.set(stage.round.id, timeout);
+  }, Math.max(0, deadline - now));
+  timerRecord.timeout.unref?.();
+  sharedBreakDeadlineTimers.set(stage.round.id, timerRecord);
 }
 
 export function synchroniseSharedBreak(stage, mirrorResponse, Empirica, now = Date.now()) {
@@ -91,8 +111,8 @@ export function synchroniseSharedBreak(stage, mirrorResponse, Empirica, now = Da
   }
 
   let summary = sharedBreakState(game.players, stageName, taskIndex);
-  round.set("sharedBreakArrivalCount", summary.arrivalCount);
-  round.set("sharedBreakRequiredCount", summary.requiredCount);
+  setIfChanged(round, "sharedBreakArrivalCount", summary.arrivalCount);
+  setIfChanged(round, "sharedBreakRequiredCount", summary.requiredCount);
   if (summary.allArrived && !Number.isFinite(round.get("sharedBreakDeadline"))) {
     round.set("sharedBreakStartedAt", now);
     round.set("sharedBreakDeadline", now + SHARED_BREAK_SECONDS * 1000);
@@ -104,11 +124,11 @@ export function synchroniseSharedBreak(stage, mirrorResponse, Empirica, now = Da
   }
 
   summary = sharedBreakState(game.players, stageName, taskIndex);
-  round.set("sharedBreakReadyCount", summary.readyCount);
-  round.set("sharedBreakAllReady", summary.allReady);
+  setIfChanged(round, "sharedBreakReadyCount", summary.readyCount);
+  setIfChanged(round, "sharedBreakAllReady", summary.allReady);
   const advanced = advanceSharedBreak(stage, mirrorResponse, now);
   if (!advanced && Number.isFinite(round.get("sharedBreakDeadline"))) {
-    armSharedBreakDeadline(stage, mirrorResponse, Empirica);
+    armSharedBreakDeadline(stage, mirrorResponse, Empirica, now);
   }
   return advanced;
 }
@@ -132,12 +152,46 @@ export function registerPersonalFlow(Empirica, mirrorResponse) {
     const page = pages[progress.index], now = Date.now();
     if (page === "ReviewQuiz" && player.round.get("reviewQuizPassed") !== true) return;
     if (page === "InitialDecision") {
-      const response = player.round.get("initialDecision");
-      const timedOut = now >= progress.startedAt + FORMAL_INITIAL_DECISION_SECONDS * 1000;
-      if (!response && !timedOut) return;
-      player.round.set("initialSubmittedAt", response?.submittedAt ?? null);
-      player.round.set("initialCompletionDurationMs", now - progress.startedAt);
-      player.round.set("initialDecisionTimeoutReason", response ? null : "stage_timeout");
+      const deadline = progress.startedAt + FORMAL_INITIAL_DECISION_SECONDS * 1000;
+      const submitted = request.initialDecision;
+      const validChoices = new Set((round.get("decisionOptions") || []).map((option) => option.id));
+      const validSubmission = submitted && validChoices.has(submitted.choice)
+        && Number.isFinite(submitted.confidence)
+        && submitted.confidence >= 0
+        && submitted.confidence <= 100;
+      let receivedAt = player.round.get("initialDecisionReceivedAt");
+
+      // Formal Initial Decision is received and timestamped by this server
+      // callback. The browser timestamp is retained only as untrusted audit
+      // context and never determines whether the deadline was met.
+      if (!Number.isFinite(receivedAt) && validSubmission) {
+        receivedAt = now;
+        const acceptedOnTime = receivedAt < deadline;
+        const clientSubmittedAt = Number.isFinite(submitted.clientSubmittedAt)
+          ? submitted.clientSubmittedAt
+          : null;
+        player.round.set("initialChoice", submitted.choice);
+        player.round.set("initialConfidence", submitted.confidence);
+        player.round.set("initialDecisionReceivedAt", receivedAt);
+        player.round.set("initialDecisionAcceptedOnTime", acceptedOnTime);
+        player.round.set("initialDecision", {
+          choice: submitted.choice,
+          confidence: submitted.confidence,
+          submittedAt: receivedAt,
+          serverReceivedAt: receivedAt,
+          clientSubmittedAt,
+          acceptedOnTime,
+        });
+      }
+
+      const acceptedOnTime = Number.isFinite(receivedAt) && receivedAt < deadline;
+      const timedOut = now >= deadline;
+      if (!acceptedOnTime && !timedOut) return;
+      player.round.set("initialSubmittedAt", acceptedOnTime ? receivedAt : null);
+      player.round.set("initialCompletionDurationMs", (acceptedOnTime ? receivedAt : now) - progress.startedAt);
+      player.round.set("initialDecisionTimeoutReason", acceptedOnTime
+        ? null
+        : Number.isFinite(receivedAt) ? "late_submission" : "stage_timeout");
     }
     if (page === "IndividualAssessment" && round.get("finalDecisionOutcome") !== "consensus_choice") {
       if (!player.round.get("finalPersonalChoice") || player.round.get("finalPersonalChoiceConfidence") == null || !player.round.get("finalPersonalChoiceRationale")?.trim()) return;
@@ -167,7 +221,9 @@ export function registerPersonalFlow(Empirica, mirrorResponse) {
     const game = player.currentGame, stage = game?.currentStage, round = game?.currentRound;
     if (!request || !stage || stage.get("ended")
       || stage.get("name") !== "Followup" || round?.get("taskIndex") !== 0
-      || request.stageId !== stage.id || request.roundId !== round.id) return;
+      || request.stageId !== stage.id || request.roundId !== round.id
+      || typeof request.requestId !== "string" || request.requestId.length === 0
+      || request.requestId.length > 128) return;
     const key = personalProgressKey("Followup");
     const progress = player.round.get(key);
     const pages = personalPages("Followup", 0);
@@ -178,13 +234,17 @@ export function registerPersonalFlow(Empirica, mirrorResponse) {
     if (request.action === "ready") {
       const deadline = round.get("sharedBreakDeadline");
       if (!canConfirmSharedBreak(deadline, now)) {
-        player.round.set("sharedBreakReadyRejectedAt", now);
+        if (player.round.get("sharedBreakReadyRejectedRequestId") !== request.requestId) {
+          player.round.set("sharedBreakReadyRejectedRequestId", request.requestId);
+          player.round.set("sharedBreakReadyRejectedAt", now);
+        }
       } else if (player.round.get("sharedBreakReadyStatus") !== "ready") {
         player.round.set("sharedBreakReadyStatus", "ready");
+        player.round.set("sharedBreakReadyRequestId", request.requestId);
         player.round.set("sharedBreakReadyConfirmedAt", now);
+        synchroniseSharedBreak(stage, mirrorResponse, Empirica, now);
       }
     }
-    synchroniseSharedBreak(stage, mirrorResponse, Empirica, now);
     Empirica.flush();
   });
 }

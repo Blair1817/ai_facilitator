@@ -141,9 +141,7 @@ export function FinalDecision() {
             </div>
             <p className="mt-3 text-sm font-semibold text-gray-700">If your group cannot agree on one option, each member should select “Fail to reach a final decision”.</p>
 
-            {ownConfirmationRecorded ? (
-              <p className="mt-7 rounded-md bg-gray-100 p-4 text-center text-sm text-gray-700">You've confirmed your choice. Waiting for the others.</p>
-            ) : (
+            {!ownConfirmationRecorded && (
               <div className="mt-8 text-right"><Button className={practice ? "ml-0 bg-blue-700 text-white hover:bg-blue-800" : "ml-0"} type="submit" disabled={!canConfirm || confirming}>{practice ? "Confirm group choice" : "Confirm group decision"}</Button></div>
             )}
           </form>
