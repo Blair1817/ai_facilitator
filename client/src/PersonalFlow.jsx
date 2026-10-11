@@ -1,6 +1,12 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { usePlayer, useRound, useStage } from "@empirica/core/player/classic/react";
-import { FORMAL_INITIAL_DECISION_SECONDS, personalPages, personalProgressKey } from "../../shared/personalFlow.mjs";
+import {
+  beginPersonalPageRequest,
+  FORMAL_INITIAL_DECISION_SECONDS,
+  nextPersonalPageRequestAttempt,
+  personalPages,
+  personalProgressKey,
+} from "../../shared/personalFlow.mjs";
 import { Introduction } from "./intro-exit/Introduction";
 import { ReviewQuiz } from "./stages/ReviewQuiz";
 import { InitialDecision } from "./stages/InitialDecision";
@@ -14,6 +20,10 @@ import { Break } from "./stages/Break";
 
 const components = { TaskInformation: Introduction, ReviewQuiz, InitialDecision,
   IndividualAssessment, TLX, SubjectiveSurvey, FinalQuestions, ExpFeedback, Debriefing };
+
+function personalPageRequestStorageKey(playerId, roundId, stageId, index) {
+  return `personalPageRequest:${playerId}:${roundId}:${stageId}:${index}`;
+}
 
 export function StudyComplete() {
   return <main className="flex h-full items-center justify-center p-8 text-center"><div>
@@ -34,7 +44,9 @@ export function PersonalFlow() {
 
 function PersonalPage({ player, round, stage, stageName, progress, pages }) {
   const page = pages[progress.index];
-  const pendingStorageKey = `personalPageRequest:${player.id}:${round.id}:${stage.id}:${progress.index}`;
+  const pendingStorageKey = personalPageRequestStorageKey(
+    player.id, round.id, stage.id, progress.index,
+  );
   const [pending, setPending] = useState(() => {
     if (page !== "InitialDecision") return false;
     try {
@@ -44,22 +56,25 @@ function PersonalPage({ player, round, stage, stageName, progress, pages }) {
       return false;
     }
   });
+  const pendingRef = useRef(pending || null);
   const [now, setNow] = useState(Date.now());
-  const onNext = useCallback((details = {}) => setPending((current) => {
-    if (current) return current;
-    const request = {
-      requestId: globalThis.crypto?.randomUUID?.() ?? `${player.id}-${Date.now()}`,
-      ...(details?.initialDecision ? { initialDecision: details.initialDecision } : {}),
-    };
-    if (details?.initialDecision) {
+  const onNext = useCallback((details = {}) => {
+    const { request, created } = beginPersonalPageRequest(
+      pendingRef.current,
+      details,
+      () => globalThis.crypto?.randomUUID?.() ?? `${player.id}-${Date.now()}`,
+    );
+    if (!created) return;
+    pendingRef.current = request;
+    if (request.initialDecision) {
       try {
         globalThis.sessionStorage?.setItem(pendingStorageKey, JSON.stringify(request));
       } catch {
         // In-memory retries still protect the currently mounted page.
       }
     }
-    return request;
-  }), [pendingStorageKey, player.id]);
+    setPending(request);
+  }, [pendingStorageKey, player.id]);
   const deadline = page === "InitialDecision"
     ? progress.startedAt + FORMAL_INITIAL_DECISION_SECONDS * 1000
     : undefined;
@@ -76,15 +91,42 @@ function PersonalPage({ player, round, stage, stageName, progress, pages }) {
     if (page === "InitialDecision" && now >= deadline) onNext();
   }, [page, now, deadline, onNext]);
   useEffect(() => {
+    const previousIndex = progress.index - 1;
+    if (previousIndex < 0 || pages[previousIndex] !== "InitialDecision") return;
+    const completedStorageKey = personalPageRequestStorageKey(
+      player.id, round.id, stage.id, previousIndex,
+    );
+    try {
+      globalThis.sessionStorage?.removeItem(completedStorageKey);
+    } catch {
+      // The authoritative cursor has advanced; stale storage is harmless.
+    }
+  }, [pages, player.id, progress.index, round.id, stage.id]);
+  useEffect(() => {
     if (!pending || !page) return;
-    const send = () => player.set("personalPageRequest", {
-      ...pending, roundId: round.id, stageId: stage.id, index: progress.index,
-    });
+    const send = () => {
+      const attempt = nextPersonalPageRequestAttempt(pendingRef.current, {
+        roundId: round.id,
+        stageId: stage.id,
+        index: progress.index,
+      });
+      pendingRef.current = attempt.pending;
+      if (attempt.pending.initialDecision) {
+        try {
+          globalThis.sessionStorage?.setItem(
+            pendingStorageKey, JSON.stringify(attempt.pending),
+          );
+        } catch {
+          // In-memory retries still protect the currently mounted page.
+        }
+      }
+      player.set("personalPageRequest", attempt.transmission);
+    };
     send();
     // A dropped request or response write arriving later must not strand the page.
     const retry = setInterval(send, 2000);
     return () => clearInterval(retry);
-  }, [pending, player, round.id, stage.id, progress.index, page]);
+  }, [pending, pendingStorageKey, player, round.id, stage.id, progress.index, page]);
 
   if (!page) {
     if (stageName === "Followup" && round.get("taskIndex") === 1) return <StudyComplete />;

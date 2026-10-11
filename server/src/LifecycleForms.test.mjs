@@ -128,8 +128,10 @@ test("InitialDecision page allows 300 seconds, shows a countdown, and advances w
   // together so the server can timestamp receipt authoritatively. Native
   // stage submit remains only as a defensive fallback.
   assert.match(initialDecisionSource, /onNext\(\{ initialDecision: \{ choice, confidence, clientSubmittedAt \} \}\)/);
-  assert.match(personalFlowClient, /\.\.\.pending, roundId: round\.id, stageId: stage\.id, index: progress\.index/);
+  assert.match(personalFlowClient, /nextPersonalPageRequestAttempt\(pendingRef\.current/);
+  assert.match(personalFlowClient, /player\.set\("personalPageRequest", attempt\.transmission\)/);
   assert.match(personalFlowClient, /sessionStorage\?\.setItem\(pendingStorageKey, JSON\.stringify\(request\)\)/);
+  assert.doesNotMatch(personalFlowClient, /setPending\(\(current\)/);
   assert.match(initialDecisionSource, /player\.stage\.set\("submit", true\)/);
   assert.match(initialDecisionSource, /Your initial decision has been submitted\./);
 });

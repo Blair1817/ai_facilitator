@@ -4,6 +4,33 @@ export const GROUP_DECISION_SECONDS = 90;
 export const SHARED_BREAK_SECONDS = 300;
 export const SHARED_BREAK_READY_WINDOW_SECONDS = 30;
 
+export function beginPersonalPageRequest(current, details, createRequestId) {
+  if (current) return { request: current, created: false };
+  const request = {
+    requestId: createRequestId(),
+    attemptNumber: 0,
+    ...(details?.initialDecision ? { initialDecision: details.initialDecision } : {}),
+  };
+  return { request, created: true };
+}
+
+export function nextPersonalPageRequestAttempt(request, routing) {
+  const previousAttempt = Number.isSafeInteger(request?.attemptNumber)
+    && request.attemptNumber >= 0
+    ? request.attemptNumber
+    : 0;
+  const pending = { ...request, attemptNumber: previousAttempt + 1 };
+  return {
+    pending,
+    transmission: {
+      ...pending,
+      roundId: routing.roundId,
+      stageId: routing.stageId,
+      index: routing.index,
+    },
+  };
+}
+
 export function personalPages(stageName, taskIndex) {
   if (stageName === "Preparation") return PREPARATION_PAGES;
   if (stageName === "Followup") return ["IndividualAssessment", "TLX", "SubjectiveSurvey",

@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Attribute } from "@empirica/core/player/classic";
 
 import {
+  beginPersonalPageRequest,
   FORMAL_INITIAL_DECISION_SECONDS,
+  nextPersonalPageRequestAttempt,
   SHARED_BREAK_READY_WINDOW_SECONDS,
   SHARED_BREAK_SECONDS,
   canAdvanceSharedBreak,
@@ -113,6 +116,153 @@ function preparationFixture({ taskIndex, startedAt, initialDecision = null, rece
   return { key, mirrors, player, request, round, stage };
 }
 
+function followupFormsFixture() {
+  const round = scope("round-followup-forms", { taskIndex: 1 });
+  const stage = scope("followup-forms", { name: "Followup" });
+  const game = scope("game-followup-forms");
+  const key = personalProgressKey("Followup");
+  const playerRound = scope("player-round-followup-forms", {
+    [key]: { index: 1, startedAt: 1_000 },
+    tlxSurvey: { mentalDemand: 25 },
+  });
+  const player = {
+    id: "p-followup-forms",
+    round: playerRound,
+    get() {},
+  };
+  game.players = [player];
+  game.currentRound = round;
+  game.currentStage = stage;
+  stage.round = round;
+  stage.currentGame = game;
+  round.currentGame = game;
+  player.currentGame = game;
+  const listeners = new Map();
+  const mirrors = [];
+  registerPersonalFlow({
+    on: (_kind, attribute, callback) => listeners.set(attribute, callback),
+    flush() {},
+  }, (_player, _round, page) => mirrors.push(page));
+  const request = (requestId) => listeners.get("personalPageRequest")({}, {
+    player,
+    personalPageRequest: {
+      requestId,
+      attemptNumber: 1,
+      roundId: round.id,
+      stageId: stage.id,
+      index: player.round.get(key).index,
+    },
+  });
+  return { key, mirrors, player, request };
+}
+
+test("PersonalFlow retries preserve logical identity and bypass Empirica's identical-value suppression", () => {
+  const initialDecision = { choice: "B", confidence: 60, clientSubmittedAt: 123_456 };
+  const started = beginPersonalPageRequest(null, { initialDecision }, () => "stable-request-id");
+  const routing = { roundId: "round-1", stageId: "preparation-1", index: 2 };
+  const first = nextPersonalPageRequestAttempt(started.request, routing);
+  const second = nextPersonalPageRequestAttempt(first.pending, routing);
+
+  assert.equal(started.created, true);
+  assert.equal(first.transmission.requestId, "stable-request-id");
+  assert.equal(second.transmission.requestId, "stable-request-id");
+  assert.equal(first.transmission.attemptNumber, 1);
+  assert.equal(second.transmission.attemptNumber, 2);
+  assert.deepEqual(first.transmission.initialDecision, initialDecision);
+  assert.deepEqual(second.transmission.initialDecision, initialDecision);
+  assert.notEqual(JSON.stringify(first.transmission), JSON.stringify(second.transmission));
+
+  const submitted = [];
+  const attribute = new Attribute((attributes) => submitted.push(...attributes), "player-1", "personalPageRequest");
+  attribute.set(first.transmission);
+  attribute.set(first.transmission);
+  assert.equal(submitted.length, 1, "Empirica suppresses an identical serialised retry");
+  attribute.set(second.transmission);
+  assert.equal(submitted.length, 2, "the changed attempt number causes Empirica to submit the retry");
+});
+
+test("a lost first PersonalFlow transmission is followed by a deliverable retry", (t) => {
+  const startedAt = 10_000_000;
+  t.mock.method(Date, "now", () => startedAt + 1_000);
+  const f = preparationFixture({ taskIndex: 0, startedAt });
+  const response = { choice: "A", confidence: 40, clientSubmittedAt: startedAt + 500 };
+  const logical = beginPersonalPageRequest(null, { initialDecision: response }, () => "lost-then-retried");
+  const routing = { roundId: f.round.id, stageId: f.stage.id, index: 2 };
+  const first = nextPersonalPageRequestAttempt(logical.request, routing);
+  const second = nextPersonalPageRequestAttempt(first.pending, routing);
+  let transmissions = 0;
+  const attribute = new Attribute((attributes) => {
+    transmissions += 1;
+    if (transmissions === 1) return;
+    f.request(JSON.parse(attributes[0].val));
+  }, f.player.id, "personalPageRequest");
+
+  attribute.set(first.transmission);
+  assert.equal(f.player.round.get(f.key).index, 2, "the deliberately lost first update cannot advance the page");
+  attribute.set(second.transmission);
+  assert.equal(f.player.round.get(f.key).index, 3);
+  assert.equal(f.player.round.get("initialDecision").choice, "A");
+  assert.deepEqual(f.mirrors, ["InitialDecision"]);
+});
+
+test("pending Initial Decision recovery retains payload, request ID, and retry sequence", () => {
+  const response = { choice: "C", confidence: 100, clientSubmittedAt: 555_000 };
+  const started = beginPersonalPageRequest(null, { initialDecision: response }, () => "refresh-stable-id");
+  const first = nextPersonalPageRequestAttempt(started.request, {
+    roundId: "round-refresh", stageId: "stage-refresh", index: 2,
+  });
+  const restored = JSON.parse(JSON.stringify(first.pending));
+  let generatedIds = 0;
+  const recovered = beginPersonalPageRequest(restored, { initialDecision: response }, () => {
+    generatedIds += 1;
+    return "must-not-be-used";
+  });
+  const retry = nextPersonalPageRequestAttempt(recovered.request, {
+    roundId: "round-refresh", stageId: "stage-refresh", index: 2,
+  });
+
+  assert.equal(recovered.created, false);
+  assert.equal(generatedIds, 0);
+  assert.equal(retry.transmission.requestId, "refresh-stable-id");
+  assert.equal(retry.transmission.attemptNumber, 2);
+  assert.deepEqual(retry.transmission.initialDecision, response);
+});
+
+test("a synchronous guard prevents StrictMode-style duplicate request creation and storage", () => {
+  const pendingRef = { current: null };
+  const stored = [];
+  let generatedIds = 0;
+  const submit = () => {
+    const result = beginPersonalPageRequest(
+      pendingRef.current,
+      { initialDecision: { choice: "A", confidence: 0, clientSubmittedAt: 99 } },
+      () => `strict-${++generatedIds}`,
+    );
+    if (!result.created) return;
+    pendingRef.current = result.request;
+    stored.push(JSON.stringify(result.request));
+  };
+
+  submit();
+  submit();
+  assert.equal(generatedIds, 1);
+  assert.equal(stored.length, 1);
+  assert.equal(JSON.parse(stored[0]).requestId, pendingRef.current.requestId);
+  assert.deepEqual(JSON.parse(stored[0]).initialDecision, pendingRef.current.initialDecision);
+});
+
+test("TLX and Subjective Survey still advance independently through personalPageRequest", () => {
+  const f = followupFormsFixture();
+  f.request("tlx-request");
+  assert.equal(f.player.round.get(f.key).index, 2);
+  assert.deepEqual(f.mirrors, ["TLX"]);
+
+  f.player.round.set("subjectiveSurvey", { satisfaction: 5 });
+  f.request("subjective-request");
+  assert.equal(f.player.round.get(f.key).index, 3);
+  assert.deepEqual(f.mirrors, ["TLX", "SubjectiveSurvey"]);
+});
+
 test("both formal rounds use server receipt time for the 300-second Initial Decision deadline", (t) => {
   let now = 1_000_000;
   t.mock.method(Date, "now", () => now);
@@ -178,14 +328,22 @@ test("a timely server-received Initial Decision survives delayed progression and
   const f = preparationFixture({ taskIndex: 1, startedAt, initialDecision: response, receivedAt });
   t.mock.method(Date, "now", () => receivedAt + 10_000);
 
-  f.request();
+  f.request({
+    requestId: "timely-retry",
+    attemptNumber: 2,
+    initialDecision: {
+      choice: "A",
+      confidence: 10,
+      clientSubmittedAt: receivedAt + 5_000,
+    },
+  });
   assert.equal(f.player.round.get(f.key).index, 3);
   assert.equal(f.player.round.get("initialSubmittedAt"), receivedAt);
   assert.equal(f.player.round.get("initialCompletionDurationMs"), receivedAt - startedAt);
   assert.equal(f.player.round.get("initialDecisionTimeoutReason"), null);
   assert.deepEqual(f.player.round.get("initialDecision"), response);
 
-  f.request();
+  f.request({ requestId: "timely-retry", attemptNumber: 3, index: 2 });
   assert.equal(f.player.round.get(f.key).index, 3);
   assert.deepEqual(f.mirrors, ["InitialDecision"], "a reconnect retry cannot submit or mirror twice");
 });
