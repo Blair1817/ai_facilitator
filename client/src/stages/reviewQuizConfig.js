@@ -1,7 +1,7 @@
 export const REVIEW_QUIZZES = Object.freeze({
   A: {
     title: "Task A: Choose a host city",
-    scenario: "This quiz concerns the International Youth Games host-city task with Rovenna, Talwick, and Meridia.",
+    scenario: "This quiz concerns the International Youth Games host-city task with Talwick, Rovenna, and Meridia.",
     remediation: {
       evidenceRule: {
         title: "Information to use",
@@ -9,7 +9,7 @@ export const REVIEW_QUIZZES = Object.freeze({
       },
       taskOverview: {
         title: "Task A scenario",
-        content: "Your group will choose a city to host the International Youth Games. The three options are Rovenna, Talwick and Meridia. The International Youth Sports Council holds the Games every four years. All three cities have passed the initial checks and meet the requirements for sports venues, public safety, finances and legal compliance.",
+        content: "Your group will choose a city to host the International Youth Games. The three options are Talwick, Rovenna and Meridia. The International Youth Sports Council holds the Games every four years. All three cities meet the essential requirements for venues, public safety, finance and legal compliance.",
       },
       discussionDuration: {
         title: "Discussion period",
@@ -74,7 +74,7 @@ export const REVIEW_QUIZZES = Object.freeze({
   },
   B: {
     title: "Task B: Choose a host campus",
-    scenario: "This quiz concerns the Global Innovation Summit host-campus task with Fenwick University, Halden University, and Norvale University.",
+    scenario: "This quiz concerns the Global Innovation Summit host-campus task with Halden University, Fenwick University, and Norvale University.",
     remediation: {
       evidenceRule: {
         title: "Information to use",
@@ -82,7 +82,7 @@ export const REVIEW_QUIZZES = Object.freeze({
       },
       taskOverview: {
         title: "Task B scenario",
-        content: "Your group will choose a university campus to host the Global Innovation Summit. The three options are Fenwick University, Halden University and Norvale University. The International Innovation Council holds the summit every four years. All three campuses have passed the initial checks and meet the requirements for conference facilities, public safety, finances and legal compliance.",
+        content: "Your group will choose a university campus to host the Global Innovation Summit. The three options are Halden University, Fenwick University and Norvale University. The International Innovation Council holds the Summit every four years. All three campuses meet the essential requirements for facilities, public safety, finance and legal compliance.",
       },
       discussionDuration: {
         title: "Discussion period",
@@ -147,8 +147,18 @@ export const REVIEW_QUIZZES = Object.freeze({
   },
 });
 
-export function getReviewQuiz(taskVersion) {
-  return REVIEW_QUIZZES[taskVersion] ?? null;
+export function getReviewQuiz(taskVersion, decisionOptions) {
+  const quiz = REVIEW_QUIZZES[taskVersion] ?? null;
+  if (!quiz || !decisionOptions?.length) return quiz;
+  const names = decisionOptions.map((option) => option.label);
+  const list = `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  return { ...quiz,
+    scenario: quiz.scenario.replace(/with [^.]+\./, `with ${list}.`),
+    remediation: { ...quiz.remediation,
+      taskOverview: { ...quiz.remediation.taskOverview,
+        content: quiz.remediation.taskOverview.content.replace(/The three options are [^.]+\./, `The three options are ${list}.`) },
+    },
+  };
 }
 
 function normalizeAnswer(value) {
@@ -186,8 +196,8 @@ export function clearIncorrectReviewQuizAnswers(answers, incorrectQuestionIds) {
   return clearedAnswers;
 }
 
-export function getReviewQuizRemediation(taskVersion, incorrectQuestionIds) {
-  const quiz = getReviewQuiz(taskVersion);
+export function getReviewQuizRemediation(taskVersion, incorrectQuestionIds, decisionOptions) {
+  const quiz = getReviewQuiz(taskVersion, decisionOptions);
   if (!quiz) {
     throw new Error(`Unsupported ReviewQuiz taskVersion: ${JSON.stringify(taskVersion)}`);
   }

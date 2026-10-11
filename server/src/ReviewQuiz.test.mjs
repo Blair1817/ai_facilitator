@@ -35,86 +35,86 @@ const EVIDENCE_RULE = "Use only the facts provided, without outside knowledge or
 const INFORMATION_DIFFERENCE_NOTICE = "Some information may be different from what other group members see.";
 
 const PROOFREAD_FACTS = {
-  A: {
-    shared: [
-      "Direct trains run frequently between the airport and the venue area.",
-      "From some event hotels, the daily trip to the venue area involves changing transport.",
-      "Visitor surveys report few evening activities within walking distance of the venue area.",
-      "The city has reliably run similar international events on time and within budget.",
-      "There are enough mid-priced hotel rooms close to all the proposed venues.",
-      "Local sports clubs and the city’s business council publicly support hosting the event.",
-      "Direct public transport connects the main station to every proposed venue.",
-      "Visitor help desks close before most evening events end and before local attractions close.",
-      "The temporary media centre needs more power and network equipment before it can open.",
+  "A": {
+    "shared": [
+      "Direct trains run often from the airport to the main sports area.",
+      "Some visitor cafés have too few seats after evening matches.",
+      "There is no tram stop close to the main fan area.",
+      "Rovenna has hosted large sports events on time.",
+      "Many mid-priced hotels are a short trip from the sports venues.",
+      "Local sports clubs support hosting the Games.",
+      "Direct buses link the main station to all three sports areas.",
+      "Visitor stalls will be spread across sites far apart.",
+      "Only one ticket desk stays open after evening matches."
     ],
-    Green: [
-      "A tested digital check-in system was used at a recent international event, with few delays.",
-      "Local groups have recruited enough trained volunteers for the event. Many speak several languages.",
-      "Visitors consistently give high ratings to the waterfront and its evening cultural activities.",
-      "Residents near several proposed venues are concerned about noise and late-evening crowds.",
-      "University accommodation can provide enough extra low-cost beds to meet expected demand.",
-      "Road repairs will affect one route between the airport and the northern venue area.",
-      "The visitor pass includes free museum entry and unlimited travel on local buses.",
+    "Green": [
+      "Entry checks at a recent youth event kept queues short.",
+      "Local colleges have trained helpers who speak several languages.",
+      "The waterfront hosts popular music events on summer evenings.",
+      "A path near the river gets crowded during the weekend market.",
+      "Event tickets give discounts at several local museums.",
+      "A local sports centre provides indoor space for visiting teams.",
+      "Roadworks may delay travel to one sports venue."
     ],
-    Blue: [
-      "The bus operator can add enough event services without cutting normal routes for residents.",
-      "Most partner hotels offer flexible check-in and can coordinate mealtimes for teams.",
-      "Several budget hotels require non-refundable bookings before the final number of attendees is confirmed.",
-      "The mobile signal becomes unreliable around one venue when crowds are at their largest.",
-      "The central market and public squares can host a range of free activities for visitors.",
-      "Local schools and sports clubs will run family activities throughout the event.",
-      "The city needs more trained event stewards to reach the usual staffing level.",
+    "Blue": [
+      "Teams can use covered rest areas between matches.",
+      "Local food stalls will sell low-cost meals near team hotels.",
+      "One visitor ticket covers local buses, trams and trains.",
+      "Some hotels ask for early deposits that cannot be refunded.",
+      "Two event bus routes share a crowded afternoon stop.",
+      "Local arts groups will perform during the Games.",
+      "Some volunteer shifts have no backup staff if plans change."
     ],
-    Pink: [
-      "A permanent centre already coordinates venue staff, emergency services, transport teams and organisers.",
-      "The main visitor area is near museums, restaurants and evening entertainment.",
-      "Funding is in place for reusable cups and waste sorting at every proposed event site.",
-      "One travel pass covers trains, buses, trams and the airport shuttle.",
-      "Two tram routes serving the venues share a junction that gets crowded at peak times.",
-      "Several independent hotels near the central event area offer affordable rooms.",
-      "Public surveys show mixed support for hosting because residents expect disruption in nearby neighbourhoods.",
-    ],
+    "Pink": [
+      "A full-time event office can manage schedules at all sports venues.",
+      "Extra buses have funding to run after evening matches.",
+      "Sports clubs will offer free activities for visiting families.",
+      "Local volunteers will staff welcome desks at the main stations.",
+      "Two outdoor viewing areas have little shelter in bad weather.",
+      "Independent guesthouses offer fixed prices for the event weekend.",
+      "The event website offers information in only two languages."
+    ]
   },
-  B: {
-    shared: [
-      "Direct coaches run frequently between the airport and the conference campus.",
-      "From some summit hotels, the daily trip to the conference campus involves changing transport.",
-      "Surveys of attendees report few places to eat in the evening within walking distance of the conference campus.",
-      "The campus has reliably run similar academic conferences on time and within budget.",
-      "There are enough mid-priced guest rooms close to all the conference buildings.",
-      "Local faculty groups and the city’s business council publicly support hosting the summit.",
-      "Direct public transport connects the central station to every conference building.",
-      "Help desks for attendees close before most evening sessions and networking events finish.",
-      "The proposed exhibition hall needs more lighting and network equipment before it can open.",
+  "B": {
+    "shared": [
+      "Clear indoor signs guide visitors to all main lecture rooms.",
+      "Some research displays are in a separate building across the courtyard.",
+      "The event app cannot remind attendees about their chosen talks.",
+      "The main library hall offers space for small meetings.",
+      "Halden has hosted several large research events without major problems.",
+      "Campus cafés offer meals that suit many dietary needs.",
+      "Outdoor seating areas provide space to meet between sessions.",
+      "Some research posters would hang in busy corridors.",
+      "Attendees from different sessions have breaks in separate buildings."
     ],
-    Green: [
-      "A tested digital registration system was used at a recent academic conference, with few delays.",
-      "Student groups have recruited enough trained assistants for the summit. Many speak several languages.",
-      "Attendees consistently give high ratings to the lakeside area and its evening cultural activities.",
-      "Residents near several conference buildings are concerned about traffic and late-evening noise.",
-      "Student accommodation can provide enough extra low-cost rooms to meet expected demand.",
-      "Road repairs will affect one route between the airport and the eastern campus entrance.",
-      "The attendee pass includes free exhibition entry and unlimited travel on local buses.",
+    "Green": [
+      "Online participants can ask questions during every streamed session.",
+      "Attendees can view research posters online before the summit.",
+      "A nearby gallery can host an evening event for researchers.",
+      "Some workshop rooms have fixed seats that limit group activities.",
+      "Staff will offer free workshops on explaining research to the public.",
+      "Student groups will offer free tours of campus exhibitions.",
+      "Several seminar rooms lack space to display workshop materials."
     ],
-    Blue: [
-      "The shuttle operator can add enough summit services without cutting regular routes for students.",
-      "Most partner hotels offer flexible check-in and can coordinate mealtimes for attendees.",
-      "Several budget residences require non-refundable bookings before the final number of attendees is confirmed.",
-      "Standard Wi-Fi in one hall supports calls and messaging only. Faster access requires a paid plan.",
-      "The riverside gardens and public library can host a range of free activities for attendees.",
-      "Local schools and science charities will run public activities throughout the summit.",
-      "The campus needs more trained technicians to reach the usual staffing level.",
+    "Blue": [
+      "Staff will help speakers test equipment before their talks.",
+      "One campus map shows the quickest routes between meeting rooms.",
+      "Graduates from several fields will lead a free careers discussion.",
+      "Only two campus help desks display changes to the timetable.",
+      "Campus buses have long queues after the largest afternoon talks.",
+      "The event website lists changes to room locations.",
+      "Lunch vouchers work at only two campus cafés."
     ],
-    Pink: [
-      "A permanent centre already coordinates organisers, security staff, technical teams and campus services.",
-      "The main area used by attendees is near cafés, galleries and evening events.",
-      "Funding is in place for refill stations and waste collection at every proposed summit building.",
-      "One travel pass covers trains, buses, campus shuttles and bicycle hire.",
-      "Two campus shuttle routes share an entrance that gets crowded at peak times.",
-      "Several independent guesthouses near the central conference area offer affordable rooms.",
-      "Public surveys show mixed support for hosting because residents expect disruption around the campus.",
-    ],
-  },
+    "Pink": [
+      "Most talks take place in one connected group of buildings.",
+      "Student helpers will share short notes on the main talks.",
+      "Research teams can book tables to show their work.",
+      "The largest lecture hall has comfortable seats and clear views.",
+      "Quiet rooms near the displays have too few power sockets.",
+      "Attendees can book tables for one-to-one research talks.",
+      "The campus desk cannot store bags after the afternoon sessions."
+    ]
+  }
 };
 
 function facts(markdown) {
@@ -335,9 +335,9 @@ test("formal backgrounds use the approved short equal-importance rule without a 
   const expectedBackground = {
     A: `# Task A: Choose a host city
 
-Your group will choose a city to host the International Youth Games. The three options are Rovenna, Talwick and Meridia.
+Your group will choose a city to host the International Youth Games. The three options are Talwick, Rovenna and Meridia.
 
-The International Youth Sports Council holds the Games every four years. All three cities have passed the initial checks and meet the requirements for sports venues, public safety, finances and legal compliance.
+The International Youth Sports Council holds the Games every four years. All three cities meet the essential requirements for venues, public safety, finance and legal compliance.
 
 **How to decide**
 
@@ -346,9 +346,9 @@ ${SHORT_DECISION_RULE}
 ${EVIDENCE_RULE}`,
     B: `# Task B: Choose a host campus
 
-Your group will choose a university campus to host the Global Innovation Summit. The three options are Fenwick University, Halden University and Norvale University.
+Your group will choose a university campus to host the Global Innovation Summit. The three options are Halden University, Fenwick University and Norvale University.
 
-The International Innovation Council holds the summit every four years. All three campuses have passed the initial checks and meet the requirements for conference facilities, public safety, finances and legal compliance.
+The International Innovation Council holds the Summit every four years. All three campuses meet the essential requirements for facilities, public safety, finance and legal compliance.
 
 **How to decide**
 
@@ -376,7 +376,7 @@ ${EVIDENCE_RULE}`,
 test("all proofread formal facts and the 9 plus 7 allocation match exactly", () => {
   assert.equal(hptConfig.tasks.length, 2);
   assert.deepEqual(hptConfig.tasks[0].decisionOptions.map((option) => option.label), ["Talwick", "Rovenna", "Meridia"]);
-  assert.deepEqual(hptConfig.tasks[1].decisionOptions.map((option) => option.label), ["Norvale", "Halden", "Fenwick"]);
+  assert.deepEqual(hptConfig.tasks[1].decisionOptions.map((option) => option.label), ["Norvale University", "Halden University", "Fenwick University"]);
   for (const task of hptConfig.tasks) {
     const expected = PROOFREAD_FACTS[task.taskVersion];
     assert.equal(task.playerConfig.length, 3);
