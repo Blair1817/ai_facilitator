@@ -43,6 +43,7 @@ import {
   canConfirmBreak,
   allFinalDecisionConfirmationsMatch,
   classifyFinalDecision,
+  FACILITATOR_ROLES,
   MESSAGE_TYPES,
   NO_GROUP_FINAL_DECISION,
   allocateSequencePosition,
@@ -1157,7 +1158,7 @@ function appendTimedMessage(stage, attribute, content, messageType = MESSAGE_TYP
 // treatment as the opening message historically had (see
 // IMPLEMENTATION_LOGIC.md section 8) and as the "minutes remain" timer
 // reminders already get.
-function appendFacilitatorNudge(stage, attribute, content, onceFlagKey) {
+function appendFacilitatorNudge(stage, attribute, content, onceFlagKey, facilitatorTrigger = "SILENCE_NUDGE") {
   if (!stage?.isCurrent?.()) return false;
   const game = stage.currentGame;
   if (onceFlagKey && game.get(onceFlagKey)) return false;
@@ -1172,6 +1173,9 @@ function appendFacilitatorNudge(stage, attribute, content, onceFlagKey) {
     speakerType: MESSAGE_TYPES.FACILITATOR,
     timestamp,
     content,
+    role: FACILITATOR_ROLES.FIXED_MESSAGE,
+    facilitatorOrigin: "DETERMINISTIC_FIXED",
+    facilitatorTrigger,
     sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
   });
   if (onceFlagKey) game.set(onceFlagKey, true);
@@ -1238,7 +1242,7 @@ function armSilenceWatchdog(stage, chatKey) {
     const content = hasTalked ? SILENCE_NUDGE_LULL : SILENCE_NUDGE_OPENING;
     // No once-flag: a fresh silence episode (rearmed after the group talks
     // again) is allowed to post another nudge later in the same round.
-    appendFacilitatorNudge(stage, chatKey, content, null);
+    appendFacilitatorNudge(stage, chatKey, content, null, "SILENCE_NUDGE");
   }, SILENCE_NUDGE_DELAY_MS);
   silenceWatchdogTimers.set(timerKey, handle);
 }
@@ -1284,7 +1288,7 @@ export function handleFormalStageStart(stage) {
     // Opening message: one fixed, non-LLM Facilitator message at the very
     // start of every Task-stage discussion. Independent of the checkpoint
     // pipeline (no Generator/Validator call, no CheckpointManager state).
-    appendFacilitatorNudge(stage, chatKey, TASK_OPENING_MESSAGE, `openingPosted_${chatKey}`);
+    appendFacilitatorNudge(stage, chatKey, TASK_OPENING_MESSAGE, `openingPosted_${chatKey}`, "DISCUSSION_OPENING");
 
     // Silence watchdog: covers both a dead-silent opening AND a later lull
     // after the group has already been talking (see armSilenceWatchdog).
@@ -1535,6 +1539,12 @@ async function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole
       speakerType: MESSAGE_TYPES.FACILITATOR,
       timestamp: publishedAt,
       content: llmAction.message,
+      role: llmAction.role,
+      facilitatorOrigin: "LLM_GENERATED",
+      facilitatorTrigger: logEntry.triggerType === "PARTICIPANT_REQUEST"
+        ? "PARTICIPANT_REQUEST"
+        : "AUTOMATIC_CHECKPOINT",
+      auditRequestId: logEntry.auditRequestId,
       sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
     });
     logEntry.messageAdded = true;
@@ -1561,6 +1571,10 @@ async function postParticipantRequestFallback(game, chatKey, logEntry) {
       speakerType: MESSAGE_TYPES.FACILITATOR,
       timestamp: publishedAt,
       content: "I can’t tell you which option is correct. That’s for your group to decide, but I’m glad to help organise or clarify what’s already been discussed. Could you point me to the specific option, claim, or message you’d like help with?",
+      role: FACILITATOR_ROLES.NON_LLM_FALLBACK,
+      facilitatorOrigin: "NON_LLM_FALLBACK",
+      facilitatorTrigger: "PARTICIPANT_REQUEST",
+      auditRequestId: logEntry.auditRequestId,
       sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
     });
     logEntry.messageAdded = true;

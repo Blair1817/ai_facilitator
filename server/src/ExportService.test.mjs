@@ -7,7 +7,9 @@ import test from "node:test";
 
 import {
   ExportService,
+  buildFormalTranscript,
   redactGameBundle,
+  resolveFacilitatorProvenance,
   renderQuestionnaireCsv,
   renderTranscriptMd,
   ExportNotFoundError,
@@ -136,8 +138,11 @@ function fixture() {
     attr(s, "systemInfo", { model: "MiniMax-Text-01", thresholds: { abstain: 0.4 } });
     attr(s, "llmLogIndex", ["R1", "R2"]);
     attr(s, "llmLog.R1", {
-      id: "R1", auditRequestId: "R1", outcome: "PUBLISHED", role: "Expander",
+      id: "R1", auditRequestId: "R1", outcome: "PUBLISHED",
+      roundIndex: 0, originatingRoundId: "R0", publishedMessageId: "ai-r0-1",
       reason: "", requestSuccess: true, messageAdded: true,
+      promptMetadata: { generationRole: "INFORMATION_EXPANDER" },
+      llmAction: { role: "INFORMATION_EXPANDER" },
       totalLatencyMs: 2400, humanMessageCountAtCompletion: 6, responseContextDriftMessages: 0,
       auditCompletedAt: 1723705200000,
       agentState: { cumulativeContext: "internal-only-payload" },
@@ -149,9 +154,9 @@ function fixture() {
       totalLatencyMs: null, auditCompletedAt: 1723705500000,
     });
     attr(s, "chat_round_0", [
-      { text: "I think we should focus on cost first.", sender: { id: "p1", name: "Red" }, ts: 1723705200000 },
-      { text: "Why cost?", sender: { id: "p2", name: "Pink" }, ts: 1723705210000 },
-      { text: "Consider the trade-offs across all options.", sender: { id: "ai", name: "Facilitator" }, ts: 1723705220000, role: "Expander" },
+      { messageId: "p1-r0-1", roundIndex: 0, sequencePosition: 0, speakerType: "human", text: "I think we should focus on cost first. Email red@example.com.", sender: { id: "p1", name: "Red" }, ts: 1723705200000 },
+      { messageId: "p2-r0-1", roundIndex: 0, sequencePosition: 1, speakerType: "human", text: "Why cost?", sender: { id: "p2", name: "Pink" }, ts: 1723705210000 },
+      { messageId: "ai-r0-1", roundIndex: 0, sequencePosition: 2, speakerType: "facilitator", text: "Consider the trade-offs across all options.", sender: { id: "ai", name: "Facilitator" }, ts: 1723705220000 },
     ]);
     attr(s, "chat_round_1", [
       { text: "Formal Round 2 evidence.", sender: { id: "p3", name: "Blue" }, ts: 1723705600000 },
@@ -511,18 +516,25 @@ test("renderTranscriptMd emits one section per round and a final LLM audit log s
   assert.match(markdown, /- Treatment: main/);
   assert.match(markdown, /- Ended: 2026-08-15T10:45:00\+08:00/);
   assert.doesNotMatch(markdown, /- Ended: \(in progress\)/);
-  assert.match(markdown, /## Round 1 · Task 1/);
-  assert.match(markdown, /## Round 2 · Task 2/);
+  assert.match(markdown, /## Formal Round 1 · Task A · Adaptive/);
+  assert.match(markdown, /## Formal Round 2 · Task B · Static/);
   assert.doesNotMatch(markdown, /## Round 3|Practice \/ Orientation|Practice-only answer/);
   assert.doesNotMatch(markdown, /POISON NATIVE-INDEX TRANSCRIPT/);
   assert.match(markdown, /## LLM audit log \(2 entries\)/);
-  assert.match(markdown, /Red.*focus on cost first/);
-  assert.match(markdown, /Facilitator.*Expander/);
-  assert.match(markdown, /Blue.*Formal Round 2 evidence/);
+  assert.match(markdown, /\] Red\*\*/);
+  assert.match(markdown, /focus on cost first/);
+  assert.match(markdown, /Facilitator[\s\S]*Role: `INFORMATION_EXPANDER`/);
+  assert.match(markdown, /Trigger: `AUTOMATIC_CHECKPOINT`/);
+  assert.match(markdown, /Origin: `LLM_GENERATED`/);
+  assert.match(markdown, /Audit request ID: `R1`/);
+  assert.match(markdown, /\] Blue\*\*/);
+  assert.match(markdown, /Formal Round 2 evidence/);
   // Default redact must strip the email from the expFeedback mention
   // when it ends up in the bundle (transcript does not embed
   // expFeedback today, so this is a defensive check).
   assert.ok(!markdown.includes("researcher@example.com"));
+  assert.ok(!markdown.includes("red@example.com"));
+  assert.match(markdown, /\[REDACTED_EMAIL\]/);
 });
 
 test("legacy games containing only two formal rounds retain their existing export identities", async () => {
@@ -534,8 +546,10 @@ test("legacy games containing only two formal rounds retain their existing expor
     { index: 1, nativeIndex: 1, taskIndex: 1 },
   ]);
   const { markdown } = await svc.renderTranscriptMd("GAME1", { redact: true });
-  assert.match(markdown, /Red.*focus on cost first/);
-  assert.match(markdown, /Blue.*Formal Round 2 evidence/);
+  assert.match(markdown, /\] Red\*\*/);
+  assert.match(markdown, /focus on cost first/);
+  assert.match(markdown, /\] Blue\*\*/);
+  assert.match(markdown, /Formal Round 2 evidence/);
 });
 
 test("renderTranscriptMd reconstructs vector chat_round_N from indexed attributes", async () => {
@@ -544,15 +558,17 @@ test("renderTranscriptMd reconstructs vector chat_round_N from indexed attribute
   // Replace the single-array chat_round_0 with the production vector
   // shape: one indexed attribute per appended message.
   game.attributes = game.attributes.filter((a) => a.key !== "chat_round_0");
-  attrIndexed(game, "chat_round_0", 0, { text: "I think we should focus on cost first.", sender: { id: "p1", name: "Red" }, ts: 1723705200000 });
-  attrIndexed(game, "chat_round_0", 1, { text: "Why cost?", sender: { id: "p2", name: "Pink" }, ts: 1723705210000 });
-  attrIndexed(game, "chat_round_0", 2, { text: "Consider the trade-offs across all options.", sender: { id: "ai", name: "Facilitator" }, ts: 1723705220000, role: "Expander" });
+  attrIndexed(game, "chat_round_0", 0, { messageId: "p1-r0-1", roundIndex: 0, text: "I think we should focus on cost first.", sender: { id: "p1", name: "Red" }, ts: 1723705200000 });
+  attrIndexed(game, "chat_round_0", 1, { messageId: "p2-r0-1", roundIndex: 0, text: "Why cost?", sender: { id: "p2", name: "Pink" }, ts: 1723705210000 });
+  attrIndexed(game, "chat_round_0", 2, { messageId: "ai-r0-1", roundIndex: 0, text: "Consider the trade-offs across all options.", sender: { id: "ai", name: "Facilitator" }, ts: 1723705220000 });
 
   const svc = service({ scopes: fx.scopes });
   const { markdown } = await svc.renderTranscriptMd("GAME1", { redact: true });
-  assert.match(markdown, /Red.*focus on cost first/);
-  assert.match(markdown, /Pink.*Why cost\?/);
-  assert.match(markdown, /Facilitator.*Expander/);
+  assert.match(markdown, /\] Red\*\*/);
+  assert.match(markdown, /focus on cost first/);
+  assert.match(markdown, /\] Pink\*\*/);
+  assert.match(markdown, /Why cost\?/);
+  assert.match(markdown, /Role: `INFORMATION_EXPANDER`/);
 });
 
 test("renderTranscriptMd reads the current version of a multi-version scalar", async () => {
@@ -585,6 +601,87 @@ test("redactGameBundle replaces PII in submitted forms and LLM audit", async () 
   // scrubbed (the fixture's payload contains no PII so this is just a
   // structural check).
   assert.deepEqual(redacted.llmLog[0].agentState, bundle.llmLog[0].agentState);
+  assert.match(redacted.game.chat.chat_round_0[0].text, /\[REDACTED_EMAIL\]/);
+  assert.ok(!redacted.game.chat.chat_round_0[0].text.includes("red@example.com"));
+});
+
+test("historical Facilitator roles are reconstructed only from exact successful same-round audit matches", () => {
+  const round = { id: "R0", taskIndex: 0 };
+  const message = {
+    messageId: "facilitator-R0-1",
+    roundIndex: 0,
+    speakerType: "facilitator",
+  };
+  const roles = [
+    "STATIC",
+    "GENERALIST",
+    "INFORMATION_EXPANDER",
+    "EVIDENCE_CHALLENGER",
+    "INFORMATION_SYNTHESISER",
+  ];
+  for (const role of roles) {
+    const provenance = resolveFacilitatorProvenance(message, round, [{
+      auditRequestId: `audit-${role}`,
+      publishedMessageId: message.messageId,
+      roundIndex: 0,
+      originatingRoundId: "R0",
+      outcome: "PUBLISHED",
+      messageAdded: true,
+      llmAction: { role },
+      promptMetadata: { generationRole: role },
+    }]);
+    assert.equal(provenance.role, role);
+    assert.equal(provenance.attribution, "HISTORICAL_AUDIT_MATCH");
+  }
+});
+
+test("historical participant-requested, fixed, fallback, missing, and ambiguous roles remain distinct", () => {
+  const round = { id: "R0", taskIndex: 0 };
+  const requestedMessage = { messageId: "facilitator-R0-request", roundIndex: 0 };
+  const requestedAudit = {
+    auditRequestId: "audit-request",
+    publishedMessageId: requestedMessage.messageId,
+    roundIndex: 0,
+    originatingRoundId: "R0",
+    outcome: "PUBLISHED",
+    messageAdded: true,
+    triggerType: "PARTICIPANT_REQUEST",
+    llmAction: { role: "GENERALIST" },
+  };
+  assert.deepEqual(resolveFacilitatorProvenance(requestedMessage, round, [requestedAudit]), {
+    role: "GENERALIST",
+    facilitatorOrigin: "LLM_GENERATED",
+    facilitatorTrigger: "PARTICIPANT_REQUEST",
+    auditRequestId: "audit-request",
+    attribution: "HISTORICAL_AUDIT_MATCH",
+  });
+
+  const fixed = resolveFacilitatorProvenance({ messageId: "facilitator-nudge-R0-1", roundIndex: 0 }, round, []);
+  assert.equal(fixed.role, "FIXED_MESSAGE");
+  assert.equal(fixed.facilitatorTrigger, "UNRECORDED", "historical opening versus silence must not be guessed");
+
+  const fallback = resolveFacilitatorProvenance({ messageId: "facilitator-fallback-R0-1", roundIndex: 0 }, round, []);
+  assert.equal(fallback.role, "NON_LLM_FALLBACK");
+  assert.equal(fallback.facilitatorTrigger, "PARTICIPANT_REQUEST");
+
+  assert.equal(resolveFacilitatorProvenance({ messageId: "legacy-ai", roundIndex: 0 }, round, []).role, "UNRECORDED");
+  assert.equal(resolveFacilitatorProvenance(requestedMessage, round, [requestedAudit, { ...requestedAudit, auditRequestId: "duplicate" }]).role, "UNRECORDED");
+  assert.equal(resolveFacilitatorProvenance(requestedMessage, round, [{ ...requestedAudit, roundIndex: 1 }]).role, "UNRECORDED");
+  assert.equal(resolveFacilitatorProvenance(requestedMessage, round, [{ ...requestedAudit, outcome: "SILENT", messageAdded: false }]).role, "UNRECORDED");
+});
+
+test("formal transcript preserves recorded chronology, round isolation, and Practice exclusion", async () => {
+  const fx = fixture();
+  const bundle = await service({ scopes: fx.scopes }).getGameBundle("GAME1");
+  const transcript = buildFormalTranscript(bundle);
+  assert.deepEqual(transcript.rounds.map((round) => [round.taskIndex, round.taskVersion, round.facilitation]), [
+    [0, "A", "adaptive"],
+    [1, "B", "static"],
+  ]);
+  assert.deepEqual(transcript.rounds[0].messages.map((message) => message.messageId), ["p1-r0-1", "p2-r0-1", "ai-r0-1"]);
+  assert.equal(transcript.rounds[0].messages[2].provenance.role, "INFORMATION_EXPANDER");
+  assert.ok(!JSON.stringify(transcript).includes("Practice-only answer"));
+  assert.ok(!JSON.stringify(transcript).includes("POISON NATIVE-INDEX TRANSCRIPT"));
 });
 
 test("ExportService writeGameBundle produces a valid ZIP and records the audit entry", async () => {

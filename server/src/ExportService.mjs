@@ -55,6 +55,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Writable } from "node:stream";
 
+import { FACILITATOR_ROLES } from "./ExperimentPolicies.mjs";
 import { redactDeep } from "./SupabasePersistence.mjs";
 
 /**
@@ -450,6 +451,17 @@ export class ExportService {
   }
 
   /**
+   * Return the same formal, role-annotated transcript used by the Markdown
+   * renderer in a structured form suitable for the authenticated HTML view.
+   */
+  async getTranscriptView(gameId, opts = {}) {
+    const redact = opts.redact !== false;
+    const bundle = await this.getGameBundle(gameId);
+    const redacted = redact ? redactGameBundle(bundle) : bundle;
+    return buildFormalTranscript(redacted);
+  }
+
+  /**
    * Build a ZIP bundle of questionnaire.csv + transcript.md + meta.json
    * for `gameId`. Streams the result to `output`.
    *
@@ -606,6 +618,13 @@ export class ExportService {
 export function redactGameBundle(bundle) {
   if (!bundle || typeof bundle !== "object") return bundle;
   const game = { ...bundle.game };
+  const chat = {};
+  for (const [key, messages] of Object.entries(bundle.game?.chat || {})) {
+    chat[key] = Array.isArray(messages)
+      ? messages.map((message) => redactTranscriptMessage(message))
+      : messages;
+  }
+  game.chat = chat;
   const players = (bundle.players || []).map((p) => ({
     ...p,
     finalQuestions: p.finalQuestions ? redactDeep(p.finalQuestions) : null,
@@ -775,7 +794,8 @@ export function renderQuestionnaireCsv(bundle) {
 }
 
 export function renderTranscriptMd(bundle) {
-  const { game, players, rounds, llmLog } = bundle;
+  const { game, players, llmLog } = bundle;
+  const transcript = buildFormalTranscript(bundle);
   const lines = [];
   lines.push(`# Game ${game.id}`);
   lines.push("");
@@ -788,17 +808,25 @@ export function renderTranscriptMd(bundle) {
   lines.push(`- Total fallbacks: ${game.totalFallbackMessages || 0}`);
   lines.push("");
 
-  for (const round of rounds) {
-    lines.push(`## Round ${round.taskIndex + 1} · Task ${round.taskIndex + 1} (version ${round.taskVersion || "?"}) · ${round.facilitation || "?"}`);
+  for (const round of transcript.rounds) {
+    lines.push(`## Formal Round ${round.taskIndex + 1} · Task ${round.taskVersion || "?"} · ${titleCase(round.facilitation || "unknown")}`);
     lines.push("");
-    const messages = collectRoundMessages(round, bundle, game);
-    if (messages.length === 0) {
+    if (round.messages.length === 0) {
       lines.push("_No messages recorded for this round._");
       lines.push("");
       continue;
     }
-    for (const m of messages) {
-      lines.push(m);
+    for (const message of round.messages) {
+      lines.push(`**[${message.timestampLabel}] ${message.senderName}**`);
+      lines.push("");
+      if (message.kind === "facilitator") {
+        lines.push(`- Role: \`${message.provenance.role}\``);
+        lines.push(`- Trigger: \`${message.provenance.facilitatorTrigger}\``);
+        lines.push(`- Origin: \`${message.provenance.facilitatorOrigin}\``);
+        lines.push(`- Audit request ID: ${message.provenance.auditRequestId ? `\`${message.provenance.auditRequestId}\`` : "_(not recorded)_"}`);
+        lines.push("");
+      }
+      lines.push(message.content || "_no message text_");
       lines.push("");
     }
   }
@@ -828,22 +856,228 @@ export function renderTranscriptMd(bundle) {
   return lines.join("\n");
 }
 
+export function buildFormalTranscript(bundle) {
+  const game = bundle?.game || {};
+  const rounds = (bundle?.rounds || [])
+    .filter(isFormalResearchRound)
+    .map((round) => ({
+      id: round.id,
+      taskIndex: round.taskIndex,
+      taskVersion: round.taskVersion,
+      facilitation: round.facilitation,
+      messages: collectRoundMessages(round, bundle, game),
+    }));
+  return {
+    game: {
+      id: game.id,
+      batchId: game.batchId ?? null,
+      treatment: game.treatment ?? null,
+      sequenceId: game.sequenceId ?? null,
+      startedAt: game.startedAt ?? null,
+      endedAt: game.endedAt ?? null,
+      status: game.status ?? "unknown",
+    },
+    players: (bundle?.players || []).map((player) => ({ id: player.id, name: player.name })),
+    rounds,
+  };
+}
+
 function collectRoundMessages(round, bundle, game) {
   const key = `chat_round_${round.taskIndex}`;
   const chat = game?.chat?.[key];
   if (!Array.isArray(chat)) return [];
-  return chat.map((m) => {
+  return chat.map((m, originalIndex) => {
     const senderId = m?.sender?.id || m?.senderId || m?.sender_id;
     const senderName = m?.sender?.name || m?.senderName || m?.sender_name || senderId || "unknown";
-    const ts = formatTs(m?.ts || m?.timestamp);
-    if (senderId === "ai" || senderName === "Facilitator") {
-      return [
-        `**[${ts}] Facilitator** (${m?.role || "auto"})`,
-        m?.text ? `> ${m.text.replace(/\n+/g, "\n> ")}` : "_no message text_",
-      ].join("\n");
-    }
-    return `**[${ts}] ${senderName}**: ${m?.text || ""}`;
+    const facilitator = isFacilitatorMessage(m, senderId, senderName);
+    return {
+      messageId: typeof m?.messageId === "string" ? m.messageId : null,
+      sequencePosition: Number.isSafeInteger(m?.sequencePosition) ? m.sequencePosition : null,
+      originalIndex,
+      timestamp: m?.timestamp ?? m?.ts ?? null,
+      timestampLabel: formatTs(m?.timestamp ?? m?.ts),
+      senderId: senderId || null,
+      senderName: facilitator ? "Facilitator" : senderName,
+      kind: facilitator ? "facilitator" : classifyNonFacilitatorMessage(m),
+      content: messageContent(m),
+      provenance: facilitator
+        ? resolveFacilitatorProvenance(m, round, bundle?.llmLog || [])
+        : null,
+    };
   });
+}
+
+export function resolveFacilitatorProvenance(message, round, llmLog = []) {
+  const explicitRole = normaliseFacilitatorRole(message?.role);
+  const exactAudits = matchingPublishedAudits(message, round, llmLog);
+
+  if (explicitRole && explicitRole !== FACILITATOR_ROLES.UNRECORDED) {
+    const matchingAudit = exactAudits.length === 1 ? exactAudits[0] : null;
+    return {
+      role: explicitRole,
+      facilitatorOrigin: nonEmptyString(message?.facilitatorOrigin)
+        || defaultOriginForRole(explicitRole),
+      facilitatorTrigger: nonEmptyString(message?.facilitatorTrigger)
+        || (matchingAudit ? triggerFromAudit(matchingAudit) : "UNRECORDED"),
+      auditRequestId: nonEmptyString(message?.auditRequestId)
+        || nonEmptyString(matchingAudit?.auditRequestId)
+        || null,
+      attribution: "PERSISTED_MESSAGE",
+    };
+  }
+
+  if (exactAudits.length > 1) return unrecordedProvenance();
+  if (exactAudits.length === 1) {
+    const audit = exactAudits[0];
+    const fallback = audit.outcome === "PUBLISHED_REQUEST_FALLBACK"
+      || audit.fallbackUsed === "PARTICIPANT_REQUEST_SAFE_CLARIFICATION";
+    const generatedRole = fallback ? FACILITATOR_ROLES.NON_LLM_FALLBACK : roleFromAudit(audit);
+    if (!generatedRole) return unrecordedProvenance(audit.auditRequestId);
+    return {
+      role: generatedRole,
+      facilitatorOrigin: defaultOriginForRole(generatedRole),
+      facilitatorTrigger: triggerFromAudit(audit),
+      auditRequestId: nonEmptyString(audit.auditRequestId) || null,
+      attribution: "HISTORICAL_AUDIT_MATCH",
+    };
+  }
+
+  const messageId = nonEmptyString(message?.messageId) || "";
+  if (messageId.startsWith("facilitator-nudge-") || message?.speakerType === "facilitator_fixed") {
+    return {
+      role: FACILITATOR_ROLES.FIXED_MESSAGE,
+      facilitatorOrigin: "DETERMINISTIC_FIXED",
+      facilitatorTrigger: nonEmptyString(message?.facilitatorTrigger) || "UNRECORDED",
+      auditRequestId: null,
+      attribution: "DETERMINISTIC_MESSAGE_ID",
+    };
+  }
+  if (messageId.startsWith("facilitator-fallback-")) {
+    return {
+      role: FACILITATOR_ROLES.NON_LLM_FALLBACK,
+      facilitatorOrigin: "NON_LLM_FALLBACK",
+      facilitatorTrigger: "PARTICIPANT_REQUEST",
+      auditRequestId: nonEmptyString(message?.auditRequestId) || null,
+      attribution: "DETERMINISTIC_MESSAGE_ID",
+    };
+  }
+  return unrecordedProvenance(nonEmptyString(message?.auditRequestId));
+}
+
+function matchingPublishedAudits(message, round, llmLog) {
+  const messageId = nonEmptyString(message?.messageId);
+  if (!messageId || !Number.isInteger(round?.taskIndex)) return [];
+  const messageRound = numberOrNull(message?.roundIndex);
+  if (messageRound === null || messageRound !== round.taskIndex) return [];
+  return (Array.isArray(llmLog) ? llmLog : []).filter((entry) => {
+    if (entry?.publishedMessageId !== messageId || entry?.messageAdded !== true) return false;
+    if (entry.outcome !== "PUBLISHED" && entry.outcome !== "PUBLISHED_REQUEST_FALLBACK") return false;
+    if (numberOrNull(entry.roundIndex) !== round.taskIndex) return false;
+    if (entry.originatingRoundId != null && entry.originatingRoundId !== round.id) return false;
+    return true;
+  });
+}
+
+function roleFromAudit(audit) {
+  const actionRole = normaliseGeneratedRole(audit?.llmAction?.role);
+  const promptRole = normaliseGeneratedRole(audit?.promptMetadata?.generationRole);
+  if (actionRole && promptRole && actionRole !== promptRole) return null;
+  return actionRole || promptRole || null;
+}
+
+function normaliseGeneratedRole(role) {
+  const normalised = normaliseFacilitatorRole(role);
+  return GENERATED_FACILITATOR_ROLES.has(normalised) ? normalised : null;
+}
+
+function normaliseFacilitatorRole(role) {
+  if (typeof role !== "string" || !role.trim()) return null;
+  const key = role.trim().toUpperCase().replace(/[ -]+/g, "_");
+  return ROLE_ALIASES.get(key) || null;
+}
+
+const ROLE_ALIASES = new Map([
+  ["STATIC", FACILITATOR_ROLES.STATIC],
+  ["GENERALIST", FACILITATOR_ROLES.GENERALIST],
+  ["REQUESTED_GENERALIST", FACILITATOR_ROLES.GENERALIST],
+  ["EXPANDER", FACILITATOR_ROLES.INFORMATION_EXPANDER],
+  ["INFORMATION_EXPANDER", FACILITATOR_ROLES.INFORMATION_EXPANDER],
+  ["CHALLENGER", FACILITATOR_ROLES.EVIDENCE_CHALLENGER],
+  ["EVIDENCE_CHALLENGER", FACILITATOR_ROLES.EVIDENCE_CHALLENGER],
+  ["SYNTHESISER", FACILITATOR_ROLES.INFORMATION_SYNTHESISER],
+  ["SYNTHESIZER", FACILITATOR_ROLES.INFORMATION_SYNTHESISER],
+  ["INFORMATION_SYNTHESISER", FACILITATOR_ROLES.INFORMATION_SYNTHESISER],
+  ["INFORMATION_SYNTHESIZER", FACILITATOR_ROLES.INFORMATION_SYNTHESISER],
+  ["FIXED_MESSAGE", FACILITATOR_ROLES.FIXED_MESSAGE],
+  ["NON_LLM_FALLBACK", FACILITATOR_ROLES.NON_LLM_FALLBACK],
+  ["UNRECORDED", FACILITATOR_ROLES.UNRECORDED],
+]);
+
+const GENERATED_FACILITATOR_ROLES = new Set([
+  FACILITATOR_ROLES.STATIC,
+  FACILITATOR_ROLES.GENERALIST,
+  FACILITATOR_ROLES.INFORMATION_EXPANDER,
+  FACILITATOR_ROLES.EVIDENCE_CHALLENGER,
+  FACILITATOR_ROLES.INFORMATION_SYNTHESISER,
+]);
+
+function triggerFromAudit(audit) {
+  return audit?.triggerType === "PARTICIPANT_REQUEST"
+    || audit?.participantRequested === true
+    || audit?.routingDecision === "REQUESTED_GENERALIST"
+    ? "PARTICIPANT_REQUEST"
+    : "AUTOMATIC_CHECKPOINT";
+}
+
+function defaultOriginForRole(role) {
+  if (role === FACILITATOR_ROLES.FIXED_MESSAGE) return "DETERMINISTIC_FIXED";
+  if (role === FACILITATOR_ROLES.NON_LLM_FALLBACK) return "NON_LLM_FALLBACK";
+  if (GENERATED_FACILITATOR_ROLES.has(role)) return "LLM_GENERATED";
+  return "UNRECORDED";
+}
+
+function unrecordedProvenance(auditRequestId = null) {
+  return {
+    role: FACILITATOR_ROLES.UNRECORDED,
+    facilitatorOrigin: "UNRECORDED",
+    facilitatorTrigger: "UNRECORDED",
+    auditRequestId: nonEmptyString(auditRequestId),
+    attribution: "UNRECORDED",
+  };
+}
+
+function isFacilitatorMessage(message, senderId, senderName) {
+  return ["facilitator", "facilitator_fixed", "ice_breaking_facilitator"].includes(message?.speakerType)
+    || senderId === "ai"
+    || senderName === "Facilitator";
+}
+
+function classifyNonFacilitatorMessage(message) {
+  if (message?.speakerType === "human" || message?.messageType === "human") return "participant";
+  if (message?.speakerType === "timer_reminder" || message?.messageType === "timer_reminder") return "timer";
+  return "system";
+}
+
+function messageContent(message) {
+  const value = message?.content ?? message?.text ?? "";
+  return typeof value === "string" ? value : String(value ?? "");
+}
+
+function redactTranscriptMessage(message) {
+  if (!message || typeof message !== "object") return message;
+  const redacted = { ...message };
+  if (typeof message.content === "string") redacted.content = redactDeep(message.content);
+  if (typeof message.text === "string") redacted.text = redactDeep(message.text);
+  return redacted;
+}
+
+function nonEmptyString(value) {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function titleCase(value) {
+  const text = String(value);
+  return text ? text[0].toUpperCase() + text.slice(1) : text;
 }
 
 function scopeAttributes(scope) {

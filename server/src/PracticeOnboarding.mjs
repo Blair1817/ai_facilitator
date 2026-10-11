@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { appendToAttribute } from "./AppendOnlyAttribute.mjs";
+import { FACILITATOR_ROLES } from "./ExperimentPolicies.mjs";
 import { PRACTICE, PRACTICE_CHAT, PRACTICE_STAGES, PRACTICE_PERSONAL_PAGES, practiceReadiness } from "../../shared/practice.mjs";
 
 // Research metadata only: never stored on a participant-visible scope or sent to an LLM.
@@ -89,6 +90,9 @@ export function handlePracticeStageStart(stage, appendMessage, Empirica) {
       roundIndex: round.get("index"), stage: "PracticeWelcome",
       messageType: "onboarding", speakerType: "facilitator_fixed", timestamp: Date.now(),
       phase: "practice", source: "facilitator_fixed", exclude_from_primary_analysis: true,
+      role: FACILITATOR_ROLES.FIXED_MESSAGE,
+      facilitatorOrigin: "DETERMINISTIC_FIXED",
+      facilitatorTrigger: "PRACTICE_ICEBREAKER_OPENING",
       content: `Welcome, ${colours}! You are now in the same online group. While everyone gets ready, say hello and tell the others something about yourself, for example, what you study or a place you would like to visit.`,
       sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
     });
@@ -110,6 +114,9 @@ export function handlePracticeStageStart(stage, appendMessage, Empirica) {
         roundIndex: round.get("index"), stage: "PracticeDiscussion",
         messageType: "onboarding", speakerType: "facilitator_fixed", timestamp: Date.now(),
         phase: "practice", source: "facilitator_fixed", exclude_from_primary_analysis: true,
+        role: FACILITATOR_ROLES.FIXED_MESSAGE,
+        facilitatorOrigin: "DETERMINISTIC_FIXED",
+        facilitatorTrigger: "PRACTICE_DISCUSSION_OPENING",
         content: "Welcome! Start by saying hello, introducing your colour, and sharing which room currently looks best to you and why.",
         sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
       });

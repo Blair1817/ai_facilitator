@@ -43,15 +43,35 @@ function fixture() {
     attr(s, "startedAt", "2026-08-15T10:05:00+08:00");
     attr(s, "endedAt", "2026-08-15T10:45:00+08:00");
     attr(s, "totalInterventions", 2);
-    attr(s, "llmLogIndex", []);
+    attr(s, "llmLogIndex", ["AUDIT1"]);
+    attr(s, "llmLog.AUDIT1", {
+      auditRequestId: "AUDIT1",
+      publishedMessageId: "ai-r0-1",
+      roundIndex: 0,
+      originatingRoundId: "R0",
+      outcome: "PUBLISHED",
+      messageAdded: true,
+      llmAction: { role: "EVIDENCE_CHALLENGER" },
+      promptMetadata: { generationRole: "EVIDENCE_CHALLENGER" },
+    });
     attr(s, "chat_round_0", [
-      { text: "I prefer option A.", sender: { id: "p1", name: "Red" }, ts: 1723705200000 },
+      { messageId: "p1-r0-1", roundIndex: 0, sequencePosition: 0, speakerType: "human", text: "I prefer option A. Email chat@example.com. <script>alert('x')</script>", sender: { id: "p1", name: "Red" }, ts: 1723705200000 },
+      { messageId: "ai-r0-1", roundIndex: 0, sequencePosition: 1, speakerType: "facilitator", text: "What evidence supports that preference?", sender: { id: "ai", name: "Facilitator" }, ts: 1723705210000 },
+      { messageId: "timer-r0-1", roundIndex: 0, sequencePosition: 2, speakerType: "timer_reminder", text: "One minute remains.", sender: { id: "system-timer", name: "Timer" }, ts: 1723705220000 },
+    ]);
+    attr(s, "chat_round_1", [
+      { messageId: "system-r1-1", roundIndex: 1, sequencePosition: 0, speakerType: "system", text: "Round notice.", sender: { id: "system", name: "System" }, ts: 1723705300000 },
+      { messageId: "facilitator-nudge-R1-1", roundIndex: 1, sequencePosition: 1, speakerType: "facilitator", text: "Begin by sharing your initial views.", sender: { id: "ai", name: "Facilitator" }, ts: 1723705310000 },
+    ]);
+    attr(s, "practice_icebreaker_chat", [
+      { messageId: "practice-only", text: "PRACTICE SECRET", sender: { id: "p1", name: "Red" }, ts: 1723705100000 },
     ]);
   });
   const player = makeScope("p1", "player", (s) => {
     attr(s, "gameID", T("GAME1"));
     attr(s, "name", "Red");
     attr(s, "playerRoundID-R0", T("PR-R0-p1"));
+    attr(s, "playerRoundID-R1", T("PR-R1-p1"));
     attr(s, "introDone", true);
     attr(s, "ended", "debriefing");
     attr(s, "finalQuestions", {
@@ -71,6 +91,14 @@ function fixture() {
     attr(s, "facilitation", "adaptive");
     attr(s, "finalDecisionOutcome", "consensus_choice");
   });
+  const round1 = makeScope("R1", "round", (s) => {
+    attr(s, "gameID", T("GAME1"));
+    attr(s, "index", 1);
+    attr(s, "taskIndex", 1);
+    attr(s, "taskVersion", "B");
+    attr(s, "facilitation", "static");
+    attr(s, "finalDecisionOutcome", "declared_fail");
+  });
   const playerRound = makeScope("PR-R0-p1", "playerRound", (s) => {
     attr(s, "gameID", T("GAME1"));
     attr(s, "roundID", T("R0"));
@@ -82,7 +110,14 @@ function fixture() {
     attr(s, "finalDecision", { choice: "A", confidence: 80, submittedAt: 2, finalDecisionOutcome: "consensus_choice" });
     attr(s, "reviewQuizPassed", true);
   });
-  return [batch, game, player, round, playerRound];
+  const playerRound1 = makeScope("PR-R1-p1", "playerRound", (s) => {
+    attr(s, "gameID", T("GAME1"));
+    attr(s, "roundID", T("R1"));
+    attr(s, "playerID", T("p1"));
+    attr(s, "initialChoice", "B");
+    attr(s, "initialConfidence", 60);
+  });
+  return [batch, game, player, round, round1, playerRound, playerRound1];
 }
 
 function makeMockAdmin(scopes) {
@@ -174,6 +209,7 @@ test("GET / renders a list page with batches, games, and download links", async 
     assert.match(body, /BATCH1/);
     assert.match(body, /GAME1/);
     assert.match(body, /\/games\/GAME1\/questionnaire\.csv/);
+    assert.match(body, /\/games\/GAME1\/transcript">View transcript/);
     assert.match(body, /\/games\/GAME1\/transcript\.md/);
     assert.match(body, /\/games\/GAME1\/bundle\.zip/);
     assert.match(body, /redact/);
@@ -273,7 +309,48 @@ test("GET /games/:id/transcript.md streams Markdown with chat", async () => {
     assert.equal(status, 200);
     assert.match(headers["content-type"], /text\/markdown/);
     assert.match(body, /# Game GAME1/);
-    assert.match(body, /Red.*I prefer option A/);
+    assert.match(body, /\] Red\*\*/);
+    assert.match(body, /I prefer option A/);
+    assert.match(body, /Role: `EVIDENCE_CHALLENGER`/);
+    assert.match(body, /Role: `FIXED_MESSAGE`/);
+    assert.doesNotMatch(body, /chat@example\.com|PRACTICE SECRET/);
+  } finally {
+    await srv.close();
+  }
+});
+
+test("GET /games/:id/transcript renders an authenticated escaped and audited formal transcript", async () => {
+  const srv = await makeRunningServer();
+  try {
+    const unauthenticated = await fetchText(srv.base + "/games/GAME1/transcript", {}, { authenticate: false });
+    assert.equal(unauthenticated.status, 401);
+    assert.equal((await fetchText(srv.base + "/games/GAME1/transcript?raw=1")).status, 403);
+
+    const { status, headers, body } = await fetchText(srv.base + "/games/GAME1/transcript");
+    assert.equal(status, 200);
+    assert.match(headers["content-type"], /text\/html/);
+    assert.match(body, /Formal Round 1/);
+    assert.match(body, /Task A · Adaptive/);
+    assert.match(body, /Formal Round 2/);
+    assert.match(body, /Task B · Static/);
+    assert.match(body, /EVIDENCE_CHALLENGER/);
+    assert.match(body, /FIXED_MESSAGE/);
+    assert.match(body, /Timer/);
+    assert.match(body, /System/);
+    assert.match(body, /\[REDACTED_EMAIL\]/);
+    assert.doesNotMatch(body, /chat@example\.com|PRACTICE SECRET/);
+    assert.doesNotMatch(body, /<script>alert/);
+    assert.match(body, /&lt;script&gt;alert\(&#39;x&#39;\)&lt;\/script&gt;/);
+    assert.match(body, /href="\/games\/GAME1\/transcript\.md"/);
+    assert.match(body, /href="\/games\/GAME1\/bundle\.zip"/);
+
+    const records = fs.readFileSync(srv.auditFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const previewAudit = records.find((record) => record.endpoint === "transcript.html");
+    assert.ok(previewAudit);
+    assert.equal(previewAudit.requester, AUTH_USERNAME);
+    assert.equal(previewAudit.redact, true);
+    assert.equal(previewAudit.format, "html");
+    assert.equal(previewAudit.sizeBytes, Buffer.byteLength(body, "utf8"));
   } finally {
     await srv.close();
   }
@@ -434,6 +511,7 @@ test("configured /exports base path contains all HTML navigation and download ro
     assert.match(body, /action="\/exports\/"/);
     assert.match(body, /href="\/exports\/" class="reset"/);
     assert.match(body, /\/exports\/games\/GAME1\/questionnaire\.csv/);
+    assert.match(body, /\/exports\/games\/GAME1\/transcript/);
     assert.match(body, /\/exports\/games\/GAME1\/transcript\.md/);
     assert.match(body, /\/exports\/games\/GAME1\/bundle\.zip/);
     assert.doesNotMatch(body, /(?:href|action)="\/(?:games|batches)(?:\/|\")/);
@@ -441,6 +519,7 @@ test("configured /exports base path contains all HTML navigation and download ro
     assert.equal((await fetchText(srv.base + "/exports/batches")).status, 200);
     assert.equal((await fetchText(srv.base + "/exports/batches/BATCH1/games")).status, 200);
     assert.equal((await fetchText(srv.base + "/exports/games/GAME1")).status, 200);
+    assert.equal((await fetchText(srv.base + "/exports/games/GAME1/transcript")).status, 200);
     assert.equal((await fetchText(srv.base + "/exports/games/GAME1/questionnaire.csv")).status, 200);
     assert.equal((await fetchText(srv.base + "/exports/games/GAME1/transcript.md")).status, 200);
     assert.equal((await fetchText(srv.base + "/exports/games/GAME1/bundle.zip")).status, 200);

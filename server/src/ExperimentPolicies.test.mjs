@@ -4,6 +4,7 @@ import {
   canConfirmBreak,
   allFinalDecisionConfirmationsMatch,
   classifyFinalDecision,
+  FACILITATOR_ROLES,
   MESSAGE_TYPES,
   NO_GROUP_FINAL_DECISION,
   allocateSequencePosition,
@@ -203,4 +204,54 @@ test("R13/D6: canonical human/facilitator/timer/system/Practice messages satisfy
     assert.equal(value.text, value.content);
     assert.equal(normalizeMessageContent(value), value.content);
   }
+});
+
+test("canonical Facilitator messages preserve generated role provenance and request identity", () => {
+  const generatedRoles = [
+    FACILITATOR_ROLES.STATIC,
+    FACILITATOR_ROLES.GENERALIST,
+    FACILITATOR_ROLES.INFORMATION_EXPANDER,
+    FACILITATOR_ROLES.EVIDENCE_CHALLENGER,
+    FACILITATOR_ROLES.INFORMATION_SYNTHESISER,
+  ];
+  for (const role of generatedRoles) {
+    const message = messageFixture({
+      messageId: `facilitator-${role}`,
+      speakerId: "ai",
+      messageType: MESSAGE_TYPES.FACILITATOR,
+      speakerType: MESSAGE_TYPES.FACILITATOR,
+      role,
+      facilitatorOrigin: "LLM_GENERATED",
+      facilitatorTrigger: "AUTOMATIC_CHECKPOINT",
+      auditRequestId: `audit-${role}`,
+    });
+    assert.equal(message.role, role);
+    assert.equal(message.facilitatorOrigin, "LLM_GENERATED");
+    assert.equal(message.facilitatorTrigger, "AUTOMATIC_CHECKPOINT");
+    assert.equal(message.auditRequestId, `audit-${role}`);
+  }
+});
+
+test("canonical Facilitator messages preserve fixed and non-LLM fallback provenance", () => {
+  const fixed = messageFixture({
+    messageId: "facilitator-nudge-r1-1",
+    speakerId: "ai",
+    role: FACILITATOR_ROLES.FIXED_MESSAGE,
+    facilitatorOrigin: "DETERMINISTIC_FIXED",
+    facilitatorTrigger: "DISCUSSION_OPENING",
+  });
+  assert.equal(fixed.role, "FIXED_MESSAGE");
+  assert.equal(fixed.facilitatorTrigger, "DISCUSSION_OPENING");
+  assert.equal(Object.hasOwn(fixed, "auditRequestId"), false);
+
+  const fallback = messageFixture({
+    messageId: "facilitator-fallback-r1-2",
+    speakerId: "ai",
+    role: FACILITATOR_ROLES.NON_LLM_FALLBACK,
+    facilitatorOrigin: "NON_LLM_FALLBACK",
+    facilitatorTrigger: "PARTICIPANT_REQUEST",
+    auditRequestId: "audit-fallback",
+  });
+  assert.equal(fallback.role, "NON_LLM_FALLBACK");
+  assert.equal(fallback.auditRequestId, "audit-fallback");
 });
