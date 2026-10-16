@@ -619,3 +619,24 @@ test("runtime configuration defaults securely and preserves Tajriba overrides", 
   assert.equal(overridden.allowRaw, true);
   assert.equal(overridden.tajribaConfig, undefined);
 });
+
+test("test data is hidden by default, included explicitly, and labelled in direct exports", async () => {
+  const scopes = fixture();
+  attr(scopes.find(s => s.id === "GAME1"), "testControlsEnabled", true);
+  const srv = await makeRunningServer({ scopes });
+  try {
+    const hidden = await fetchText(`${srv.base}/`);
+    assert.doesNotMatch(hidden.body, /games\/GAME1\/transcript/);
+    const included = await fetchText(`${srv.base}/?includeTest=true`);
+    assert.match(included.body, /games\/GAME1\/transcript/);
+    assert.match(included.body, /Include test data/);
+    assert.match(included.body, /· TEST/);
+    const transcript = await fetchText(`${srv.base}/games/GAME1/transcript`);
+    assert.match(transcript.body, /TEST SESSION/);
+    const md = await fetchText(`${srv.base}/games/GAME1/transcript.md`);
+    assert.match(md.body, /TEST SESSION/);
+    const csv = await fetchText(`${srv.base}/games/GAME1/questionnaire.csv`);
+    assert.match(csv.body.split('\n')[0], /test_mode/);
+    assert.ok(csv.body.split('\n').slice(1).filter(Boolean).every(line => line.endsWith('true')));
+  } finally { await srv.close(); }
+});

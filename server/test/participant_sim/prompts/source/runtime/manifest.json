@@ -1,0 +1,217 @@
+{
+  "version": "v3.2-runtime.1",
+  "createdDate": "2026-10-14",
+  "status": "integrated_offline_verified",
+  "compositionSeparator": "\n\n---\n\n",
+  "routes": {
+    "static": {
+      "generatorFiles": [
+        "control_50/base.md",
+        "control_50/static.md"
+      ],
+      "validatorFile": "control_50/validator.md",
+      "generationSchema": "control_50/generation.schema.json",
+      "validationSchema": "control_50/validation.schema.json",
+      "planRequired": false,
+      "generatorSha256": "1113e9f40ba2c95a5667195787aa17d6c0d23c4848e46754b8c1f2516b570ac9",
+      "validatorSha256": "fcafe3fa8a90c5dca041074798983121ec657fe61a3f0ee1b562477395a38ff4",
+      "maxWords": 50
+    },
+    "generalist": {
+      "generatorFiles": [
+        "control_50/base.md",
+        "control_50/generalist.md"
+      ],
+      "validatorFile": "control_50/validator.md",
+      "generationSchema": "control_50/generation.schema.json",
+      "validationSchema": "control_50/validation.schema.json",
+      "planRequired": false,
+      "generatorSha256": "07335dd44701f3e050228679e632c7c92b75a4cff757638b08e34fc21d4a4a22",
+      "validatorSha256": "fcafe3fa8a90c5dca041074798983121ec657fe61a3f0ee1b562477395a38ff4",
+      "maxWords": 50
+    },
+    "requested_generalist": {
+      "generatorFiles": [
+        "frozen_control/base.md",
+        "frozen_control/requested_generalist.md"
+      ],
+      "validatorFile": "frozen_control/validator.md",
+      "generationSchema": "frozen_control/generation.schema.json",
+      "validationSchema": "frozen_control/validation.schema.json",
+      "planRequired": false,
+      "generatorSha256": "314f6c10f61c3d7a10b2c018f11da5371d952eae467ac7384eaa7c468b5a4f48",
+      "validatorSha256": "81079392353f534de4538e028684246eb4213d38749539b84f5afe2ef81f2246"
+    },
+    "expander": {
+      "generatorFiles": [
+        "specialist/specialist_base.md",
+        "specialist/specialist_common.md",
+        "specialist/expander.md"
+      ],
+      "validatorFile": "specialist/validator.md",
+      "generationSchema": "specialist/generation.schema.json",
+      "validationSchema": "specialist/validation.schema.json",
+      "preflightSchema": "specialist/plan_preflight.schema.json",
+      "planRequired": true,
+      "generatorSha256": "a2dfb433136740507b35520d81e9fa6d21e073ae9beb8fc09b07b5d561245c36",
+      "validatorSha256": "7be101103dcf32b58a13e9cd5498c66d97896601bbce9a4af620cc810e257176",
+      "maxWords": 50
+    },
+    "challenger": {
+      "generatorFiles": [
+        "specialist/specialist_base.md",
+        "specialist/specialist_common.md",
+        "specialist/challenger.md"
+      ],
+      "validatorFile": "specialist/validator.md",
+      "generationSchema": "specialist/generation.schema.json",
+      "validationSchema": "specialist/validation.schema.json",
+      "preflightSchema": "specialist/plan_preflight.schema.json",
+      "planRequired": true,
+      "generatorSha256": "df4c48c58f3417cf5062a25eb51698f7c240db4565c157ae3c2deab55216d932",
+      "validatorSha256": "7be101103dcf32b58a13e9cd5498c66d97896601bbce9a4af620cc810e257176",
+      "maxWords": 50
+    },
+    "synthesiser": {
+      "generatorFiles": [
+        "specialist/specialist_base.md",
+        "specialist/specialist_common.md",
+        "specialist/synthesiser.md"
+      ],
+      "validatorFile": "specialist/validator.md",
+      "generationSchema": "specialist/generation.schema.json",
+      "validationSchema": "specialist/validation.schema.json",
+      "preflightSchema": "specialist/plan_preflight.schema.json",
+      "planRequired": true,
+      "generatorSha256": "757a26c3679bf0586716d9fbc1d10b2a04058e799eebb08eb0e6d2a89616cfa5",
+      "validatorSha256": "7be101103dcf32b58a13e9cd5498c66d97896601bbce9a4af620cc810e257176",
+      "maxWords": 50
+    }
+  },
+  "assessor": {
+    "promptFile": "specialist/assessor.md",
+    "schemaFile": "specialist/assessor.schema.json",
+    "status": "target_format_requires_checker_adapter"
+  },
+  "frozenControlScope": "Historical exact baseline and requested-Generalist route; Static/automatic Generalist use control_50 length-adapted policy.",
+  "files": {
+    "specialist/assessor.md": {
+      "sha256": "1c37d19806e9a9aa0e8bc6ff6b822ee35e45da4b2e2cafb5c80b563631e3ed17",
+      "bytes": 8869
+    },
+    "specialist/assessor.schema.json": {
+      "sha256": "1801bba0004ca29ed0fc58cdcf49958c3f1a48278dcd4a28c64103baf70865dc",
+      "bytes": 9654
+    },
+    "specialist/challenger.md": {
+      "sha256": "1e913363a6921cfca8a6c5dd3a4e617b089e20ff7e56e0ca8d303a4ed9460f63",
+      "bytes": 4399
+    },
+    "specialist/expander.md": {
+      "sha256": "f68ea4a03f6e477ed2f0351235b2152da068a78eee4a7e34d8b9afb6e47055b0",
+      "bytes": 3453
+    },
+    "specialist/generation.schema.json": {
+      "sha256": "ce838b21d3b41df331358796120ac77c223ec0d10999c3d4c9cbc26f58430a0c",
+      "bytes": 2704
+    },
+    "specialist/plan_preflight.schema.json": {
+      "sha256": "b97c8440fc83a2575b5854f2b40b68f13feb2c87a3f1067c00c8084d9218ccd6",
+      "bytes": 4445
+    },
+    "specialist/specialist_base.md": {
+      "sha256": "16066cf3148fff061e281d768d1553621c9318b07067f5094af4551494724d1b",
+      "bytes": 7868
+    },
+    "specialist/specialist_common.md": {
+      "sha256": "a6e61b9c0c0359ac44be7d0f1ab62769af701f6a11f5eb886cfad2ae7ed2eaee",
+      "bytes": 4389
+    },
+    "specialist/synthesiser.md": {
+      "sha256": "30994f08eed69e3588698f146aa0b0aa17b9f94f35c36b236d01c05bee21402b",
+      "bytes": 4777
+    },
+    "specialist/validation.schema.json": {
+      "sha256": "be606ed0b1ae46987a1305c7ec128df3b1e111fedb0cb8e68eac86359f67285b",
+      "bytes": 3110
+    },
+    "specialist/validator.md": {
+      "sha256": "7be101103dcf32b58a13e9cd5498c66d97896601bbce9a4af620cc810e257176",
+      "bytes": 9935
+    },
+    "control_50/base.md": {
+      "sha256": "91ffc1b86c43048bfc4b4fae1b2f3a0e9e8c5ed5e2ab02f96b3df7febd6158fc",
+      "bytes": 11352
+    },
+    "control_50/generalist.md": {
+      "sha256": "3b509df2d0652c1a773258edde5fb9e8bdbaea3d1fe27e4443bfe0c5b14cd169",
+      "bytes": 5638
+    },
+    "control_50/generation.schema.json": {
+      "sha256": "27ad27af7ed2dbee18dc264f555bbe22bf3fc79a02b473464ede595e094ade6c",
+      "bytes": 3086
+    },
+    "control_50/static.md": {
+      "sha256": "3e66241467dee9a6a801efb10d2477a4064f69beed9445ef2355ece20433ceda",
+      "bytes": 2816
+    },
+    "control_50/validation.schema.json": {
+      "sha256": "291d1e8c2351b13486720212bcff141060c4683504c75b14dc2759b1db3a99a1",
+      "bytes": 5444
+    },
+    "control_50/validator.md": {
+      "sha256": "fcafe3fa8a90c5dca041074798983121ec657fe61a3f0ee1b562477395a38ff4",
+      "bytes": 11657
+    },
+    "frozen_control/base.md": {
+      "sha256": "075deb1c9d1ddfc4d773e4b686079abc7e1a023957156fe4d4bd069e6b2c383e",
+      "bytes": 10629
+    },
+    "frozen_control/generalist.md": {
+      "sha256": "d72657118c4bcc7796563cb5db1f568a1eba27a8f280b3e231c28cb167706197",
+      "bytes": 5440
+    },
+    "frozen_control/generation.schema.json": {
+      "sha256": "4f82fd4ae17a21497003fad3df7d91f74bf6d76bbbbc12320ee11502b6c8bd0d",
+      "bytes": 2810
+    },
+    "frozen_control/requested_generalist.md": {
+      "sha256": "fbb6eba88b1311814e075a3b4519fe0f3d5118ab1d57408e6a9186e86e446df5",
+      "bytes": 3395
+    },
+    "frozen_control/static.md": {
+      "sha256": "33f6f3fb08f6903cf4fc0d79430facc735ef123719429aecc33549858a6088ff",
+      "bytes": 2488
+    },
+    "frozen_control/validation.schema.json": {
+      "sha256": "d8dc2b8cc2d4cc3266e0a158435a8f5d18df69724d20cb3b09bc5c9e8dbae5ca",
+      "bytes": 5534
+    },
+    "frozen_control/validator.md": {
+      "sha256": "81079392353f534de4538e028684246eb4213d38749539b84f5afe2ef81f2246",
+      "bytes": 11349
+    }
+  },
+  "automaticLengthPolicy": {
+    "maxWords": 50,
+    "scope": [
+      "static",
+      "generalist",
+      "expander",
+      "challenger",
+      "synthesiser"
+    ],
+    "requestedGeneralist": "unchanged independent policy",
+    "noMinimum": true,
+    "boundary": "50 accepted, 51 rejected",
+    "runtimeConnected": false
+  },
+  "runtimeExtensions": [
+    "Quote-verified cognitiveTargets observations map to ten fixed operations without a new LLM stage.",
+    "Legacy stored factor shape accepted for replay; new calls request per-message quotes.",
+    "Challenger need score accepts single-claim/concern/link needs; original thresholds and priority preserved.",
+    "Challenger hard gate accepts any verified justification/concern/link need; numeric thresholds retained.",
+    "No diversity-only role switch; fixed need/priority determines role.",
+    "Only passed, matching preflight can enter Specialist validation; forged check flags rejected."
+  ]
+}

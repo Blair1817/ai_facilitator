@@ -131,7 +131,7 @@ test("InitialDecision page allows 300 seconds, shows a countdown, and advances w
   // stage submit remains only as a defensive fallback.
   assert.match(initialDecisionSource, /onNext\(\{ initialDecision: \{ choice, confidence, clientSubmittedAt \} \}\)/);
   assert.match(personalFlowClient, /nextPersonalPageRequestAttempt\(pendingRef\.current/);
-  assert.match(personalFlowClient, /player\.set\("personalPageRequest", attempt\.transmission\)/);
+  assert.match(personalFlowClient, /player\.set\("personalPageRequest", \{ \.\.\.attempt\.transmission, version: player\.round\.get\("testProgressVersion"\)/);
   assert.match(personalFlowClient, /sessionStorage\?\.setItem\(pendingStorageKey, JSON\.stringify\(request\)\)/);
   assert.doesNotMatch(personalFlowClient, /setPending\(\(current\)/);
   assert.match(initialDecisionSource, /player\.stage\.set\("submit", true\)/);

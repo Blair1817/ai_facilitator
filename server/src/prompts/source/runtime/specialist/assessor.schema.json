@@ -1,0 +1,338 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Semantic Assessor Output Schema v3.2",
+  "description": "Eight existing factors with exact per-message evidence quotations; semantic interpretations require assessment and source checking.",
+  "type": "object",
+  "properties": {
+    "breadth_deficiency": {
+      "$ref": "#/definitions/factor"
+    },
+    "group_preference": {
+      "$ref": "#/definitions/factor"
+    },
+    "justification_deficiency": {
+      "$ref": "#/definitions/factor"
+    },
+    "integration_deficiency": {
+      "$ref": "#/definitions/factor"
+    },
+    "unresolved_counterevidence": {
+      "$ref": "#/definitions/factor"
+    },
+    "claim_evidence_linkage": {
+      "$ref": "#/definitions/factor"
+    },
+    "self_correction": {
+      "$ref": "#/definitions/factor"
+    },
+    "reasoning_uptake": {
+      "$ref": "#/definitions/factor"
+    },
+    "evidenceRelations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/evidenceRelation"
+      },
+      "description": "Delibra spec §3 Node 3: per-message evidence-relations tracking. Each entry records which of the 6 states (mentioned / attributed / evaluated / compared / countered / integrated) the evidence in that message is in. Required: present but may be empty if no participant message has been evidence-tracked yet (early checkpoints). Stored on AgentState.checkpoint.evidenceRelations and used by the Controller to drive role decisions (e.g. 'mentioned but not compared' → Synthesiser). Verified by EvidenceChecker.js for valid messageIds.",
+      "default": []
+    },
+    "cognitiveTargets": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "properties": {
+          "need": {
+            "type": "string",
+            "enum": [
+              "coverage_gap",
+              "vague_information",
+              "participation_gap",
+              "unsupported_claim",
+              "unclear_assumption",
+              "unresolved_concern",
+              "unclear_link",
+              "fragmented_evidence",
+              "cross_option_evidence",
+              "public_discrepancy"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "messageIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/definitions/evidenceQuote"
+            },
+            "minItems": 1
+          },
+          "optionLabels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "criteria": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "participantName": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "addressed"
+            ]
+          }
+        },
+        "required": [
+          "need",
+          "label",
+          "messageIds",
+          "evidence",
+          "optionLabels",
+          "criteria",
+          "status"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "breadth_deficiency",
+    "group_preference",
+    "justification_deficiency",
+    "integration_deficiency",
+    "unresolved_counterevidence",
+    "claim_evidence_linkage",
+    "self_correction",
+    "reasoning_uptake",
+    "evidenceRelations"
+  ],
+  "additionalProperties": false,
+  "definitions": {
+    "evidenceRelation": {
+      "type": "object",
+      "description": "Delibra spec §3 Node 3: 追踪公开证据是否被 mentioned / attributed / evaluated / compared / countered / integrated. 每个 messageId 一条；不在关系判断范围内的消息可以省略。",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "description": "the participant message whose evidence is being tracked. Must be one of the message IDs supplied with the public discussion."
+        },
+        "mentioned": {
+          "type": "boolean",
+          "description": "true 表示该 message 的 evidence 在讨论中被任一参与者提到（引用、复述、暗示）。"
+        },
+        "attributed": {
+          "type": "boolean",
+          "description": "true 表示 evidence 被明确归因到某个选项 / 标准 / 立场（'X says Y about Z'、'the data shows ...'）。"
+        },
+        "evaluated": {
+          "type": "boolean",
+          "description": "true 表示 evidence 被评估了可信度 / 相关性 / 充分性（'this is convincing', 'we should question ...', 'this doesn't address ...'）。"
+        },
+        "compared": {
+          "type": "boolean",
+          "description": "true 表示 evidence 跟其他证据 / 选项 / 立场进行了显式比较（'X vs Y', 'unlike Z, this ...'）。"
+        },
+        "countered": {
+          "type": "boolean",
+          "description": "true 表示有反证 / 反驳针对该 evidence（'but actually', 'this contradicts ...'）。"
+        },
+        "integrated": {
+          "type": "boolean",
+          "description": "Public evidence is jointly used in reasoning or a tentative/final conclusion; this does not certify consensus or decision correctness."
+        }
+      },
+      "required": [
+        "messageId",
+        "mentioned",
+        "attributed",
+        "evaluated",
+        "compared",
+        "countered",
+        "integrated"
+      ],
+      "additionalProperties": false
+    },
+    "evidenceQuote": {
+      "type": "object",
+      "properties": {
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "span": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "messageId",
+        "span"
+      ],
+      "additionalProperties": false
+    },
+    "legacyFactor": {
+      "type": "object",
+      "description": "单个语义因子的判断结果。",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "present",
+            "absent",
+            "uncertain"
+          ],
+          "description": "present=该因子在当前讨论中确实存在；absent=不存在；uncertain=证据不足以判断，不得因为'不确定'就默认为present。"
+        },
+        "strength": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "status='present'时的强度估计；status='absent'或'uncertain'时必须为0。"
+        },
+        "message_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "description": "支撑该判断的消息ID列表；仅在status='present'时必填。"
+        },
+        "span": {
+          "type": "string",
+          "description": "支撑该判断的原文引用（逐字，不得改写或概括）；仅在status='present'时必填。EvidenceChecker.js会核验这段文字是否真的出现在transcript中。"
+        }
+      },
+      "required": [
+        "status",
+        "strength"
+      ],
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "status": {
+            "const": "present"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "status",
+          "strength",
+          "message_ids",
+          "span"
+        ]
+      }
+    },
+    "factorV3": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "present",
+            "absent",
+            "uncertain"
+          ]
+        },
+        "strength": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "message_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/evidenceQuote"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "strength",
+        "message_ids",
+        "evidence"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "present"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "message_ids": {
+                "minItems": 1
+              },
+              "evidence": {
+                "minItems": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "strength": {
+                "const": 0
+              },
+              "message_ids": {
+                "maxItems": 0
+              },
+              "evidence": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "factor": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/factorV3"
+        },
+        {
+          "$ref": "#/definitions/legacyFactor"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Specialist Generator Output Schema v3.2",
+  "description": "Same five-role field structure as the frozen Generator schema; Specialist route additionally pins the exact selected role. Controls retain frozen schema and prompts. Invalid plans are rejected before generation; Generator has no error/null output variant.",
+  "type": "object",
+  "properties": {
+    "role": {
+      "type": "string",
+      "enum": [
+        "STATIC",
+        "GENERALIST",
+        "INFORMATION_EXPANDER",
+        "EVIDENCE_CHALLENGER",
+        "INFORMATION_SYNTHESISER"
+      ],
+      "description": "The five-role output structure is preserved for compatibility; the Specialist route pins the exact assigned Specialist constant. STATIC/automatic GENERALIST use control_50; requested GENERALIST uses its frozen separate route."
+    },
+    "message": {
+      "type": [
+        "string",
+        "object"
+      ],
+      "minLength": 1,
+      "maxLength": 1500,
+      "description": "One structured or string intervention. Complete flattened visible text must be at most 1500 characters and at most 50 English words for all automatic roles. Sentence/section rules remain role-specific. Requested Generalist uses its separate frozen rules.",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1500
+        },
+        "sections": {
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "body": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1500
+              }
+            },
+            "required": [
+              "title",
+              "body"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "question": {
+          "type": "string",
+          "maxLength": 1500
+        }
+      },
+      "required": [
+        "summary",
+        "sections",
+        "question"
+      ],
+      "additionalProperties": false
+    },
+    "groundingMessageIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "description": "本条干预所依据的、已在讨论中公开分享的消息 ID 列表。若干预不依赖具体消息（如通用开放性问题），可为空数组，但不可省略该字段。"
+    }
+  },
+  "required": [
+    "role",
+    "message",
+    "groundingMessageIds"
+  ],
+  "additionalProperties": false
+}

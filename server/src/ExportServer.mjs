@@ -188,7 +188,7 @@ async function handleListPage(req, res, ctx, search, auditFields, redact) {
   const trimmed = batches.slice(0, batchLimit);
   const gamesByBatch = await Promise.all(
     trimmed.map(async (b) => {
-      const games = await ctx.service.listGames(b.id, { limit: MAX_LIMIT, offset: 0 });
+      const games = await ctx.service.listGames(b.id, { ...filter, limit: MAX_LIMIT, offset: 0 });
       return { batchId: b.id, games: games.items };
     }),
   );
@@ -351,6 +351,7 @@ function parseListFilter(search) {
   if (typeof search.status === "string" && search.status) out.status = search.status;
   if (typeof search.treatment === "string" && search.treatment) out.treatment = search.treatment;
   if (typeof search.sequence === "string" && search.sequence) out.sequenceId = search.sequence;
+  if (search.includeTest === "true") out.includeTest = true;
   return out;
 }
 
@@ -525,7 +526,7 @@ function renderListPage({ batches, gamesByBatch, filter, limit, basePath, allowR
                             (g) => `
                               <tr>
                                 <td class="mono">${escapeHtml(g.id)}</td>
-                                <td>${escapeHtml(g.treatment || "?")}</td>
+                                <td>${escapeHtml(g.treatment || "?")}${g.testMode ? " · TEST" : ""}</td>
                                 <td>${escapeHtml(g.sequenceId || "?")}</td>
                                 <td>${escapeHtml(g.startedAt || "?")}</td>
                                 <td class="num">${g.playerCount}</td>
@@ -574,6 +575,7 @@ function renderListPage({ batches, gamesByBatch, filter, limit, basePath, allowR
           <option value="ended"${filter.status === "ended" ? " selected" : ""}>ended</option>
         </select>
       </label>
+      <label><input type="checkbox" name="includeTest" value="true"${filter.includeTest ? " checked" : ""}> Include test data</label>
       <label>limit <input type="number" name="limit" min="1" max="200" value="${limit}"></label>
       <button type="submit">Apply</button>
       <a href="${exportUrl(basePath)}" class="reset">Reset</a>
@@ -709,6 +711,7 @@ function renderTranscriptPage({ transcript, basePath, redact }) {
   <main>
     <p><a href="${exportUrl(basePath)}">← Back to exports</a></p>
     <h1>Game ${escapeHtml(game.id)} transcript</h1>
+    ${game.testMode ? "<p><strong>TEST SESSION — excluded from primary analysis</strong></p>" : ""}
     <p class="meta">Sequence ${escapeHtml(game.sequenceId || "unknown")} · Started ${escapeHtml(game.startedAt || "unknown")} · ${redact ? "PII-redacted view" : "Authorised raw view"}</p>
     <div class="actions">
       <a href="${escapeAttr(markdownUrl)}">Download Markdown</a>

@@ -19,12 +19,15 @@ process.argv[1] = path.join(__dirname, "..", "fake-entry.js");
 const { getAdaptivePromptBundle, getStaticPromptBundle, getGeneralistPromptBundle } = await import("./promptLoader.js");
 
 const SOURCE_DIR = path.join(__dirname, "source");
-const baseText = fs.readFileSync(path.join(SOURCE_DIR, "base.md"), "utf8");
-const staticText = fs.readFileSync(path.join(SOURCE_DIR, "static.md"), "utf8");
-const generalistText = fs.readFileSync(path.join(SOURCE_DIR, "generalist.md"), "utf8");
-const expanderText = fs.readFileSync(path.join(SOURCE_DIR, "expander.md"), "utf8");
-const challengerText = fs.readFileSync(path.join(SOURCE_DIR, "challenger.md"), "utf8");
-const synthesiserText = fs.readFileSync(path.join(SOURCE_DIR, "synthesiser.md"), "utf8");
+const baseText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/specialist/specialist_base.md"), "utf8");
+const staticText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/control_50/static.md"), "utf8");
+const generalistText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/control_50/generalist.md"), "utf8");
+const expanderText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/specialist/expander.md"), "utf8");
+const challengerText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/specialist/challenger.md"), "utf8");
+const synthesiserText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/specialist/synthesiser.md"), "utf8");
+
+const commonText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/specialist/specialist_common.md"), "utf8");
+const controlBase = fs.readFileSync(path.join(SOURCE_DIR, "runtime/control_50/base.md"), "utf8");
 
 const ROLE_FIXTURES = [
   { controllerRole: "expander", file: "expander.md", text: expanderText, generationRole: "INFORMATION_EXPANDER", otherTexts: [challengerText, synthesiserText] },
@@ -58,7 +61,7 @@ for (const fixture of ROLE_FIXTURES) {
 
   test(`${fixture.controllerRole} bundle is exactly base.md + '\\n\\n---\\n\\n' + its role file, nothing more`, () => {
     const bundle = getAdaptivePromptBundle(fixture.controllerRole);
-    assert.equal(bundle.content, `${baseText}\n\n---\n\n${fixture.text}`);
+    assert.equal(bundle.content, `${baseText}\n\n---\n\n${commonText}\n\n---\n\n${fixture.text}`);
   });
 }
 
@@ -100,9 +103,9 @@ test("concurrent prompt loading for different roles does not contaminate either 
     Promise.resolve().then(() => getAdaptivePromptBundle("challenger")),
     Promise.resolve().then(() => getAdaptivePromptBundle("synthesiser")),
   ]);
-  assert.equal(expanderBundle.content, `${baseText}\n\n---\n\n${expanderText}`);
-  assert.equal(challengerBundle.content, `${baseText}\n\n---\n\n${challengerText}`);
-  assert.equal(synthesiserBundle.content, `${baseText}\n\n---\n\n${synthesiserText}`);
+  assert.equal(expanderBundle.content, `${baseText}\n\n---\n\n${commonText}\n\n---\n\n${expanderText}`);
+  assert.equal(challengerBundle.content, `${baseText}\n\n---\n\n${commonText}\n\n---\n\n${challengerText}`);
+  assert.equal(synthesiserBundle.content, `${baseText}\n\n---\n\n${commonText}\n\n---\n\n${synthesiserText}`);
   assert.notEqual(expanderBundle.content, challengerBundle.content);
   assert.notEqual(challengerBundle.content, synthesiserBundle.content);
 });
@@ -112,7 +115,7 @@ test("Static and Adaptive-Generalist use distinct approved prompt content", () =
   const generalistBundle = getGeneralistPromptBundle();
   assert.equal(staticBundle.blocked, false, staticBundle.reason);
   assert.equal(generalistBundle.blocked, false, generalistBundle.reason);
-  assert.equal(staticBundle.content, `${baseText}\n\n---\n\n${staticText}`);
-  assert.equal(generalistBundle.content, `${baseText}\n\n---\n\n${generalistText}`);
+  assert.equal(staticBundle.content, `${controlBase}\n\n---\n\n${staticText}`);
+  assert.equal(generalistBundle.content, `${controlBase}\n\n---\n\n${generalistText}`);
   assert.notEqual(staticBundle.content, generalistBundle.content);
 });

@@ -18,9 +18,19 @@ const {
   validateAgainstValidatorSchema,
   computeValidatorVerdict,
   buildValidatorUserContext,
-  validateCandidate,
+  validateCandidate: validateCandidateRaw,
   parseValidatorResponse,
 } = await import("./SemanticValidator.js");
+
+const { compilePlan } = await import("./PolicyCompiler.js");
+const { preflightPlan } = await import("./PlanPreflight.mjs");
+async function validateCandidate(args) {
+  if (args.selectedRole !== "INFORMATION_EXPANDER") return validateCandidateRaw(args);
+  const source = args.chat[0];
+  const plan = compilePlan("expander", { breadth_deficiency: { status: "present", strength: 0.8, message_ids: ["m0"], span: source.text } }, { eligibleMessageIds: ["m0"] });
+  const planPreflight = preflightPlan(plan, { chat: args.chat, taskGeneralContext: args.taskGeneralContext });
+  return validateCandidateRaw({ ...args, interventionPlan: plan, planPreflight });
+}
 
 function chat() {
   return [

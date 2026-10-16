@@ -35,12 +35,12 @@ export function PracticeOnboarding() {
   const [pending, setPending] = useState(false);
   const done = Boolean(player.stage.get("practiceDone"));
   const request = (action, fields = {}) => player.set("practiceRequest", {
-    action, page: name, roundId: round.id, stageId: stage.id, requestId: crypto.randomUUID(), ...fields,
+    action, page: name, roundId: round.id, stageId: stage.id, requestId: crypto.randomUUID(), version: player.round.get("testProgressVersion") || 0, ...fields,
   });
   useEffect(() => {
     setPending(false);
     document.getElementById("participant-scroll-root")?.scrollTo(0, 0);
-  }, [name]);
+  }, [name, player.round.get("testProgressVersion")]);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(timer);

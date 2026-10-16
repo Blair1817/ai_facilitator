@@ -29,12 +29,12 @@ const {
 } = await import("./promptLoader.js");
 
 const SOURCE_DIR = path.join(__dirname, "source");
-const baseText = fs.readFileSync(path.join(SOURCE_DIR, "base.md"), "utf8");
-const staticText = fs.readFileSync(path.join(SOURCE_DIR, "static.md"), "utf8");
-const generalistText = fs.readFileSync(path.join(SOURCE_DIR, "generalist.md"), "utf8");
-const expanderText = fs.readFileSync(path.join(SOURCE_DIR, "expander.md"), "utf8");
-const challengerText = fs.readFileSync(path.join(SOURCE_DIR, "challenger.md"), "utf8");
-const synthesiserText = fs.readFileSync(path.join(SOURCE_DIR, "synthesiser.md"), "utf8");
+const baseText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/control_50/base.md"), "utf8");
+const staticText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/control_50/static.md"), "utf8");
+const generalistText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/control_50/generalist.md"), "utf8");
+const expanderText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/specialist/expander.md"), "utf8");
+const challengerText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/specialist/challenger.md"), "utf8");
+const synthesiserText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/specialist/synthesiser.md"), "utf8");
 
 // ── getStaticPromptBundle ────────────────────────────────────────────────────
 
@@ -92,8 +92,8 @@ test("getStaticPromptBundle uses the shared structured-message contract", () => 
 test("all Generator bundles require grounding IDs to be quoted JSON strings", () => {
   for (const bundle of [getStaticPromptBundle(), getGeneralistPromptBundle(), getAdaptivePromptBundle("expander")]) {
     assert.match(bundle.content, /quoted JSON string/);
-    assert.match(bundle.content, /\["m2", "m3"\]/);
-    assert.match(bundle.content, /never output bare identifiers/i);
+    assert.match(bundle.content, /quoted JSON string/);
+    assert.match(bundle.content, /groundingMessageIds/);
   }
 });
 

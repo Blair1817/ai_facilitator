@@ -3,6 +3,7 @@ import { EmpiricaContext } from "@empirica/core/player/classic/react";
 import { EmpiricaMenu, EmpiricaParticipant } from "@empirica/core/player/react";
 import React from "react";
 import { Game } from "./Game";
+import { TestControlPanel } from "./components/TestControlPanel.jsx";
 import { GamesFull } from "./intro-exit/GamesFull";
 import { GameFailedFallback } from "./intro-exit/GameFailedFallback";
 import { NoGames } from "./intro-exit/NoGames";
@@ -80,6 +81,7 @@ export default function App() {
           playerCreate={recruitmentMode === "prolific" ? ProlificPlayerCreate : PlayerCreate}
           lobby={CustomLobby}>
             <Game />
+            <TestControlPanel />
           </EmpiricaContext>
         </div>
       </div>

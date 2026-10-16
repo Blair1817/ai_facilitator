@@ -15,6 +15,7 @@
  * from buildAdaptiveDynamicUserContext to buildDynamicUserContext to match.
  */
 
+import { isPublicParticipantMessage } from "../CognitiveOperations.mjs";
 import { assembleDynamicUserContext } from "./promptLoader.js";
 
 export { assembleDynamicUserContext };
@@ -85,9 +86,9 @@ export function formatActiveParticipantNames(chat) {
  * (every pre-existing call site, and every Static call) leaves this
  * function's return value byte-for-byte identical to before.
  */
-export function buildDynamicUserContext({ chat, checkpointDescriptor, selectedRoleForDisplay, generalInfo, plan = null, activeParticipantNames = null }) {
+export function buildDynamicUserContext({ chat, checkpointDescriptor, selectedRoleForDisplay, generalInfo, plan = null, activeParticipantNames = null, planPreflight = null, interventionHistory = [], contextScope = "complete_current_round" }) {
   const chatWithIds = withMessageIds(chat);
-  const allHumanWithIds = chatWithIds.filter((m) => m.sender.id !== "ai");
+  const allHumanWithIds = chatWithIds.filter(isPublicParticipantMessage);
   const aiWithIds = chatWithIds.filter((m) => m.sender.id === "ai");
   const localWithIds = allHumanWithIds.slice(-6);
   const recentAiWithIds = aiWithIds.slice(-3);
@@ -128,6 +129,9 @@ export function buildDynamicUserContext({ chat, checkpointDescriptor, selectedRo
     // `@[Name]` token to an existing participant without inventing
     // one. Cost is a single short line.
     activeParticipantNames: activeNames || undefined,
+    planPreflight: plan ? planPreflight : undefined,
+    interventionHistory: plan ? interventionHistory : undefined,
+    contextScope,
   });
 
   return {

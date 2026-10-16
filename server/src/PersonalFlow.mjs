@@ -1,3 +1,4 @@
+import { isTestGame } from "../../shared/testMode.mjs";
 import {
   FORMAL_INITIAL_DECISION_SECONDS,
   SHARED_BREAK_SECONDS,
@@ -33,7 +34,7 @@ export function sharedBreakState(players, stageName, taskIndex) {
   };
 }
 
-function clearSharedBreakTimer(roundId) {
+export function clearSharedBreakTimer(roundId) {
   const existing = sharedBreakDeadlineTimers.get(roundId);
   if (existing) clearTimeout(existing.timeout);
   sharedBreakDeadlineTimers.delete(roundId);
@@ -145,6 +146,7 @@ export function registerPersonalFlow(Empirica, mirrorResponse) {
   Empirica.on("player", "personalPageRequest", (_ctx, { player, personalPageRequest: request }) => {
     const game = player.currentGame, stage = game?.currentStage, round = game?.currentRound;
     if (!request || !stage || stage.get("ended") || request.stageId !== stage.id || request.roundId !== round.id) return;
+    if (isTestGame(game) && (request.version ?? 0) !== (player.round.get("testProgressVersion") || 0)) return;
     const stageName = stage.get("name"), taskIndex = round.get("taskIndex");
     const pages = personalPages(stageName, taskIndex), key = personalProgressKey(stageName);
     const progress = player.round.get(key);

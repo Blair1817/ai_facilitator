@@ -37,6 +37,9 @@
 import fs from "fs";
 import path from "path";
 import Ajv from "ajv";
+import { readRuntimeFile, validatorRuntimePath, isSpecialistRole, PROMPT_RUNTIME_VERSION } from "./prompts/PromptRuntime.mjs";
+import { preflightPlan, isPassingPlanPreflight } from "./PlanPreflight.mjs";
+import { isPublicParticipantMessage } from "./CognitiveOperations.mjs";
 import { strictParseJsonObject } from "./prompts/GeneratorContract.mjs";
 import { withMessageIds, formatMessagesWithIds } from "./prompts/DynamicContext.mjs";
 
@@ -109,9 +112,11 @@ export const VALIDATOR_CRITERIA = Object.freeze([
  * Generator-specific OUTPUT CONTRACT does not apply here and is not
  * merged in.
  */
-export function getValidatorPromptBundle() {
-  const file = readSourceFile("validator.md");
-  const metadata = { promptName: "validator", promptStatus: "draft_unapproved" };
+export function getValidatorPromptBundle(selectedRole = "GENERALIST", triggerType = null) {
+  let file;
+  const runtimePath = validatorRuntimePath(selectedRole, triggerType);
+  try { file = { content: readRuntimeFile(runtimePath) }; } catch (error) { file = { error: error.message }; }
+  const metadata = { promptName: "validator", promptStatus: "draft_unapproved", promptVersion: PROMPT_RUNTIME_VERSION, runtimePath };
 
   if (file.error) {
     return { blocked: true, reason: file.error, metadata: { ...metadata, sourceCompleteness: "missing_file" } };
@@ -291,9 +296,16 @@ export function buildValidatorUserContext({
   taskGeneralContext,
   priorFailedCriteria = null,
   priorCandidate = null,
+  interventionPlan = null,
+  planPreflight = null,
+  interventionHistory = [],
+  recentAiMessages = [],
+  activeParticipantNames = [],
+  contextScope = "complete_current_round",
+  triggerType = null,
 }) {
   const chatWithIds = withMessageIds(chat);
-  const humanWithIds = chatWithIds.filter((m) => m.sender.id !== "ai");
+  const humanWithIds = chatWithIds.filter(isPublicParticipantMessage);
   const localWithIds = humanWithIds.slice(-6);
 
   const cumulativePublicContext = formatMessagesWithIds(humanWithIds);
@@ -307,6 +319,10 @@ export function buildValidatorUserContext({
     ["[LOCAL_CONTEXT]", localContext || "(no messages yet)"],
   ];
 
+  sections.push(["[CONTEXT_SCOPE]", contextScope], ["[ACTIVE_PARTICIPANT_NAMES]", JSON.stringify(activeParticipantNames)], ["[RECENT_AI_MESSAGES]", JSON.stringify(recentAiMessages)]);
+  if (isSpecialistRole(selectedRole)) {
+    sections.push(["[INTERVENTION_PLAN]", JSON.stringify(interventionPlan)], ["[PLAN_PREFLIGHT]", JSON.stringify(planPreflight)], ["[INTERVENTION_HISTORY]", JSON.stringify(interventionHistory)]);
+  }
   // Repair-loop hint: only added when this is a re-audit after a prior
   // failure. The shape is the exact [PRIOR_FAILED_CRITERIA] section the
   // validator.md prompt documents; absent entirely on the first call so
@@ -318,7 +334,7 @@ export function buildValidatorUserContext({
       : "(unavailable)";
     sections.push([
       "[PRIOR_FAILED_CRITERIA]",
-      `The previous candidate at this checkpoint was rejected for: ${failedList}.\nPrevious candidate (for reference only, do NOT audit it again -- audit the new CANDIDATE above):\n${priorText}\nFocus the audit on the listed criteria; ignore ones not in the list.`,
+      `The previous candidate at this checkpoint was rejected for: ${failedList}.\nPrevious candidate (for reference only, do NOT audit it again -- audit the new CANDIDATE above):\n${priorText}\nPay additional attention to the listed criteria; re-audit all thirteen criteria on this candidate.`,
     ]);
   }
 
@@ -352,12 +368,26 @@ export async function validateCandidate({
   callLLM,
   priorFailedCriteria = null,
   priorCandidate = null,
+  interventionPlan = null,
+  planPreflight = null,
+  interventionHistory = [],
+  recentAiMessages = [],
+  activeParticipantNames = [],
+  contextScope = "complete_current_round",
+  triggerType = null,
 }) {
   if (typeof callLLM !== "function") {
     throw new Error("validateCandidate() requires a callLLM(messages) function to be injected -- it does not perform network calls itself.");
   }
 
-  const promptResult = getValidatorPromptBundle();
+  if (isSpecialistRole(selectedRole)) {
+    const checked = preflightPlan(interventionPlan, { chat, taskGeneralContext, activeParticipantNames, contextScope, interventionHistory });
+    if (checked.status !== "passed" || !isPassingPlanPreflight(planPreflight, checked)) {
+      const booleans = Object.fromEntries(VALIDATOR_CRITERIA.map(k => [k, k === "requiredReasoningActMissing"]));
+      return { success: true, verdict: { ...computeValidatorVerdict(booleans), booleans }, rawText: null, responseMetadata: null };
+    }
+  }
+  const promptResult = getValidatorPromptBundle(selectedRole, triggerType);
   if (promptResult.blocked) {
     return { success: false, code: "VALIDATOR_PROMPT_BLOCKED", error: promptResult.reason };
   }
@@ -368,7 +398,7 @@ export async function validateCandidate({
     selectedRole,
     taskGeneralContext,
     priorFailedCriteria,
-    priorCandidate,
+    priorCandidate, interventionPlan, planPreflight, interventionHistory, recentAiMessages, activeParticipantNames, contextScope, triggerType,
   });
   const messages = [
     { role: "system", content: promptResult.content },

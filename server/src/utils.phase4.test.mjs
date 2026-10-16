@@ -59,10 +59,10 @@ test("abstains when no role's required semantic factors are present", () => {
   assert.equal(result.abstentionKind, "no_semantic_need");
 });
 
-test("challenger requires both preference and justification deficiency", () => {
+test("group preference alone does not justify Challenger without a public reasoning need", () => {
   const result = evaluateGate(factors({ group_preference: present(0.9) }), { remainingTime: 600_000 });
   assert.equal(result.perRole.challenger.detectorGate, false);
-  assert.match(result.perRole.challenger.failureReason, /justification_deficiency/);
+  assert.match(result.perRole.challenger.failureReason, /public_reasoning_need/);
 });
 
 test("generalist when a checked need remains below its specialist threshold", () => {

@@ -31,6 +31,7 @@
 
 import fs from "fs";
 import path from "path";
+import { runtimeGeneratorBundle, verifyRuntimeSources, PROMPT_RUNTIME_VERSION } from "./PromptRuntime.mjs";
 
 // NOTE: deliberately not using import.meta.url here. server/package.json's
 // esbuild build script bundles to CJS output format (no explicit --format
@@ -50,7 +51,7 @@ const SOURCE_DIR = path.join(MODULE_DIR, "source");
 // front matter: "版本: v0.1（草稿，待冻结）"). No individual .md file carries
 // its own version number, so this single package-level version is applied
 // to every prompt sourced from it -- not invented per-file.
-export const PROMPT_PACKAGE_VERSION = "v0.1-draft";
+export const PROMPT_PACKAGE_VERSION = PROMPT_RUNTIME_VERSION;
 
 // Detects the exact unresolved-placeholder conventions actually used in the
 // source files (verified by reading them, not guessed):
@@ -124,42 +125,8 @@ function computeSourceCompleteness(incompleteMarkers) {
   return incompleteMarkers.length > 0 ? "has_unresolved_markers" : "no_markers_found";
 }
 
-function checkAndCompose(filename, roleKey) {
-  const base = readSourceFile("base.md");
-  const roleFile = readSourceFile(filename);
-  const metadata = {
-    promptName: roleKey,
-    promptVersion: PROMPT_PACKAGE_VERSION,
-    promptStatus: PROMPT_STATUS[roleKey] || null,
-    condition: null,           // set by caller (Static / Adaptive)
-    selectedRole: null,        // set by caller
-  };
-
-  if (base.error || roleFile.error) {
-    return {
-      blocked: true,
-      reason: base.error || roleFile.error,
-      metadata: { ...metadata, sourceCompleteness: "missing_file" },
-    };
-  }
-
-  const combined = `${base.content}\n\n---\n\n${roleFile.content}`;
-  const incomplete = detectIncompleteMarkers(combined);
-  const sourceCompleteness = computeSourceCompleteness(incomplete);
-
-  if (incomplete.length > 0) {
-    return {
-      blocked: true,
-      reason: `${filename} (or base.md) contains unresolved placeholder marker(s): ${incomplete.join(", ")}. Refusing to send an incomplete/draft prompt to the LLM.`,
-      metadata: { ...metadata, sourceCompleteness },
-    };
-  }
-
-  return {
-    blocked: false,
-    content: combined,
-    metadata: { ...metadata, sourceCompleteness },
-  };
+function checkAndCompose(_filename, roleKey) {
+  return runtimeGeneratorBundle(roleKey);
 }
 
 /**
@@ -300,6 +267,7 @@ export function runStartupSelfCheck({ throwOnFailure = true } = {}) {
     "validation.schema.json",
   ];
   const failures = [];
+  try { verifyRuntimeSources(); } catch (error) { failures.push({ file: "runtime/manifest.json", kind: "runtime_integrity", detail: error.message }); }
 
   for (const f of required) {
     const r = readSourceFile(f);
@@ -381,6 +349,9 @@ export function assembleDynamicUserContext({
   answerableQuestionTemplate,
   allowedGroundingMessageIds,
   activeParticipantNames,
+  planPreflight,
+  interventionHistory,
+  contextScope,
 }) {
   const sections = [
     [`[CHECKPOINT]`, checkpoint ?? "(not provided)"],
@@ -401,10 +372,7 @@ export function assembleDynamicUserContext({
   // latter two; per-factor for target) -- no risk of leaking internal
   // feature values, just structural role guidance.
   if (target !== undefined && target !== null) {
-    const targetLine = target.kind === "message"
-      ? `messageId: ${target.messageId}`
-      : `missing label: ${target.label}`;
-    sections.push([`[TARGET]`, targetLine]);
+    sections.push([`[TARGET]`, JSON.stringify(target)]);
   }
   if (requiredReasoningAct) {
     sections.push([`[REQUIRED_REASONING_ACT]`, requiredReasoningAct]);
@@ -428,6 +396,9 @@ export function assembleDynamicUserContext({
   if (activeParticipantNames) {
     sections.push([`[ACTIVE_PARTICIPANT_NAMES]`, activeParticipantNames]);
   }
+  if (planPreflight) sections.push(["[PLAN_PREFLIGHT]", JSON.stringify(planPreflight)]);
+  if (interventionHistory) sections.push(["[INTERVENTION_HISTORY]", JSON.stringify(interventionHistory)]);
+  if (contextScope) sections.push(["[CONTEXT_SCOPE]", contextScope]);
   sections.push(
     [`[CUMULATIVE_PUBLIC_CONTEXT]`, cumulativePublicContext || "(no messages yet)"],
     [`[LOCAL_CONTEXT]`, localContext || "(no messages yet)"],

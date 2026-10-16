@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Automatic Control Generator Output Schema v3.2",
+  "description": "Generator(基于 Spec 第三、四、五节：三个角色约束 + 输出长度约束)只输出一条干预，role 必须与 Controller 已选定的角色一致，不得自行更改。v2 设计：STATIC 专属于 Static AI facilitator（Alsobay 复刻条件），GENERALIST + 三个 Specialist 专属于 Adaptive AI facilitator。两者是两个独立 agent，不互通。",
+  "type": "object",
+  "properties": {
+    "role": {
+      "type": "string",
+      "enum": [
+        "STATIC",
+        "GENERALIST",
+        "INFORMATION_EXPANDER",
+        "EVIDENCE_CHALLENGER",
+        "INFORMATION_SYNTHESISER"
+      ],
+      "description": "STATIC 用于 Static AI facilitator（Alsobay 复刻）；GENERALIST 是 Adaptive AI facilitator 的频率控制模式（在 Specialist 不清晰 / margin 不足时使用）；其余三项是 Adaptive AI facilitator 的三个 Specialist 角色。该值必须与输入的 SELECTED_ROLE 完全一致。Static 条件下 role 必须为 STATIC；Adaptive 条件下 role 必须为 GENERALIST / INFORMATION_EXPANDER / EVIDENCE_CHALLENGER / INFORMATION_SYNTHESISER 之一。"
+    },
+    "message": {
+      "type": [
+        "string",
+        "object"
+      ],
+      "minLength": 1,
+      "maxLength": 1500,
+      "description": "Same structured/string output contract as the baseline. Complete flattened visible text is at most 1500 characters and at most 50 English words for automatic STATIC/GENERALIST; runtime checks combined text. Requested Generalist uses its frozen schema and separate policy.",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1500
+        },
+        "sections": {
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
+              },
+              "body": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1500
+              }
+            },
+            "required": [
+              "title",
+              "body"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "question": {
+          "type": "string",
+          "maxLength": 1500
+        }
+      },
+      "required": [
+        "summary",
+        "sections",
+        "question"
+      ],
+      "additionalProperties": false
+    },
+    "groundingMessageIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "description": "本条干预所依据的、已在讨论中公开分享的消息 ID 列表。若干预不依赖具体消息（如通用开放性问题），可为空数组，但不可省略该字段。"
+    }
+  },
+  "required": [
+    "role",
+    "message",
+    "groundingMessageIds"
+  ],
+  "additionalProperties": false
+}

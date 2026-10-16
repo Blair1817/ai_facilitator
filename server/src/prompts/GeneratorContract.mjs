@@ -26,6 +26,8 @@
 import fs from "fs";
 import path from "path";
 import Ajv from "ajv";
+import { readRuntimeFile, isSpecialistRole } from "./PromptRuntime.mjs";
+import { OPERATION_ROLE } from "../CognitiveOperations.mjs";
 import { isFacilitatorPresentation, presentationToText } from "../../../client/src/components/facilitatorPresentation.mjs";
 
 // See promptLoader.js's header comment for why import.meta.url is not used
@@ -37,12 +39,11 @@ const SOURCE_DIR = path.join(ENTRY_DIR, "prompts", "source");
 
 const ajv = new Ajv({ strict: false, allErrors: true });
 
-let cachedGenerationSchema = null;
-function loadGenerationSchema() {
-  if (cachedGenerationSchema) return cachedGenerationSchema;
-  const raw = fs.readFileSync(path.join(SOURCE_DIR, "generation.schema.json"), "utf8");
-  cachedGenerationSchema = JSON.parse(raw);
-  return cachedGenerationSchema;
+const cachedGenerationSchemas = new Map();
+function loadGenerationSchema(selectedRole = "GENERALIST", triggerType = null) {
+  const route = triggerType === "PARTICIPANT_REQUEST" ? "frozen_control" : isSpecialistRole(selectedRole) ? "specialist" : "control_50";
+  if (!cachedGenerationSchemas.has(route)) cachedGenerationSchemas.set(route, JSON.parse(readRuntimeFile(`${route}/generation.schema.json`)));
+  return cachedGenerationSchemas.get(route);
 }
 
 /**
@@ -201,15 +202,15 @@ export function stripMarkdownWrapper(message) {
  * different selectedRole values never share (or race on) the same schema
  * object.
  */
-export function buildRuntimeGenerationSchema(selectedRole) {
-  const source = loadGenerationSchema();
+export function buildRuntimeGenerationSchema(selectedRole, triggerType = null) {
+  const source = loadGenerationSchema(selectedRole, triggerType);
   const clone = JSON.parse(JSON.stringify(source));
   clone.properties.role = { ...clone.properties.role, const: selectedRole };
   return clone;
 }
 
-export function validateAgainstGenerationSchema(parsed, selectedRole) {
-  const schema = buildRuntimeGenerationSchema(selectedRole);
+export function validateAgainstGenerationSchema(parsed, selectedRole, triggerType = null) {
+  const schema = buildRuntimeGenerationSchema(selectedRole, triggerType);
   const validateFn = ajv.compile(schema);
   const valid = validateFn(parsed);
   if (!valid) {
@@ -302,6 +303,10 @@ export function runDeterministicValidation(
     // (default), so every existing call site and test is unaffected
     // unless it opts in.
     maxWords = null,
+    maxSentences = null,
+    maxSections = null,
+    enforcePlanGrounding = false,
+    forbidInternalDisclosure = false,
   } = {}
 ) {
   const failedCriteria = [];
@@ -319,6 +324,12 @@ export function runDeterministicValidation(
     if (typeof maxLength === "number" && message.length > maxLength) {
       failedCriteria.push("MESSAGE_TOO_LONG");
     }
+    if (typeof maxSentences === "number") {
+      const count = [...new Intl.Segmenter("en", { granularity: "sentence" }).segment(message)].filter(s => s.segment.trim()).length;
+      if (count > maxSentences) failedCriteria.push("MESSAGE_EXCEEDS_SENTENCE_LIMIT");
+    }
+    if (forbidInternalDisclosure && ["INFORMATION_EXPANDER", "EVIDENCE_CHALLENGER", "INFORMATION_SYNTHESISER", "breadth_deficiency", "justification_deficiency", "integration_deficiency", "PLAN_PREFLIGHT", ...Object.keys(OPERATION_ROLE)].some(label => message.includes(label))) failedCriteria.push("INTERNAL_FACILITATION_DISCLOSURE");
+    if (typeof maxSections === "number" && (parsed.presentation?.sections?.length || 0) > maxSections) failedCriteria.push("MESSAGE_EXCEEDS_SECTION_LIMIT");
     if (MARKDOWN_PATTERN.test(message)) {
       failedCriteria.push("MARKDOWN_DETECTED");
     }
@@ -367,7 +378,7 @@ export function runDeterministicValidation(
     // `eligibleMessageIds === allowedGroundingIds` upstream so the
     // UNKNOWN_GROUNDING_ID check above enforces the plan. The deterministic
     // contract here is: "ground only in the public human transcript".
-    void allowedGroundingIds;  // accepted as a hint, not enforced
+    if (enforcePlanGrounding && groundingIds.some(id => !allowedGroundingIds.includes(id))) failedCriteria.push("GROUNDING_ID_OUTSIDE_PLAN_EVIDENCE");
   }
 
   // 2026-08-13: `@[Name]` mention hygiene. Enforced only when the
