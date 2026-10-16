@@ -111,6 +111,31 @@ test("Static real callbacks bypass the Adaptive Assessor and use the 50-word con
   assert.match(r.requests[0].messages[0].content, /50 English words/);
   assert.doesNotMatch(r.requests[0].messages[0].content, /# specialist_common.md/);
 });
+test("Static Validator excludes timer reminders from participant-authored context", async () => {
+  const w = world("static");
+  const chat = w.game.get("chat_round_0");
+  chat.splice(chat.length - 1, 0, buildCanonicalMessage({
+    messageId: "timer-fixture",
+    groupId: w.game.id,
+    speakerId: "system-timer_reminder",
+    roundIndex: 0,
+    stage: "Discussion",
+    messageType: "timer_reminder",
+    speakerType: "timer_reminder",
+    timestamp: Date.now(),
+    sequencePosition: 7,
+    content: "TIMER_CONTEXT_MUST_NOT_APPEAR",
+    sender: { id: "system-timer_reminder", name: "Timer" },
+  }));
+  const r = await run(w);
+  assert.equal(r.requests.length, 2);
+  assert.doesNotMatch(r.requests[1].messages[1].content, /TIMER_CONTEXT_MUST_NOT_APPEAR/);
+});
+test("formal Adaptive Assessor receives the explicit complete-current-round scope", async () => {
+  const r = await run(world("adaptive"));
+  assert.match(r.requests[0].messages[1].content, /\[CONTEXT_SCOPE\]\ncomplete_current_round/);
+  assert.doesNotMatch(r.requests[0].messages[1].content, /\[CONTEXT_SCOPE\]\nundefined/);
+});
 test("automatic vs participant-requested Generalist have separate validator and budget routes", () => {
   assert.equal(validatorRuntimePath("GENERALIST", null), "control_50/validator.md");
   assert.equal(validatorRuntimePath("GENERALIST", "PARTICIPANT_REQUEST"), "frozen_control/validator.md");

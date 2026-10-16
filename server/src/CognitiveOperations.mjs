@@ -27,6 +27,6 @@ export const OPERATION_QUESTIONS = Object.freeze({
 });
 export function isPublicParticipantMessage(message) {
   return message?.sender?.id !== "ai" && message?.sender?.id !== "system"
-    && !["system", "facilitator"].includes(message?.speakerType)
-    && !["system", "facilitator", "icebreaker"].includes(message?.messageType);
+    && !["system", "facilitator", "timer_reminder"].includes(message?.speakerType)
+    && !["system", "facilitator", "icebreaker", "timer_reminder"].includes(message?.messageType);
 }

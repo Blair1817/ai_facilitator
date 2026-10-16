@@ -1294,7 +1294,10 @@ export function handleFormalStageStart(stage) {
     game.set("deadline",      now + gameDuration * 60 * 1000);
     const chatKey = `chat_round_${stage.round.get("taskIndex")}`;
     const durationMs = gameDuration * 60 * 1000;
-    setTimeout(() => appendTimedMessage(stage, chatKey, `${Math.ceil(gameDuration / 2)} minutes remain in the discussion.`), durationMs / 2);
+    const reminderMinutes = Math.ceil(gameDuration / 2);
+    const reminderAt = game.get("deadline") - reminderMinutes * 60 * 1000;
+    const reminderDelayMs = Math.max(0, reminderAt - Date.now());
+    setTimeout(() => appendTimedMessage(stage, chatKey, `${reminderMinutes} minutes remain in the discussion.`), reminderDelayMs);
     if (durationMs > 60_000) setTimeout(() => appendTimedMessage(stage, chatKey, "One minute remains in the discussion."), durationMs - 60_000);
 
     // Opening message: one fixed, non-LLM Facilitator message at the very
@@ -1861,6 +1864,7 @@ async function handleChat(env, { game }) {
   const cognitiveHistory = currentRound.get("cognitiveInterventionHistory") || [];
   const assessorResult = await assessSemanticFactors({
     chat: formalChat,
+    contextScope: "complete_current_round",
     interventionHistory: cognitiveHistory,
     activeParticipantNames: players.map(p => p.get("name")).filter(Boolean),
     taskGeneralContext: buildStaticSharedTaskOverview({
