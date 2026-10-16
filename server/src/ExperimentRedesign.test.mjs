@@ -240,6 +240,25 @@ test("timer reminders flush immediately without waiting for a human chat message
   assert.match(callbacks, /One minute remains in the discussion\./);
 });
 
+test("the formal Discussion reminder is scheduled for eight minutes remaining rather than the 15-minute midpoint", () => {
+  const taskStart = callbacks.indexOf('if (stageName === "Task")');
+  const taskEnd = callbacks.indexOf('if (stageName === "FinalDecision")', taskStart);
+  const taskBlock = callbacks.slice(taskStart, taskEnd);
+
+  assert.match(taskBlock, /game\.set\("deadline",\s+now \+ gameDuration \* 60 \* 1000\)/);
+  assert.match(taskBlock, /const reminderMinutes = Math\.ceil\(gameDuration \/ 2\)/);
+  assert.match(taskBlock, /const reminderAt = game\.get\("deadline"\) - reminderMinutes \* 60 \* 1000/);
+  assert.match(taskBlock, /const reminderDelayMs = Math\.max\(0, reminderAt - Date\.now\(\)\)/);
+  assert.match(taskBlock, /`\$\{reminderMinutes\} minutes remain in the discussion\.`\), reminderDelayMs\)/);
+  assert.doesNotMatch(taskBlock, /durationMs \/ 2/);
+  assert.match(taskBlock, /"One minute remains in the discussion\."\), durationMs - 60_000/);
+
+  const durationSeconds = 15 * 60;
+  const reminderSeconds = Math.ceil(15 / 2) * 60;
+  assert.equal(durationSeconds - reminderSeconds, 7 * 60, "schedule after seven minutes");
+  assert.equal(durationSeconds - 7 * 60, 8 * 60, "eight minutes remain when it fires");
+});
+
 test("new games enter the interactive practice instead of legacy IceBreaker countdowns", () => {
   for (const source of [callbacks, game, practiceServer, practiceShared]) {
     assert.doesNotMatch(source, /Walkthrough|IceBreakerStartCountdown|IceBreakerEndCountdown|PracticeIcebreaker/);

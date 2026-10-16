@@ -17,6 +17,8 @@ import {
 import { assessSemanticFactors } from "./SemanticAssessor.js";
 import { checkEvidence } from "./EvidenceChecker.js";
 import { compilePlan } from "./PolicyCompiler.js";
+import { preflightPlan } from "./PlanPreflight.mjs";
+import { AUTOMATIC_MAX_WORDS, isSpecialistRole } from "./prompts/PromptRuntime.mjs";
 import {
   shouldEvaluateCheckpoint,
   recordAttempt,
@@ -30,7 +32,8 @@ import {
 import { buildAgentState } from "./AgentState.mjs";
 import { validateCandidate } from "./SemanticValidator.js";
 import { normalizeGeneratorCandidate } from "../../client/src/components/facilitatorPresentation.mjs";
-import { claimSequenceForStudy, RANDOMIZATION_LEDGER_KEY } from "./RandomizationLedger.mjs";
+import { initializeTestControls, registerTestControls, canPublishTestResult } from "./TestControls.mjs";
+import { claimSequenceForStudy } from "./RandomizationLedger.mjs";
 import { randomUUID } from "node:crypto";
 import { initialiseTaskOptionOrder, orderTaskSections } from "./TaskOptionOrder.mjs";
 import {
@@ -72,6 +75,7 @@ import { addPracticeRound, initialisePractice, handlePracticeStageStart, registe
 import { handlePersonalFlowStageStart, registerPersonalFlow } from "./PersonalFlow.mjs";
 
 registerPractice(Empirica, appendCanonicalMessage);
+registerTestControls(Empirica);
 registerPersonalFlow(Empirica, (player, round, stageName) => {
   const rows = buildRoundResponseRows({ gameId: round.currentGame.id, roundId: round.id,
     participantId: player.id, stageName, read: (key) => player.round.get(key) });
@@ -110,8 +114,11 @@ async function finalizeAuditLog(store, entry) {
 }
 
 async function whileFacilitatorPublishesVisibleResponse(game, logEntry, task) {
+  const stillCurrent = () => canPublishTestResult(game, logEntry);
+  if (!stillCurrent()) return false;
   await setVisibleResponsePending(game, logEntry.auditRequestId, true, () => Empirica.flush());
   try {
+    if (!stillCurrent()) return false;
     return await task();
   } finally {
     await setVisibleResponsePending(game, logEntry.auditRequestId, false, () => Empirica.flush());
@@ -223,8 +230,8 @@ async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens) {
 
 // The transport above stores no conversation and adds no context. Formal
 // callers provide messages from their own locked context builders.
-async function getLLMResponse(messages) {
-  return requestChatCompletion(messages, llmMaxOutputTokens);
+async function getLLMResponse(messages, maxTokens = llmMaxOutputTokens) {
+  return requestChatCompletion(messages, maxTokens);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -339,12 +346,15 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
 
   const checkpointDescriptor = `Checkpoint after ${getHumanMessages(chat).length} human message(s) so far this round. Participants: ${players.map((p) => p.get("name")).join(", ")}. Time remaining: ${formatDuration(remainingTime)}, elapsed: ${formatDuration(timeElapsed)}.`;
 
+  const interventionHistory = game.currentRound?.get("cognitiveInterventionHistory") || [];
+  const planPreflight = plan ? preflightPlan(plan, { chat: chat.filter(isFormalContextMessage), taskGeneralContext: publicTaskOverview, activeParticipantNames: players.map(p => p.get("name")), interventionHistory }) : null;
+  if (plan && planPreflight.status !== "passed") return { blocked: true, reason: "Specialist plan failed preflight", metadata: promptResult.metadata, planPreflight };
   const dynamicContext = buildDynamicUserContext({
     chat: chat.filter(isFormalContextMessage),
     checkpointDescriptor,
     selectedRoleForDisplay: promptResult.metadata.generationRole,
     generalInfo: publicTaskOverview,
-    plan,
+    plan, planPreflight, interventionHistory,
     // 2026-08-13: same live-roster pass-through as Static above.
     // Adaptive @ mentions can target any participant, including
     // those who have not yet spoken (the expander's "silence"
@@ -357,6 +367,7 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
     metadata: promptResult.metadata,
     systemPrompt: promptResult.content,
     taskGeneralContext: publicTaskOverview,
+    interventionPlan: plan, planPreflight, interventionHistory, contextScope: "complete_current_round",
     userContent: dynamicContext.userContent,
     eligibleMessageIds: dynamicContext.eligibleMessageIds,
     aiOrSystemMessageIds: dynamicContext.aiOrSystemMessageIds,
@@ -398,13 +409,15 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
 // only read `published`; the rest is for llmLog / post-hoc audit.
 async function runSharedGeneration(game, chatKey, built, logEntry, originatingRoundId, originatingStageId, chat) {
   logEntry.promptMetadata = built.metadata;
+  if (built.planPreflight) logEntry.planPreflight = built.planPreflight;
 
   if (built.blocked) {
     logEntry.reason = `AI request blocked: ${built.reason}`;
     logEntry.outcome = "SILENT";
-    return { published: false };
+    return { published: false, attempts: 0 };
   }
 
+  let generatorAttempts = 0;
   // Returns false if the originating round/stage has changed (a later
   // attempt would be responding to a stale world). True if the same
   // stage is still active.
@@ -413,6 +426,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       game.currentRound?.id === originatingRoundId &&
       game.currentStage?.id === originatingStageId &&
       game.currentStage?.get("name") === "Task"
+      && canPublishTestResult(game, { roundId: originatingRoundId, stageId: originatingStageId })
     );
   }
 
@@ -431,6 +445,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     logEntry.requestMade = true;
     logEntry.messagesOAIFormat = messages;
 
+    generatorAttempts += 1;
     const generatorStartedAt = Date.now();
     const llmResponse = await getLLMResponse(messages);
     logEntry.generatorLatenciesMs = [
@@ -463,7 +478,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       return { silent: true, reason: `Invalid Generator output: ${parseResult.error}` };
     }
 
-    const schemaResult = validateAgainstGenerationSchema(parseResult.parsed, built.metadata.generationRole);
+    const schemaResult = validateAgainstGenerationSchema(parseResult.parsed, built.metadata.generationRole, built.metadata.triggerType);
     if (!schemaResult.ok) {
       logEntry.failureStage = "schema";
       return {
@@ -485,7 +500,11 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       // applied to the participant-requested (@Facilitator) bundle, which
       // is tagged triggerType: "PARTICIPANT_REQUEST" in its prompt metadata
       // -- that role needs more room to ground a substantive answer.
-      maxWords: built.metadata.triggerType === "PARTICIPANT_REQUEST" ? null : 40,
+      maxWords: built.metadata.triggerType === "PARTICIPANT_REQUEST" ? null : AUTOMATIC_MAX_WORDS,
+      maxSentences: built.metadata.triggerType === "PARTICIPANT_REQUEST" ? null : isSpecialistRole(built.metadata.generationRole) ? 3 : 2,
+      maxSections: isSpecialistRole(built.metadata.generationRole) ? built.metadata.generationRole === "INFORMATION_SYNTHESISER" ? 2 : 0 : null,
+      enforcePlanGrounding: isSpecialistRole(built.metadata.generationRole),
+      forbidInternalDisclosure: isSpecialistRole(built.metadata.generationRole),
       // 2026-08-13: pipe the per-checkpoint participant roster into
       // the deterministic `@[Name]` mention check (GeneratorContract).
       // StaticContext.mjs / DynamicContext.mjs always populate this;
@@ -501,7 +520,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
         silent: true,
         reason: `Generator output failed validation: ${deterministicResult.failedCriteria.join(", ")}`,
         // Carried so the caller can offer a single, narrowly-scoped repair
-        // retry when the ONLY failure was the 40-word cap (see
+        // retry when the ONLY failure was the 50-word cap (see
         // isWordLimitOnlyFailure / buildWordLimitRepairUserContent below).
         // Any other deterministic failure (ROLE_MISMATCH, MARKDOWN_DETECTED,
         // UNKNOWN_GROUNDING_ID, ...) still fails silently on attempt 1, same
@@ -515,7 +534,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     return { ok: true, candidate };
   }
 
-  // True only when the 40-word cap was the SOLE deterministic failure.
+  // True only when the 50-word cap was the SOLE deterministic failure.
   // Scoped deliberately narrow: a message that is otherwise fully valid and
   // merely ran long is safe to ask the model to shorten; a message that
   // also failed grounding/role/markdown checks is not -- that goes silent
@@ -538,7 +557,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       null,
       2
     );
-    return `${built.userContent}\n\n---\n\n[PRIOR_FAILED_CRITERIA]\nThe previous candidate at this checkpoint was rejected for exceeding the 40-word limit on \`message\`.\nPrevious candidate (do NOT repeat it verbatim -- shorten the SAME idea/intent to under 40 words):\n${priorJson}\nRegenerate a candidate with the same intent and role, under 40 words.`;
+    return `${built.userContent}\n\n---\n\n[PRIOR_FAILED_CRITERIA]\nThe previous candidate at this checkpoint was rejected for exceeding the 50-word limit on \`message\`.\nPrevious candidate (do NOT repeat it verbatim -- shorten the SAME idea/intent to at most 50 words):\n${priorJson}\nRegenerate a candidate with the same intent and role, at most 50 words.`;
   }
 
   // Build the user-content append for the repair attempt. The
@@ -564,13 +583,17 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   async function runValidator(candidate, priorFailedCriteria = null, priorCandidate = null) {
     const validatorStartedAt = Date.now();
     const result = await validateCandidate({
-      chat,
+      chat: built.metadata.condition === "static" ? chat : chat.filter(isFormalContextMessage),
       candidate,
       selectedRole: built.metadata.generationRole,
       taskGeneralContext: built.taskGeneralContext,
       callLLM: getLLMResponse,
       priorFailedCriteria,
       priorCandidate,
+      interventionPlan: built.interventionPlan, planPreflight: built.planPreflight,
+      interventionHistory: built.interventionHistory, recentAiMessages: built.recentAiMessageTexts,
+      activeParticipantNames: built.activeParticipantNames, contextScope: built.contextScope,
+      triggerType: built.metadata.triggerType,
     });
     logEntry.validatorLatenciesMs = [
       ...(logEntry.validatorLatenciesMs || []),
@@ -643,12 +666,19 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   logEntry.validator = v1.verdict;
   if (v1.verdict.passed) {
     logEntry.llmAction = a1.candidate;
+    logEntry.visibleWordCount = a1.candidate.message.trim().split(/\s+/).filter(Boolean).length;
     const posted = await postGeneratorResultIfValid(game, chatKey, a1.candidate, built.metadata.generationRole, logEntry);
-    logEntry.attempts = 1;
+    logEntry.attempts = generatorAttempts;
     logEntry.outcome = posted ? "PUBLISHED" : "SILENT";
-    return { published: posted, candidate: a1.candidate, attempts: 1, validator: v1.verdict };
+    return { published: posted, candidate: a1.candidate, attempts: generatorAttempts, validator: v1.verdict };
   }
 
+  if (generatorAttempts >= 2) {
+    logEntry.attempts = generatorAttempts;
+    logEntry.reason = "Specialist/control candidate rejected after the shared two-attempt repair budget was consumed";
+    logEntry.outcome = "SILENT_VALIDATOR_REJECTED";
+    return { published: false, attempts: generatorAttempts, validator: v1.verdict };
+  }
   // ── Attempt 2: repair Generator (with Validator feedback) + re-audit ─
   const a2 = await attemptGeneration(buildRepairUserContent(v1.verdict.failedCriteria, a1.candidate));
   if (a2.discarded) {
@@ -679,6 +709,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   logEntry.attempts = 2;
   if (v2.verdict.passed) {
     logEntry.llmAction = a2.candidate;
+    logEntry.visibleWordCount = a2.candidate.message.trim().split(/\s+/).filter(Boolean).length;
     const posted = await postGeneratorResultIfValid(game, chatKey, a2.candidate, built.metadata.generationRole, logEntry);
     logEntry.outcome = posted ? "PUBLISHED" : "SILENT";
     return { published: posted, candidate: a2.candidate, attempts: 2, validator: v2.verdict };
@@ -739,8 +770,9 @@ const SEQUENCE_IDS = Object.keys(SEQUENCES);
 Empirica.before("game", "start", async (ctx, { game, start }) => {
   if (!start) return;
   if (game.get("assignmentPersistenceStatus") === "confirmed") return;
+  if (game.get("testControlsEnabled") === undefined) initializeTestControls(game);
   const games = [...ctx.scopesByKind("game").values()];
-  const { ledger, claim } = claimSequenceForStudy(ctx.globals, games, game, SEQUENCE_IDS);
+  const { ledger, claim, ledgerKey } = claimSequenceForStudy(ctx.globals, games, game, SEQUENCE_IDS);
 
   game.set("sequenceId",           claim.sequenceId);
   game.set("allocationNumber",     claim.allocationNumber);
@@ -748,9 +780,9 @@ Empirica.before("game", "start", async (ctx, { game, start }) => {
   game.set("allocationPosition",   claim.allocationPosition);
   game.set("allocationClaimedAt",  claim.claimedAt);
   game.set("allocationMethod",     "global_persisted_least-count-permuted-block-v1");
-  game.set("allocationLedgerKey",  RANDOMIZATION_LEDGER_KEY);
+  game.set("allocationLedgerKey",  ledgerKey);
   game.batch?.set("sequenceAllocationSummaryV1", {
-    ledgerKey: RANDOMIZATION_LEDGER_KEY,
+    ledgerKey,
     allocationNumber: ledger.allocationNumber,
     counts: ledger.counts,
     updatedAt: Date.now(),
@@ -765,7 +797,7 @@ Empirica.before("game", "start", async (ctx, { game, start }) => {
       allocation_position: claim.allocationPosition,
       allocation_claimed_at: new Date(claim.claimedAt).toISOString(),
       allocation_method: "global_persisted_least-count-permuted-block-v1",
-      ledger_key: RANDOMIZATION_LEDGER_KEY,
+      ledger_key: ledgerKey,
       assignment_status: "confirmed",
       updated_at: new Date().toISOString(),
     });
@@ -1105,7 +1137,7 @@ function appendCanonicalMessage(game, attribute, fields) {
 }
 
 function appendTimedMessage(stage, attribute, content, messageType = MESSAGE_TYPES.TIMER_REMINDER) {
-  if (!stage?.isCurrent?.()) return false;
+  if (!stage?.isCurrent?.() || stage.get("ended")) return false;
   const game = stage.currentGame;
   const timestamp = Date.now();
   appendCanonicalMessage(game, attribute, {
@@ -1139,7 +1171,7 @@ function appendTimedMessage(stage, attribute, content, messageType = MESSAGE_TYP
 // IMPLEMENTATION_LOGIC.md section 8) and as the "minutes remain" timer
 // reminders already get.
 function appendFacilitatorNudge(stage, attribute, content, onceFlagKey, facilitatorTrigger = "SILENCE_NUDGE") {
-  if (!stage?.isCurrent?.()) return false;
+  if (!stage?.isCurrent?.() || stage.get("ended")) return false;
   const game = stage.currentGame;
   if (onceFlagKey && game.get(onceFlagKey)) return false;
   const timestamp = Date.now();
@@ -1262,7 +1294,10 @@ export function handleFormalStageStart(stage) {
     game.set("deadline",      now + gameDuration * 60 * 1000);
     const chatKey = `chat_round_${stage.round.get("taskIndex")}`;
     const durationMs = gameDuration * 60 * 1000;
-    setTimeout(() => appendTimedMessage(stage, chatKey, `${Math.ceil(gameDuration / 2)} minutes remain in the discussion.`), durationMs / 2);
+    const reminderMinutes = Math.ceil(gameDuration / 2);
+    const reminderAt = game.get("deadline") - reminderMinutes * 60 * 1000;
+    const reminderDelayMs = Math.max(0, reminderAt - Date.now());
+    setTimeout(() => appendTimedMessage(stage, chatKey, `${reminderMinutes} minutes remain in the discussion.`), reminderDelayMs);
     if (durationMs > 60_000) setTimeout(() => appendTimedMessage(stage, chatKey, "One minute remains in the discussion."), durationMs - 60_000);
 
     // Opening message: one fixed, non-LLM Facilitator message at the very
@@ -1664,6 +1699,7 @@ async function handleChat(env, { game }) {
   // does trigger.
   const auditRequestId = `${game.id}:${roundIndex}:${humanMessageCount}:${now}`;
   let logEntry = {
+    stageId: originatingStageId, roundId: currentRound.id,
     auditRequestId,
     timestamp:                     now,
     roundIndex,
@@ -1760,7 +1796,7 @@ async function handleChat(env, { game }) {
     if (requestedResult.published) {
       recordParticipantRequestedPublish(game, {
         role: "REQUESTED_GENERALIST",
-        messageId: requestedResult.candidate?.messageId ?? null,
+        messageId: logEntry.publishedMessageId ?? requestedResult.candidate?.messageId ?? null,
         now,
       });
     }
@@ -1806,7 +1842,7 @@ async function handleChat(env, { game }) {
     // interventionHistory, lastRole, publishedThisRound all stay
     // consistent across both conditions.
     if (result.published) {
-      recordPublish(game, { role: "STATIC", messageId: result.candidate?.messageId ?? null, now });
+      recordPublish(game, { role: "STATIC", messageId: logEntry.publishedMessageId ?? result.candidate?.messageId ?? null, now });
     }
     await finalizeAuditLog(game, logEntry);
     return;
@@ -1824,13 +1860,18 @@ async function handleChat(env, { game }) {
   // no feature extraction, feature pre-filter, or feature-weighted score.
   let checkedFactors = null;
   const assessorStart = Date.now();
+  const formalChat = chat.filter(isFormalContextMessage);
+  const cognitiveHistory = currentRound.get("cognitiveInterventionHistory") || [];
   const assessorResult = await assessSemanticFactors({
-    chat,
+    chat: formalChat,
+    contextScope: "complete_current_round",
+    interventionHistory: cognitiveHistory,
+    activeParticipantNames: players.map(p => p.get("name")).filter(Boolean),
     taskGeneralContext: buildStaticSharedTaskOverview({
       generalInfo: currentRound?.get("generalInfo"),
       decisionOptions: currentRound?.get("decisionOptions"),
     }),
-    callLLM: getLLMResponse,
+    callLLM: messages => getLLMResponse(messages, Math.max(Number(llmMaxOutputTokens) || 1000, 4096)),
   });
   if (assessorResult.responseMetadata) {
     logEntry.detectorResponseMetadata = assessorResult.responseMetadata;
@@ -1849,7 +1890,7 @@ async function handleChat(env, { game }) {
 
   if (assessorResult.success) {
     logEntry.rawDetectorFactors = assessorResult.factors;
-    checkedFactors = checkEvidence(assessorResult.factors, { chat });
+    checkedFactors = checkEvidence(assessorResult.factors, { chat: formalChat });
     logEntry.checkedDetectorFactors = checkedFactors;
   } else {
     logEntry.detectorError = `${assessorResult.code}: ${assessorResult.error}`;
@@ -1901,7 +1942,7 @@ async function handleChat(env, { game }) {
     );
 
     if (result.published) {
-      recordPublish(game, { role: "GENERALIST", messageId: result.candidate?.messageId ?? null, now });
+      recordPublish(game, { role: "GENERALIST", messageId: logEntry.publishedMessageId ?? result.candidate?.messageId ?? null, now });
     }
 
     await finalizeAuditLog(game, logEntry);
@@ -1923,7 +1964,7 @@ async function handleChat(env, { game }) {
   const plan = compilePlan(chosenRole.role, checkedFactors, {
     score:     gateResult.scores[chosenRole.role],
     threshold: getRoleThreshold(chosenRole.role),
-    eligibleMessageIds,
+    eligibleMessageIds, interventionHistory: cognitiveHistory,
   });
   logEntry.plan = plan;
 
@@ -1945,12 +1986,12 @@ async function handleChat(env, { game }) {
   // Generalist prompt. Preserve the complete Specialist failure separately
   // so the final Generalist audit fields cannot overwrite its evidence.
   let publishedRole = chosenRole.role;
-  if (!result.published && logEntry.outcome === "SILENT_VALIDATOR_REJECTED") {
+  if (!result.published && (built.blocked || logEntry.outcome === "SILENT_VALIDATOR_REJECTED")) {
     logEntry.controllerSelectedRole = chosenRole.role;
     logEntry.specialistFailure = {
       reason: logEntry.reason,
       outcome: logEntry.outcome,
-      attempts: result.attempts ?? 2,
+      attempts: result.attempts ?? 0,
       promptMetadata: logEntry.promptMetadata,
       validator: logEntry.validator,
       validatorRepair: logEntry.validatorRepair,
@@ -1996,7 +2037,10 @@ async function handleChat(env, { game }) {
     // forced-nudge state still set synthesiserFired directly (this
     // branch is for the Controller's tracking; recordPublish's
     // general bookkeeping is separate).
-    recordPublish(game, { role: publishedRole, messageId: result.candidate?.messageId ?? null, now });
+    recordPublish(game, { role: publishedRole, messageId: logEntry.publishedMessageId ?? result.candidate?.messageId ?? null, now });
+    if (publishedRole === chosenRole.role) {
+      currentRound.set("cognitiveInterventionHistory", [...cognitiveHistory, { planId: plan.planId, signature: plan.signature, role: publishedRole, requiredReasoningAct: plan.requiredReasoningAct, target: plan.target, expectedUptake: plan.expectedUptake, messageId: logEntry.publishedMessageId, publicMessageBoundary: chat.length, message: result.candidate?.message, timestamp: Date.now() }]);
+    }
     if (publishedRole === chosenRole.role && chosenRole.role === "synthesiser" && chosenRole.forced) {
       game.set("synthesiserFired", true);
     }
@@ -2012,7 +2056,7 @@ Empirica.onStageEnded(({ stage }) => {
   const round = stage.round;
   const game = stage.currentGame;
   const stageName = stage.get("name");
-  if (stageName === "FinalDecision" && !round.get("finalDecisionConfirmed")) {
+  if (stageName === "FinalDecision" && !round.get("finalDecisionConfirmed") && !(game.get("testControlsEnabled") === true && stage.get("testSkippedAt"))) {
     finalizeGroupDecision(stage, { timedOut: true, endStage: false });
   }
   if (round.get("isPractice")) {

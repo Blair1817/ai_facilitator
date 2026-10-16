@@ -21,8 +21,9 @@ import { Break } from "./stages/Break";
 const components = { TaskInformation: Introduction, ReviewQuiz, InitialDecision,
   IndividualAssessment, TLX, SubjectiveSurvey, FinalQuestions, ExpFeedback, Debriefing };
 
-function personalPageRequestStorageKey(playerId, roundId, stageId, index) {
-  return `personalPageRequest:${playerId}:${roundId}:${stageId}:${index}`;
+function personalPageRequestStorageKey(playerId, roundId, stageId, index, testVersion = 0) {
+  return `personalPageRequest:${playerId}:${roundId}:${stageId}:${index}`
+    + (testVersion > 0 ? `:test-version-${testVersion}` : "");
 }
 
 export function StudyComplete() {
@@ -38,14 +39,14 @@ export function PersonalFlow() {
   const progress = player.round.get(personalProgressKey(stageName));
   const pages = personalPages(stageName, round.get("taskIndex"));
   // Server-owned cursor survives refresh and advances only after saving responses.
-  return progress ? <PersonalPage key={`${stage.id}:${progress.index}`}
+  return progress ? <PersonalPage key={`${stage.id}:${progress.index}:${player.round.get("testProgressVersion") || 0}`}
     {...{ player, round, stage, stageName, progress, pages }} /> : <p role="status">Loading your page…</p>;
 }
 
 function PersonalPage({ player, round, stage, stageName, progress, pages }) {
   const page = pages[progress.index];
   const pendingStorageKey = personalPageRequestStorageKey(
-    player.id, round.id, stage.id, progress.index,
+    player.id, round.id, stage.id, progress.index, player.round.get("testProgressVersion") || 0,
   );
   const [pending, setPending] = useState(() => {
     if (page !== "InitialDecision") return false;
@@ -94,7 +95,7 @@ function PersonalPage({ player, round, stage, stageName, progress, pages }) {
     const previousIndex = progress.index - 1;
     if (previousIndex < 0 || pages[previousIndex] !== "InitialDecision") return;
     const completedStorageKey = personalPageRequestStorageKey(
-      player.id, round.id, stage.id, previousIndex,
+      player.id, round.id, stage.id, previousIndex, player.round.get("testProgressVersion") || 0,
     );
     try {
       globalThis.sessionStorage?.removeItem(completedStorageKey);
@@ -120,7 +121,7 @@ function PersonalPage({ player, round, stage, stageName, progress, pages }) {
           // In-memory retries still protect the currently mounted page.
         }
       }
-      player.set("personalPageRequest", attempt.transmission);
+      player.set("personalPageRequest", { ...attempt.transmission, version: player.round.get("testProgressVersion") || 0 });
     };
     send();
     // A dropped request or response write arriving later must not strand the page.

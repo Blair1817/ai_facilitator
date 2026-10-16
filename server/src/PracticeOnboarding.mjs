@@ -1,3 +1,4 @@
+import { isTestGame } from "../../shared/testMode.mjs";
 import { randomUUID } from "node:crypto";
 import { appendToAttribute } from "./AppendOnlyAttribute.mjs";
 import { FACILITATOR_ROLES, MESSAGE_TYPES } from "./ExperimentPolicies.mjs";
@@ -181,6 +182,7 @@ export function registerPractice(Empirica, appendMessage) {
     const game = player.currentGame, round = game?.currentRound, stage = game?.currentStage;
     if (!round?.get("isPractice") || !stage || stage.get("ended") || !request
       || request.stageId !== stage.id || request.roundId !== round.id) return;
+    if (isTestGame(game) && (request.version ?? 0) !== (player.round.get("testProgressVersion") || 0)) return;
     const personalPreparation = stage.get("name") === "PracticeWelcome";
     const pageIndex = player.round.get("practicePageIndex") || 0;
     const name = personalPreparation ? PRACTICE_PERSONAL_PAGES[pageIndex] : stage.get("name");

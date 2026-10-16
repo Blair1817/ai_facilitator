@@ -31,6 +31,8 @@
 import fs from "fs";
 import path from "path";
 import Ajv from "ajv";
+import { isPublicParticipantMessage } from "./CognitiveOperations.mjs";
+import { readRuntimeFile, PROMPT_RUNTIME_VERSION } from "./prompts/PromptRuntime.mjs";
 import { strictParseJsonObject } from "./prompts/GeneratorContract.mjs";
 import { withMessageIds, formatMessagesWithIds } from "./prompts/DynamicContext.mjs";
 
@@ -59,7 +61,7 @@ function detectIncompleteMarkers(text) {
 function readSourceFile(filename) {
   const p = path.join(SOURCE_DIR, filename);
   try {
-    return { content: fs.readFileSync(p, "utf8"), error: null };
+    return { content: readRuntimeFile(`specialist/${filename}`), error: null };
   } catch (err) {
     return { content: null, error: `Cannot read ${filename}: ${err.message}` };
   }
@@ -76,7 +78,7 @@ function readSourceFile(filename) {
  */
 export function getAssessorPromptBundle() {
   const file = readSourceFile("assessor.md");
-  const metadata = { promptName: "assessor", promptStatus: "draft_unapproved" };
+  const metadata = { promptName: "assessor", promptStatus: "draft_unapproved", promptVersion: PROMPT_RUNTIME_VERSION };
 
   if (file.error) {
     return { blocked: true, reason: file.error, metadata: { ...metadata, sourceCompleteness: "missing_file" } };
@@ -95,7 +97,7 @@ export function getAssessorPromptBundle() {
 let cachedAssessorSchema = null;
 function loadAssessorSchema() {
   if (cachedAssessorSchema) return cachedAssessorSchema;
-  const raw = fs.readFileSync(path.join(SOURCE_DIR, "assessor.schema.json"), "utf8");
+  const raw = readRuntimeFile("specialist/assessor.schema.json");
   cachedAssessorSchema = JSON.parse(raw);
   return cachedAssessorSchema;
 }
@@ -117,9 +119,9 @@ export function validateAgainstAssessorSchema(parsed) {
  * EvidenceChecker.js's later span/message_id checks are validated against
  * IDs that mean the same thing on both sides of the pipeline.
  */
-export function buildAssessorUserContext({ chat, taskGeneralContext }) {
+export function buildAssessorUserContext({ chat, taskGeneralContext, interventionHistory = [], activeParticipantNames = [], contextScope = "complete_current_round" }) {
   const chatWithIds = withMessageIds(chat);
-  const humanWithIds = chatWithIds.filter((m) => m.sender.id !== "ai");
+  const humanWithIds = chatWithIds.filter(isPublicParticipantMessage);
   const localWithIds = humanWithIds.slice(-6);
 
   const cumulativePublicContext = formatMessagesWithIds(humanWithIds);
@@ -127,6 +129,9 @@ export function buildAssessorUserContext({ chat, taskGeneralContext }) {
 
   const sections = [
     ["[TASK_GENERAL_CONTEXT]", taskGeneralContext || "(not provided)"],
+    ["[CONTEXT_SCOPE]", contextScope],
+    ["[ACTIVE_PARTICIPANT_NAMES]", JSON.stringify(activeParticipantNames)],
+    ["[INTERVENTION_HISTORY]", JSON.stringify(interventionHistory)],
     ["[CUMULATIVE_PUBLIC_CONTEXT]", cumulativePublicContext || "(no messages yet)"],
     ["[LOCAL_CONTEXT]", localContext || "(no messages yet)"],
   ];
@@ -153,7 +158,7 @@ export function buildAssessorUserContext({ chat, taskGeneralContext }) {
  *     evaluateGate() see checkedFactors=null, which fails closed as an
  *     unavailable detector result.
  */
-export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM }) {
+export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM, interventionHistory, activeParticipantNames, contextScope }) {
   if (typeof callLLM !== "function") {
     throw new Error("assessSemanticFactors() requires a callLLM(messages) function to be injected -- it does not perform network calls itself.");
   }
@@ -163,7 +168,7 @@ export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM 
     return { success: false, code: "ASSESSOR_PROMPT_BLOCKED", error: promptResult.reason };
   }
 
-  const { userContent } = buildAssessorUserContext({ chat, taskGeneralContext });
+  const { userContent } = buildAssessorUserContext({ chat, taskGeneralContext, interventionHistory, activeParticipantNames, contextScope });
   const messages = [
     { role: "system", content: promptResult.content },
     { role: "user", content: userContent },

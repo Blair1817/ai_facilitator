@@ -1,0 +1,194 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Specialist Plan Preflight Result v3.2",
+  "type": "object",
+  "properties": {
+    "planId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "failed"
+      ]
+    },
+    "checks": {
+      "type": "object",
+      "properties": {
+        "roleOperationMatch": {
+          "type": "boolean"
+        },
+        "publicTargetVerified": {
+          "type": "boolean"
+        },
+        "evidenceCoverageVerified": {
+          "type": "boolean"
+        },
+        "scopePolicySatisfied": {
+          "type": "boolean"
+        },
+        "repetitionPolicySatisfied": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "roleOperationMatch",
+        "publicTargetVerified",
+        "evidenceCoverageVerified",
+        "scopePolicySatisfied",
+        "repetitionPolicySatisfied"
+      ],
+      "additionalProperties": false
+    },
+    "contextScope": {
+      "type": "string",
+      "enum": [
+        "complete_current_round",
+        "partial_recent_window",
+        "unknown"
+      ]
+    },
+    "historyStatus": {
+      "type": "string",
+      "enum": [
+        "not_previously_targeted",
+        "awaiting_response",
+        "partially_addressed",
+        "addressed",
+        "unresolved_with_new_evidence",
+        "history_unavailable"
+      ]
+    },
+    "failureReasons": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "INPUT_INVALID",
+          "TARGET_UNSUPPORTED",
+          "EVIDENCE_INSUFFICIENT",
+          "SCOPE_INSUFFICIENT",
+          "TARGET_ALREADY_ADDRESSED"
+        ]
+      },
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "planId",
+    "status",
+    "checks",
+    "contextScope",
+    "historyStatus",
+    "failureReasons"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "passed"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "checks": {
+            "properties": {
+              "roleOperationMatch": {
+                "const": true
+              },
+              "publicTargetVerified": {
+                "const": true
+              },
+              "evidenceCoverageVerified": {
+                "const": true
+              },
+              "scopePolicySatisfied": {
+                "const": true
+              },
+              "repetitionPolicySatisfied": {
+                "const": true
+              }
+            }
+          },
+          "failureReasons": {
+            "maxItems": 0
+          },
+          "historyStatus": {
+            "not": {
+              "const": "addressed"
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "failureReasons": {
+            "minItems": 1
+          },
+          "checks": {
+            "anyOf": [
+              {
+                "properties": {
+                  "roleOperationMatch": {
+                    "const": false
+                  }
+                },
+                "required": [
+                  "roleOperationMatch"
+                ]
+              },
+              {
+                "properties": {
+                  "publicTargetVerified": {
+                    "const": false
+                  }
+                },
+                "required": [
+                  "publicTargetVerified"
+                ]
+              },
+              {
+                "properties": {
+                  "evidenceCoverageVerified": {
+                    "const": false
+                  }
+                },
+                "required": [
+                  "evidenceCoverageVerified"
+                ]
+              },
+              {
+                "properties": {
+                  "scopePolicySatisfied": {
+                    "const": false
+                  }
+                },
+                "required": [
+                  "scopePolicySatisfied"
+                ]
+              },
+              {
+                "properties": {
+                  "repetitionPolicySatisfied": {
+                    "const": false
+                  }
+                },
+                "required": [
+                  "repetitionPolicySatisfied"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

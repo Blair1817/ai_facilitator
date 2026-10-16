@@ -7,3 +7,8 @@ lobbies:
       kind: shared
       duration: 5m0s
       strategy: ignore
+
+    - name: Researcher test shared 24h
+      kind: shared
+      duration: 24h0m0s
+      strategy: fail

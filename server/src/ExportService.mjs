@@ -108,8 +108,14 @@ export class ExportService {
     // renderer keeps the two paths consistent.
     const allGames = await this.allScopes({ kinds: ["game"] });
     const gamesByBatch = new Map();
+    const testOnlyBatches = new Set();
+    const formalBatches = new Set();
     for (const g of allGames) {
-      const bid = (await this.scopeAttributesOf(g)).batchID;
+      const gameAttrs = await this.scopeAttributesOf(g);
+      const bid = gameAttrs.batchID;
+      const testing = (gameAttrs.testControlsEnabled === true || gameAttrs.testControlsEnabled === "true") || gameTreatmentName(gameAttrs) === "test";
+      (testing ? testOnlyBatches : formalBatches).add(bid);
+      if (!filter.includeTest && testing) continue;
       if (bid == null) continue;
       if (!gamesByBatch.has(bid)) gamesByBatch.set(bid, []);
       gamesByBatch.get(bid).push(g);
@@ -117,12 +123,14 @@ export class ExportService {
     const result = [];
     for (const scope of scopes) {
       const attrs = await this.scopeAttributesOf(scope);
+      if (!filter.includeTest && testOnlyBatches.has(scope.id) && !formalBatches.has(scope.id)) continue;
       const createdAt = attrs.createdAt || scope.createdAt || null;
       if (filter.fromISO && createdAt && createdAt < filter.fromISO) continue;
       if (filter.toISO && createdAt && createdAt > filter.toISO) continue;
       const status = attrs.status || "unknown";
       if (filter.status && status !== filter.status) continue;
       const treatment = gameTreatmentName(attrs);
+      if (!filter.includeTest && ((attrs.testControlsEnabled === true || attrs.testControlsEnabled === "true") || treatment === "test")) continue;
       // Players are not directly linked to batches; we walk through
       // `game -> player` to count the unique participants. This is the
       // same shape Tajriba exposes in the admin UI.
@@ -175,6 +183,7 @@ export class ExportService {
       const startedAt = attrs.startedAt || scope.createdAt || null;
       const endedAt = attrs.endedAt || null;
       const treatment = gameTreatmentName(attrs);
+      if (!filter.includeTest && ((attrs.testControlsEnabled === true || attrs.testControlsEnabled === "true") || treatment === "test")) continue;
       const sequenceId = attrs.sequenceId || null;
       const status = attrs.status || "unknown";
       if (filter.fromISO && startedAt && startedAt < filter.fromISO) continue;
@@ -190,6 +199,7 @@ export class ExportService {
         endedAt,
         treatment,
         sequenceId,
+        testMode: (attrs.testControlsEnabled === true || attrs.testControlsEnabled === "true") || gameTreatmentName(attrs) === "test",
         status,
         playerCount: playerIDs.length,
       });
@@ -291,6 +301,8 @@ export class ExportService {
       batchId: attrs.batchID || null,
       status: attrs.status || "unknown",
       treatment: gameTreatmentName(attrs),
+      testMode: (attrs.testControlsEnabled === true || attrs.testControlsEnabled === "true") || gameTreatmentName(attrs) === "test",
+      testControlEvents: (attrs.testControlEventsIndex || []).map(id => attrs[`testControlEvents.${id}`]).filter(Boolean),
       sequenceId: attrs.sequenceId || null,
       taskOrder: attrs.taskOrder || null,
       taskVersionOrder: attrs.taskVersionOrder || null,
@@ -740,6 +752,7 @@ export function renderQuestionnaireCsv(bundle) {
   for (const player of players) {
     for (const round of rounds) {
       rows.push({
+        test_mode: game.testMode === true ? "true" : "false",
         game_id: game.id,
         batch_id: game.batchId ?? "",
         treatment: game.treatment ?? "",
@@ -811,6 +824,7 @@ export function renderQuestionnaireCsv(bundle) {
       final_questions_submitted_at: player.finalQuestions?.submittedAt ?? "",
       exp_feedback: player.expFeedback?.expFeedback ?? "",
       exp_feedback_submitted_at: player.expFeedback?.submittedAt ?? "",
+      test_mode: game.testMode === true ? "true" : "false",
       slot: "end_of_game",
     });
   }
@@ -833,7 +847,7 @@ export function renderQuestionnaireCsv(bundle) {
     "official_group_final_choice", "final_decision_timed_out", "final_decision_finalized_at",
     "final_personal_choice", "final_personal_confidence", "final_personal_rationale",
     "initial_decision_server_received_at", "initial_decision_accepted_on_time",
-    "initial_decision_timeout_reason", "initial_decision_completion_duration_ms",
+    "initial_decision_timeout_reason", "initial_decision_completion_duration_ms", "test_mode",
   ];
   const csv = toCsv(rows, columns);
   return { csv, columns, rowCount: rows.length };
@@ -854,6 +868,7 @@ export function renderTranscriptMd(bundle) {
   lines.push(`- Total fallbacks: ${game.totalFallbackMessages || 0}`);
   lines.push("");
 
+  if (transcript.game.testMode) lines.push("> TEST SESSION — excluded from primary analysis", "");
   for (const round of transcript.rounds) {
     lines.push(`## Formal Round ${round.taskIndex + 1} · Task ${round.taskVersion || "?"} · ${titleCase(round.facilitation || "unknown")}`);
     lines.push("");
@@ -929,6 +944,7 @@ export function buildFormalTranscript(bundle) {
       id: game.id,
       batchId: game.batchId ?? null,
       treatment: game.treatment ?? null,
+      testMode: game.testMode === true,
       sequenceId: game.sequenceId ?? null,
       startedAt: game.startedAt ?? null,
       endedAt: game.endedAt ?? null,
@@ -1138,6 +1154,7 @@ function titleCase(value) {
 }
 
 export function describeFinalDecisionOutcome(outcome) {
+  if (outcome === "test_skipped") return "The researchers skipped this decision in a test session; no official choice was recorded.";
   if (outcome === "consensus_choice") return "All three participants confirmed the same option.";
   if (outcome === "declared_fail") return "All three participants confirmed that the group did not reach a final decision.";
   if (outcome === "timeout_fail") return "The group did not confirm a final decision before time ran out.";

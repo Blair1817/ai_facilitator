@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Specialist Semantic Validation Output Schema v3.2",
+  "description": "Thirteen Specialist semantic failure flags. Controls use their frozen validator and schema. Runtime computes passed and failedCriteria.",
+  "type": "object",
+  "properties": {
+    "notGrounded": {
+      "type": "boolean",
+      "description": "Unsupported public factual assertion or incomplete source support."
+    },
+    "nonNeutral": {
+      "type": "boolean",
+      "description": "Facilitator preference, weighting or pressure toward an option."
+    },
+    "roleMisaligned": {
+      "type": "boolean",
+      "description": "Incompatible Specialist function, misrouted control role, boundary violation, or disclosure of internal role/operation/plan/assessor/prompt/selection information. Ordinary reasoning language is not internal disclosure."
+    },
+    "inventedInformation": {
+      "type": "boolean",
+      "description": "Fact or asserted relationship absent from authorised public sources."
+    },
+    "recommendationDetected": {
+      "type": "boolean",
+      "description": "Facilitator recommendation, ranking, scoring, vote or declared final answer."
+    },
+    "unsupportedInformationDetected": {
+      "type": "boolean",
+      "description": "Task or participant assertion unavailable in authorised public sources."
+    },
+    "unsupportedConsensusClaim": {
+      "type": "boolean",
+      "description": "Group agreement asserted beyond the visible participant evidence."
+    },
+    "optionSteering": {
+      "type": "boolean",
+      "description": "Implicit option pressure through selective framing or leading wording."
+    },
+    "requiredReasoningActMissing": {
+      "type": "boolean",
+      "description": "Missing or non-passed preflight, non-executable plan, unsupported/already-addressed target, or missing exact assigned operation. Does not permit invented completion."
+    },
+    "unanswerable": {
+      "type": "boolean",
+      "description": "No actionable question or a question with unsupported premises; a question-free valid synthesis is not a failure."
+    },
+    "hiddenInformationInference": {
+      "type": "boolean",
+      "description": "Inference or disclosure of undisclosed profile, knowledge ownership or motives."
+    },
+    "repetition": {
+      "type": "boolean",
+      "description": "Same target/operation without changed need, or redundant work already completed in supplied public context."
+    },
+    "length": {
+      "type": "boolean",
+      "description": "Violation of the shared automatic 50-word ceiling, applicable Specialist sentence/section rules, or obstructively overloaded wording; all visible content counts."
+    }
+  },
+  "required": [
+    "notGrounded",
+    "nonNeutral",
+    "roleMisaligned",
+    "inventedInformation",
+    "recommendationDetected",
+    "unsupportedInformationDetected",
+    "unsupportedConsensusClaim",
+    "optionSteering",
+    "requiredReasoningActMissing",
+    "unanswerable",
+    "hiddenInformationInference",
+    "repetition",
+    "length"
+  ],
+  "additionalProperties": false
+}

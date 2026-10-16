@@ -24,6 +24,12 @@ factors:
     values:
       - value: true
 
+  - name: testMode
+    desc: Researcher-only quick test controls
+    values:
+      - value: false
+      - value: true
+
 # S1-S4 counterbalancing sequence assignment is NOT a treatment factor.
 # server/src/callbacks.js's onGameStart allocates each Game's sequenceId
 # itself (randomized-block allocator: SEQUENCES/SEQUENCE_IDS/
@@ -39,3 +45,12 @@ treatments:
       phase1Duration: 5
       introDuration: 2
       hiddenInfoCue: true
+
+  - name: test
+    factors:
+      playerCount: 3
+      gameDuration: 15
+      phase1Duration: 5
+      introDuration: 2
+      hiddenInfoCue: true
+      testMode: true

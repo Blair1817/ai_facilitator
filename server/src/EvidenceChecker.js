@@ -21,6 +21,7 @@
  * DynamicContext.mjs/utils.js.
  */
 
+import { COGNITIVE_NEEDS, isPublicParticipantMessage } from "./CognitiveOperations.mjs";
 import { withMessageIds } from "./prompts/DynamicContext.mjs";
 
 // v2 design (Phase 4): expanded to the 8 factors listed in the
@@ -60,6 +61,7 @@ function asFactor(raw) {
     strength: typeof raw.strength === "number" ? raw.strength : 0,
     message_ids: Array.isArray(raw.message_ids) ? raw.message_ids : [],
     span: typeof raw.span === "string" ? raw.span : "",
+    ...(Array.isArray(raw.evidence) ? { evidence: raw.evidence } : {}),
   };
 }
 
@@ -78,6 +80,17 @@ function downgrade(factor, reason) {
 function verifySpanAndParticipants(key, factor, messageById) {
   if (factor.status !== "present") return factor;
 
+  if (Array.isArray(factor.evidence)) {
+    const ids = new Set(factor.message_ids);
+    const quotes = factor.evidence;
+    if (!ids.size || !quotes.length || quotes.some(q => !ids.has(q.messageId) || !q.span || !messageById.get(q.messageId)?.text?.includes(q.span))
+      || [...ids].some(id => !quotes.some(q => q.messageId === id))) return downgrade(factor, "INVALID_PER_MESSAGE_EVIDENCE");
+    if (key === "group_preference" && new Set([...ids].map(id => messageById.get(id)?.sender?.id)).size < 2)
+      return downgrade(factor, "GROUP_PREFERENCE_SINGLE_PARTICIPANT_ONLY");
+    if (key === "integration_deficiency" && (ids.size < 3 || new Set([...ids].map(id => messageById.get(id)?.sender?.id)).size < 2))
+      return downgrade(factor, "INSUFFICIENT_DISTRIBUTED_EVIDENCE");
+    return { ...factor, span: quotes[0].span };
+  }
   if (!factor.span || factor.message_ids.length === 0) {
     return downgrade(factor, "MISSING_SPAN_OR_MESSAGE_IDS");
   }
@@ -184,7 +197,7 @@ function checkEvidenceRelations(rawRelations, messageById) {
  */
 export function checkEvidence(rawFactors, { chat } = {}) {
   const chatWithIds = withMessageIds(chat || []);
-  const messageById = new Map(chatWithIds.map((m) => [m.messageId, m]));
+  const messageById = new Map(chatWithIds.filter(isPublicParticipantMessage).map((m) => [m.messageId, m]));
 
   let checked = {};
   for (const key of FACTOR_KEYS) {
@@ -193,6 +206,14 @@ export function checkEvidence(rawFactors, { chat } = {}) {
 
   checked = applySelfCorrectionDiscount(checked);
 
+  checked.cognitiveTargets = (Array.isArray(rawFactors?.cognitiveTargets) ? rawFactors.cognitiveTargets : []).filter(target => {
+    const definition = COGNITIVE_NEEDS[target?.need];
+    if (!definition || checked[definition[2]]?.status !== "present") return false;
+    const ids = new Set(target.messageIds || []);
+    const evidence = target.evidence || [];
+    return ids.size > 0 && evidence.length > 0 && [...ids].every(id => messageById.has(id) && evidence.some(q => q.messageId === id))
+      && evidence.every(q => ids.has(q.messageId) && typeof q.span === "string" && q.span.length > 0 && messageById.get(q.messageId)?.text?.includes(q.span));
+  });
   checked.evidenceRelations = checkEvidenceRelations(rawFactors?.evidenceRelations, messageById);
 
   return checked;

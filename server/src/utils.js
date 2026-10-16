@@ -68,20 +68,21 @@ function strengthOf(factor) {
 
 function requiredFactors(role) {
   if (role === "expander") return ["breadth_deficiency"];
-  if (role === "challenger") return ["group_preference", "justification_deficiency"];
+  if (role === "challenger") return ["justification_deficiency", "unresolved_counterevidence", "claim_evidence_linkage"];
   if (role === "synthesiser") return ["integration_deficiency"];
   return [];
 }
 
 function missingRequiredFactor(role, checkedFactors) {
+  if (role === "challenger") return requiredFactors(role).some(key => isPresent(checkedFactors?.[key])) ? null : "public_reasoning_need";
   return requiredFactors(role).find((key) => !isPresent(checkedFactors?.[key])) ?? null;
 }
 
 /**
  * Role scores are based only on checked LLM detector strengths:
  * - Expander: breadth deficiency
- * - Challenger: mean of group preference and justification deficiency;
- *   both are mandatory
+ * - Challenger: strongest verified justification/concern/link need;
+ *   group preference is optional context rather than a mandatory prerequisite
  * - Synthesiser: integration deficiency
  *
  * EvidenceChecker may reduce a strength when the transcript does not support
@@ -91,10 +92,14 @@ function missingRequiredFactor(role, checkedFactors) {
 export function computeDetectorRoleScores(checkedFactors) {
   return {
     expander: strengthOf(checkedFactors?.breadth_deficiency),
-    challenger:
-      (strengthOf(checkedFactors?.group_preference) +
-        strengthOf(checkedFactors?.justification_deficiency)) /
-      2,
+    // v3.2: a strong single public claim/concern/link need is actionable
+    // without manufacturing a group preference. Thresholds/priority stay fixed.
+    challenger: Math.max(
+      (strengthOf(checkedFactors?.group_preference) + strengthOf(checkedFactors?.justification_deficiency)) / 2,
+      strengthOf(checkedFactors?.justification_deficiency),
+      strengthOf(checkedFactors?.unresolved_counterevidence),
+      strengthOf(checkedFactors?.claim_evidence_linkage),
+    ),
     synthesiser: strengthOf(checkedFactors?.integration_deficiency),
   };
 }
@@ -229,17 +234,9 @@ export function chooseRole(gateResult, { remainingTime, lastRole = null, synthes
     };
   }
 
-  const winnerScore = chosenRole ? scores[chosenRole] : Math.max(...eligibleRoles.map((role) => scores[role]));
-  if (chosenRole === lastRole) {
-    for (const role of ROLE_PRIORITY) {
-      if (role !== lastRole && eligibleRoles.includes(role)) {
-        const margin = winnerScore - scores[role];
-        if (margin <= THRESHOLDS.gate.margin * topTwoMarginFactor) {
-          return { role, forced: false, reasoning: `${role} selected over repeated lastRole=${lastRole}` };
-        }
-      }
-    }
-  }
+  // v3.2 never changes roles merely for variety. Current verified need
+  // and the existing priority band determine the role; target repetition is
+  // handled separately by PlanPreflight.
 
   if (chosenRole && eligibleRoles.includes(chosenRole)) {
     return { role: chosenRole, forced: false, reasoning: `${chosenRole} selected from LLM detector score=${scores[chosenRole].toFixed(3)}` };

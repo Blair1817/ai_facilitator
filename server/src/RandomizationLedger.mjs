@@ -99,8 +99,12 @@ export function claimFromLedger(rawLedger, { gameId, sequenceIds, now = Date.now
 
 export function claimSequenceForStudy(globals, games, game, sequenceIds, options = {}) {
   if (!globals) throw new Error("Cannot allocate a sequence without Empirica Globals");
-  const ledger = normalizeLedger(globals.get(RANDOMIZATION_LEDGER_KEY), games, sequenceIds);
+  const testing = game.get("testControlsEnabled") === true;
+  const ledgerKey = testing ? "testSequenceAllocationLedgerV1" : RANDOMIZATION_LEDGER_KEY;
+  const scopedGames = games.filter(g => (g.get("testControlsEnabled") === true) === testing);
+  const ledger = normalizeLedger(globals.get(ledgerKey), scopedGames, sequenceIds);
   const result = claimFromLedger(ledger, { gameId: game.id, sequenceIds, ...options });
-  globals.set(RANDOMIZATION_LEDGER_KEY, result.ledger);
+  globals.set(ledgerKey, result.ledger);
+  result.ledgerKey = ledgerKey;
   return result;
 }
