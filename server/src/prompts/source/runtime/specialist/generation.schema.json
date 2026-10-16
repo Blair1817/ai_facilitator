@@ -22,7 +22,7 @@
       ],
       "minLength": 1,
       "maxLength": 1500,
-      "description": "One structured or string intervention. Complete flattened visible text must be at most 1500 characters and at most 50 English words for all automatic roles. Sentence/section rules remain role-specific. Requested Generalist uses its separate frozen rules.",
+      "description": "One structured or string intervention. Complete flattened visible text must be at most 1500 characters and obey the assigned role's word ceiling: 55 English words for Synthesiser and 50 for Expander or Challenger. Sentence/section rules remain role-specific. Requested Generalist uses its separate frozen rules.",
       "properties": {
         "summary": {
           "type": "string",

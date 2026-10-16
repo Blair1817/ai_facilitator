@@ -11,7 +11,7 @@ const { getOfflineHandleChat } = await import("../test/participant_sim/fakes/loa
 const { FACTOR_KEYS } = await import("./EvidenceChecker.js");
 const { VALIDATOR_CRITERIA } = await import("./SemanticValidator.js");
 const { runDeterministicValidation, buildRuntimeGenerationSchema } = await import("./prompts/GeneratorContract.mjs");
-const { validatorRuntimePath, runtimeGeneratorBundle, AUTOMATIC_MAX_WORDS } = await import("./prompts/PromptRuntime.mjs");
+const { validatorRuntimePath, runtimeGeneratorBundle, AUTOMATIC_MAX_WORDS, SYNTHESISER_MAX_WORDS } = await import("./prompts/PromptRuntime.mjs");
 function world(facilitation = "adaptive") {
   const players = ["Alex", "Casey", "Jordan"].map((name, i) => makeFakePlayer({ id: `synthetic-${i}`, name, hexCode: "ffffff" }));
   const game = new FakeGame({}, players);
@@ -140,11 +140,16 @@ test("automatic vs participant-requested Generalist have separate validator and 
   assert.equal(validatorRuntimePath("GENERALIST", null), "control_50/validator.md");
   assert.equal(validatorRuntimePath("GENERALIST", "PARTICIPANT_REQUEST"), "frozen_control/validator.md");
   assert.equal(runtimeGeneratorBundle("requested_generalist").metadata.maxWords, null);
-  for (const role of ["STATIC", "GENERALIST", "INFORMATION_EXPANDER", "EVIDENCE_CHALLENGER", "INFORMATION_SYNTHESISER"]) {
+  for (const role of ["STATIC", "GENERALIST", "INFORMATION_EXPANDER", "EVIDENCE_CHALLENGER"]) {
     for (const count of [49, 50, 51]) {
       const result = runDeterministicValidation({ role, message: Array(count).fill("word").join(" "), groundingMessageIds: [] }, { selectedRole: role, maxWords: AUTOMATIC_MAX_WORDS });
       assert.equal(result.passed, count <= 50);
     }
+  }
+  assert.equal(runtimeGeneratorBundle("synthesiser").metadata.maxWords, SYNTHESISER_MAX_WORDS);
+  for (const count of [54, 55, 56]) {
+    const result = runDeterministicValidation({ role: "INFORMATION_SYNTHESISER", message: Array(count).fill("word").join(" "), groundingMessageIds: [] }, { selectedRole: "INFORMATION_SYNTHESISER", maxWords: SYNTHESISER_MAX_WORDS });
+    assert.equal(result.passed, count <= 55);
   }
 });
 test("Specialist internal labels, excessive sections and out-of-plan IDs cannot pass mechanical publication checks", () => {

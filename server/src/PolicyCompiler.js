@@ -1,4 +1,5 @@
 import { COGNITIVE_NEEDS, GENERATION_ROLES, OPERATION_QUESTIONS } from "./CognitiveOperations.mjs";
+import { AUTOMATIC_MAX_WORDS, SYNTHESISER_MAX_WORDS } from "./prompts/PromptRuntime.mjs";
 
 const factorKeys = { expander: ["breadth_deficiency"], challenger: ["justification_deficiency", "unresolved_counterevidence", "claim_evidence_linkage"], synthesiser: ["integration_deficiency"] };
 const dedupe = xs => [...new Set(xs)];
@@ -33,7 +34,7 @@ export function compilePlan(role, checkedFactors, { score, threshold, eligibleMe
     expectedUptake: role === "expander" ? "Relevant concrete information is shared publicly" : role === "challenger" ? "Participants examine the target reasoning" : "Participants use or clarify the represented public evidence",
     historyStatus: target.status === "addressed" ? "addressed" : previous ? "awaiting_response" : interventionHistory.length ? "not_previously_targeted" : "history_unavailable",
     signature, intensity: typeof score === "number" && score >= (threshold ?? 0.6) + (1 - (threshold ?? 0.6)) / 2 ? "high" : "medium",
-    maxWords: 50, maxSentences: 3, gap: target.label,
+    maxWords: role === "synthesiser" ? SYNTHESISER_MAX_WORDS : AUTOMATIC_MAX_WORDS, maxSentences: 3, gap: target.label,
     prohibitions: ["MUST_NOT_RECOMMEND_OR_RANK_OPTION", "MUST_NOT_REVEAL_PRIVATE_PROFILE_INFORMATION", "MUST_NOT_CLAIM_TO_KNOW_CORRECT_ANSWER", "MUST_NOT_EXCEED_THREE_SENTENCES"],
   };
 }

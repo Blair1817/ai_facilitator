@@ -3,9 +3,31 @@ import test from "node:test";
 import {
   buildChatCompletionPayload,
   buildSuccessfulLLMResult,
+  DEFAULT_LLM_REQUEST_TIMEOUT_MS,
   extractChatCompletionResponseMetadata,
   isMiniMaxReasoningModel,
+  resolveLLMRequestTimeoutMs,
+  withLLMRequestTimeout,
 } from "./LLMTransport.mjs";
+
+test("LLM request timeout uses a documented default and accepts a positive override", () => {
+  assert.equal(DEFAULT_LLM_REQUEST_TIMEOUT_MS, 90_000);
+  assert.equal(resolveLLMRequestTimeoutMs(undefined), 90_000);
+  assert.equal(resolveLLMRequestTimeoutMs("1250"), 1250);
+  assert.equal(resolveLLMRequestTimeoutMs("0"), 90_000);
+});
+
+test("LLM request timeout aborts a stalled operation with a stable non-sensitive error", async () => {
+  let signal;
+  await assert.rejects(
+    withLLMRequestTimeout((candidateSignal) => {
+      signal = candidateSignal;
+      return new Promise(() => {});
+    }, 5),
+    (error) => error.code === "LLM_REQUEST_TIMEOUT" && error.timeoutMs === 5,
+  );
+  assert.equal(signal.aborted, true);
+});
 
 test("request policy uses split reasoning and a sufficient completion budget for MiniMax M2", () => {
   assert.equal(isMiniMaxReasoningModel("MiniMax-M2.7-highspeed"), true);

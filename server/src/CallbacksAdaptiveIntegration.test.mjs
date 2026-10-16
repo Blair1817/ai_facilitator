@@ -141,7 +141,7 @@ test("every in-flight lifecycle mutation is awaited and committed through the se
   const finalizations = [
     ...handleChatBody.matchAll(/(^|\n)\s*(await\s+)?finalizeAuditLog\(game, logEntry\);/g),
   ];
-  assert.equal(finalizations.length, 8, "all eight terminal callback paths must remain covered");
+  assert.equal(finalizations.length, 9, "all nine terminal callback paths, including automatic-overlap suppression, must remain covered");
   assert.ok(
     finalizations.every((match) => match[2] === "await "),
     "no terminal callback path may release its lifecycle commit without awaiting it",

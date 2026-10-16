@@ -53,8 +53,8 @@
       "validationSchema": "specialist/validation.schema.json",
       "preflightSchema": "specialist/plan_preflight.schema.json",
       "planRequired": true,
-      "generatorSha256": "a2dfb433136740507b35520d81e9fa6d21e073ae9beb8fc09b07b5d561245c36",
-      "validatorSha256": "7be101103dcf32b58a13e9cd5498c66d97896601bbce9a4af620cc810e257176",
+      "generatorSha256": "4d241b31ed0a17b91f20580d5a95894ea582b54f729c354e972b3e4ec4141d1e",
+      "validatorSha256": "bdc8895011bd15624aaa8bfa9b7334a5a9c38f31692ce652073084036f325deb",
       "maxWords": 50
     },
     "challenger": {
@@ -68,8 +68,8 @@
       "validationSchema": "specialist/validation.schema.json",
       "preflightSchema": "specialist/plan_preflight.schema.json",
       "planRequired": true,
-      "generatorSha256": "df4c48c58f3417cf5062a25eb51698f7c240db4565c157ae3c2deab55216d932",
-      "validatorSha256": "7be101103dcf32b58a13e9cd5498c66d97896601bbce9a4af620cc810e257176",
+      "generatorSha256": "a16e13f4db5c2cd58841bb52db94428e441aae79d4cc015271a2bc004606f4a9",
+      "validatorSha256": "bdc8895011bd15624aaa8bfa9b7334a5a9c38f31692ce652073084036f325deb",
       "maxWords": 50
     },
     "synthesiser": {
@@ -83,9 +83,9 @@
       "validationSchema": "specialist/validation.schema.json",
       "preflightSchema": "specialist/plan_preflight.schema.json",
       "planRequired": true,
-      "generatorSha256": "757a26c3679bf0586716d9fbc1d10b2a04058e799eebb08eb0e6d2a89616cfa5",
-      "validatorSha256": "7be101103dcf32b58a13e9cd5498c66d97896601bbce9a4af620cc810e257176",
-      "maxWords": 50
+      "generatorSha256": "fd66192cb5f2406a0082582b4ab21c3e4a77480c9a12165a48c119c6fcb829f5",
+      "validatorSha256": "bdc8895011bd15624aaa8bfa9b7334a5a9c38f31692ce652073084036f325deb",
+      "maxWords": 55
     }
   },
   "assessor": {
@@ -96,8 +96,8 @@
   "frozenControlScope": "Historical exact baseline and requested-Generalist route; Static/automatic Generalist use control_50 length-adapted policy.",
   "files": {
     "specialist/assessor.md": {
-      "sha256": "1c37d19806e9a9aa0e8bc6ff6b822ee35e45da4b2e2cafb5c80b563631e3ed17",
-      "bytes": 8869
+      "sha256": "1885e801a47e907abfe64b4eaf26fa66618fa41334430b8d9b2c848a7d44a7e2",
+      "bytes": 10243
     },
     "specialist/assessor.schema.json": {
       "sha256": "1801bba0004ca29ed0fc58cdcf49958c3f1a48278dcd4a28c64103baf70865dc",
@@ -112,32 +112,32 @@
       "bytes": 3453
     },
     "specialist/generation.schema.json": {
-      "sha256": "ce838b21d3b41df331358796120ac77c223ec0d10999c3d4c9cbc26f58430a0c",
-      "bytes": 2704
+      "sha256": "999d83eb6e97e115b658b502c0f9902f9ada8cc62940c1d384cc7106eb75daaf",
+      "bytes": 2761
     },
     "specialist/plan_preflight.schema.json": {
       "sha256": "b97c8440fc83a2575b5854f2b40b68f13feb2c87a3f1067c00c8084d9218ccd6",
       "bytes": 4445
     },
     "specialist/specialist_base.md": {
-      "sha256": "16066cf3148fff061e281d768d1553621c9318b07067f5094af4551494724d1b",
-      "bytes": 7868
+      "sha256": "617c116f40791eb7f02d3c9fb7ce5abcd91287284fd4add744c7b0fdc890a86a",
+      "bytes": 7791
     },
     "specialist/specialist_common.md": {
-      "sha256": "a6e61b9c0c0359ac44be7d0f1ab62769af701f6a11f5eb886cfad2ae7ed2eaee",
-      "bytes": 4389
+      "sha256": "dc8b07444273b985959aff8e41c3e3ce08146618ecd337a27836b93c7ed544b3",
+      "bytes": 4302
     },
     "specialist/synthesiser.md": {
-      "sha256": "30994f08eed69e3588698f146aa0b0aa17b9f94f35c36b236d01c05bee21402b",
-      "bytes": 4777
+      "sha256": "6da3318762f5da33da40f024f6eab4095e54fe83af08940a120a86ec898c6c52",
+      "bytes": 5472
     },
     "specialist/validation.schema.json": {
       "sha256": "be606ed0b1ae46987a1305c7ec128df3b1e111fedb0cb8e68eac86359f67285b",
       "bytes": 3110
     },
     "specialist/validator.md": {
-      "sha256": "7be101103dcf32b58a13e9cd5498c66d97896601bbce9a4af620cc810e257176",
-      "bytes": 9935
+      "sha256": "bdc8895011bd15624aaa8bfa9b7334a5a9c38f31692ce652073084036f325deb",
+      "bytes": 10626
     },
     "control_50/base.md": {
       "sha256": "91ffc1b86c43048bfc4b4fae1b2f3a0e9e8c5ed5e2ab02f96b3df7febd6158fc",
@@ -194,6 +194,7 @@
   },
   "automaticLengthPolicy": {
     "maxWords": 50,
+    "synthesiserMaxWords": 55,
     "scope": [
       "static",
       "generalist",
@@ -203,7 +204,7 @@
     ],
     "requestedGeneralist": "unchanged independent policy",
     "noMinimum": true,
-    "boundary": "50 accepted, 51 rejected",
+    "boundary": "50 accepted and 51 rejected by default; Synthesiser accepts 55 and rejects 56",
     "runtimeConnected": false
   },
   "runtimeExtensions": [

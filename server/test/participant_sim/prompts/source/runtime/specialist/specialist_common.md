@@ -26,7 +26,7 @@ If evidence is insufficient, the target is already addressed, the operation does
 The Validator must not certify plan fidelity without a valid, executable plan. An already-addressed target is not made actionable by rephrasing.
 
 ## EXPRESSION
-The maximum for this and every automatic facilitation path is 50 English words (<=50); do not fill the budget. All visible titles, bodies and the question count. The runtime plan must use maxWords: 50 for automatic interventions.
+Obey the word ceiling in the runtime plan and assigned role prompt; do not fill the budget. All visible titles, bodies and the question count.
 Use an observation only when it is supported and useful; it is not a mandatory preamble.
 Expander: a grounded coverage focus followed by one information question.
 Challenger: a grounded claim or concern followed by one critical question.

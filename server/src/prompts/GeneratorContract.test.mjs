@@ -3,7 +3,9 @@
 // deterministic validation. Pure-function tests -- no network, no Empirica.
 import assert from "node:assert/strict";
 import test from "node:test";
+import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { normalizeGeneratorCandidate } from "../../../client/src/components/facilitatorPresentation.mjs";
 import { buildCanonicalMessage } from "../ExperimentPolicies.mjs";
@@ -20,6 +22,7 @@ const {
   stripMarkdownWrapper,
   getGenerationSchemaMaxLength,
 } = await import("./GeneratorContract.mjs");
+const { runtimeGeneratorBundle, verifyRuntimeSources } = await import("./PromptRuntime.mjs");
 
 const VALID_CANDIDATE = { role: "INFORMATION_EXPANDER", message: "Is there anything else anyone has not shared yet?", groundingMessageIds: [] };
 
@@ -332,6 +335,69 @@ test("deterministic validation: multiple simultaneous failures are all reported,
   assert.ok(result.failedCriteria.includes("ROLE_MISMATCH"));
   assert.ok(result.failedCriteria.includes("EMPTY_MESSAGE"));
   assert.ok(result.failedCriteria.includes("UNKNOWN_GROUNDING_ID"));
+});
+
+test("Synthesiser mechanical boundaries accept 55 words and three sentences, then fail closed one over", () => {
+  const context = {
+    selectedRole: "INFORMATION_SYNTHESISER",
+    eligibleMessageIds: ["m0"],
+    maxWords: 55,
+    maxSentences: 3,
+  };
+  const candidate = (message) => ({ role: "INFORMATION_SYNTHESISER", message, groundingMessageIds: ["m0"] });
+  const fiftyFiveWords = Array.from({ length: 55 }, (_, index) => `word${index + 1}`).join(" ");
+  const fiftySixWords = `${fiftyFiveWords} word56`;
+
+  assert.equal(runDeterministicValidation(candidate(fiftyFiveWords), context).passed, true);
+  assert.deepEqual(runDeterministicValidation(candidate(fiftySixWords), context).failedCriteria, ["MESSAGE_EXCEEDS_WORD_LIMIT"]);
+  assert.equal(runDeterministicValidation(candidate("First. Second. Third."), context).passed, true);
+  assert.deepEqual(runDeterministicValidation(candidate("First. Second. Third. Fourth."), context).failedCriteria, ["MESSAGE_EXCEEDS_SENTENCE_LIMIT"]);
+});
+
+test("Synthesiser schema, role and flattened structured output cannot bypass grounding or length checks", () => {
+  const structured = {
+    role: "INFORMATION_SYNTHESISER",
+    message: {
+      summary: Array.from({ length: 54 }, (_, index) => `word${index + 1}`).join(" "),
+      sections: [{ title: "Criterion", body: "extra words" }],
+      question: "",
+    },
+    groundingMessageIds: ["m0"],
+  };
+  assert.equal(validateAgainstGenerationSchema(structured, "INFORMATION_SYNTHESISER").ok, true);
+  const normalized = normalizeGeneratorCandidate(structured);
+  const checked = runDeterministicValidation(normalized, {
+    selectedRole: "INFORMATION_SYNTHESISER",
+    eligibleMessageIds: ["m0"],
+    maxWords: 55,
+    maxSentences: 3,
+  });
+  assert.ok(checked.failedCriteria.includes("MESSAGE_EXCEEDS_WORD_LIMIT"));
+
+  const { groundingMessageIds: _ids, ...missingGrounding } = structured;
+  assert.equal(validateAgainstGenerationSchema(missingGrounding, "INFORMATION_SYNTHESISER").ok, false);
+  assert.equal(validateAgainstGenerationSchema({ ...structured, role: "EVIDENCE_CHALLENGER" }, "INFORMATION_SYNTHESISER").ok, false);
+});
+
+test("Synthesiser runtime prompt matches the simulator, manifest bytes and composed startup hash", () => {
+  const runtimeRoot = path.join(__dirname, "source/runtime");
+  const promptPath = path.join(runtimeRoot, "specialist/synthesiser.md");
+  const simulatorPath = path.join(__dirname, "../../test/participant_sim/prompts/source/runtime/specialist/synthesiser.md");
+  const prompt = fs.readFileSync(promptPath);
+  assert.deepEqual(prompt, fs.readFileSync(simulatorPath));
+
+  const manifest = JSON.parse(fs.readFileSync(path.join(runtimeRoot, "manifest.json"), "utf8"));
+  const entry = manifest.files["specialist/synthesiser.md"];
+  assert.equal(entry.bytes, prompt.length);
+  assert.equal(entry.sha256, createHash("sha256").update(prompt).digest("hex"));
+  assert.equal(verifyRuntimeSources(), true);
+
+  const bundle = runtimeGeneratorBundle("synthesiser");
+  assert.equal(bundle.blocked, false);
+  assert.equal(bundle.metadata.maxWords, 55);
+  assert.equal(bundle.metadata.promptHash, manifest.routes.synthesiser.generatorSha256);
+  assert.match(bundle.content, /typical intervention should be about 30–45 English words/);
+  assert.match(bundle.content, /longer response of up to 55 words is acceptable/);
 });
 
 // ── deterministic @-mention hygiene (2026-08-13) ────────────────────────
