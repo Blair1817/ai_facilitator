@@ -96,8 +96,8 @@
   "frozenControlScope": "Historical exact baseline and requested-Generalist route; Static/automatic Generalist use control_50 length-adapted policy.",
   "files": {
     "specialist/assessor.md": {
-      "sha256": "1885e801a47e907abfe64b4eaf26fa66618fa41334430b8d9b2c848a7d44a7e2",
-      "bytes": 10243
+      "sha256": "6dda6f3fb188de3112e8fa118f0f2ff574176540ebfa532d6546128ae9bda0a9",
+      "bytes": 10913
     },
     "specialist/assessor.schema.json": {
       "sha256": "1801bba0004ca29ed0fc58cdcf49958c3f1a48278dcd4a28c64103baf70865dc",

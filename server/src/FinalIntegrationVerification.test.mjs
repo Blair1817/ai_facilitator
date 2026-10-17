@@ -181,6 +181,95 @@ test("Assessor contract matches the runtime schema and simulator copy exactly", 
   }
 });
 
+test("passive two-criterion coverage cannot verify integration from two messages by one participant", () => {
+  const prompt = fs.readFileSync(path.join(dirname, "prompts/source/runtime/specialist/assessor.md"), "utf8");
+  assert.match(prompt, /present requires both at least three qualifying messages and at least two distinct participants/);
+  assert.match(prompt, /Two messages from one participant are insufficient/);
+  assert.match(prompt, /Do not emit an integration-dependent cognitive target unless integration_deficiency is present/);
+
+  const passiveChat = [
+    {
+      text: "The public transport table reports 9,000 visitors per hour for Eldoron, 8,000 for Cragnio, and 7,000 for Myloria. Because higher hourly capacity reduces arrival bottlenecks, Eldoron has the strongest capacity position, followed by Cragnio and then Myloria.",
+      sender: { id: "p1", name: "Red" },
+    },
+    {
+      text: "The public cost table reports 24,000 for Myloria, 28,000 for Cragnio, and 31,000 for Eldoron. Because lower total cost preserves more of the event budget, Myloria has the strongest cost position, followed by Cragnio and then Eldoron.",
+      sender: { id: "p1", name: "Red" },
+    },
+    {
+      text: "The public table contains transport-capacity and total-cost columns.",
+      sender: { id: "p1", name: "Red" },
+    },
+  ];
+  const raw = factors({
+    breadth_deficiency: {
+      status: "present",
+      strength: 0.8,
+      message_ids: ["m2"],
+      evidence: [{ messageId: "m2", span: passiveChat[2].text }],
+    },
+    integration_deficiency: {
+      status: "present",
+      strength: 0.8,
+      message_ids: ["m0", "m1"],
+      evidence: [
+        { messageId: "m0", span: "Eldoron has the strongest capacity position" },
+        { messageId: "m1", span: "Myloria has the strongest cost position" },
+      ],
+    },
+    cognitiveTargets: [{
+      need: "cross_option_evidence",
+      label: "Connect the capacity and cost rankings",
+      messageIds: ["m0", "m1"],
+      evidence: [
+        { messageId: "m0", span: "Eldoron has the strongest capacity position" },
+        { messageId: "m1", span: "Myloria has the strongest cost position" },
+      ],
+      optionLabels: ["Eldoron", "Myloria", "Cragnio"],
+      criteria: ["transport capacity", "total cost"],
+      status: "open",
+    }],
+  });
+
+  const checked = checkEvidence(raw, { chat: passiveChat });
+  assert.equal(checked.breadth_deficiency.status, "present");
+  assert.equal(checked.integration_deficiency.status, "uncertain");
+  assert.equal(checked.integration_deficiency.downgradedReason, "INSUFFICIENT_DISTRIBUTED_EVIDENCE");
+  assert.deepEqual(checked.cognitiveTargets, []);
+});
+
+test("three qualifying messages across two participants can verify integration and its target", () => {
+  const distributedChat = [
+    { text: "Eldoron capacity is 9,000 visitors per hour.", sender: { id: "p1", name: "Red" } },
+    { text: "Myloria cost is 24,000.", sender: { id: "p2", name: "Pink" } },
+    { text: "Cragnio has high weather reliability.", sender: { id: "p1", name: "Red" } },
+  ];
+  const evidence = distributedChat.map((message, index) => ({ messageId: `m${index}`, span: message.text }));
+  const raw = factors({
+    integration_deficiency: {
+      status: "present",
+      strength: 0.8,
+      message_ids: ["m0", "m1", "m2"],
+      evidence,
+    },
+    cognitiveTargets: [{
+      need: "fragmented_evidence",
+      label: "Connect the three public contributions",
+      messageIds: ["m0", "m1", "m2"],
+      evidence,
+      optionLabels: ["Eldoron", "Myloria", "Cragnio"],
+      criteria: ["transport capacity", "total cost", "weather reliability"],
+      status: "open",
+    }],
+  });
+
+  const checked = checkEvidence(raw, { chat: distributedChat });
+  assert.equal(checked.integration_deficiency.status, "present");
+  assert.equal(checked.integration_deficiency.downgradedReason, undefined);
+  assert.equal(checked.cognitiveTargets.length, 1);
+  assert.equal(checked.cognitiveTargets[0].need, "fragmented_evidence");
+});
+
 test("schema-valid evidence relations still require real public message IDs downstream", () => {
   const chat = world().game.get("chat_round_0");
   const raw = factors({ evidenceRelations: [relation("m0"), relation("m999")] });
