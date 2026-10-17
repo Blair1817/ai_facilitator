@@ -375,6 +375,8 @@ export class ExportService {
         groupChoiceConfidence: playerAttrs.groupChoiceConfidence ?? null,
         groupFinalConfirmedChoice: playerAttrs.groupFinalConfirmedChoice ?? null,
         groupFinalConfirmedAt: playerAttrs.groupFinalConfirmedAt ?? null,
+        groupFinalSubmittedAt: numberOrNull(playerAttrs.groupFinalSubmittedAt),
+        groupFinalTimeoutReason: playerAttrs.groupFinalTimeoutReason ?? null,
         finalPersonalChoice: playerAttrs.finalPersonalChoice ?? null,
         finalPersonalChoiceConfidence: playerAttrs.finalPersonalChoiceConfidence ?? null,
         finalPersonalChoiceRationale: playerAttrs.finalPersonalChoiceRationale ?? null,
@@ -395,6 +397,7 @@ export class ExportService {
       facilitation,
       officialGroupFinalChoice: attrs.officialGroupFinalChoice ?? null,
       finalDecisionOutcome: attrs.finalDecisionOutcome ?? null,
+      decisionFlowVersion: attrs.decisionFlowVersion ?? 1,
       finalDecisionMatchedChoice: attrs.finalDecisionMatchedChoice ?? null,
       finalDecisionConfirmed: pickBool(attrs.finalDecisionConfirmed),
       finalDecisionTimedOut: pickBool(attrs.finalDecisionTimedOut),
@@ -677,6 +680,8 @@ export function redactGameBundle(bundle) {
         groupChoiceConfidence: data.groupChoiceConfidence,
         groupFinalConfirmedChoice: data.groupFinalConfirmedChoice,
         groupFinalConfirmedAt: data.groupFinalConfirmedAt,
+        groupFinalSubmittedAt: data.groupFinalSubmittedAt,
+        groupFinalTimeoutReason: data.groupFinalTimeoutReason,
         finalPersonalChoice: data.finalPersonalChoice,
         finalPersonalChoiceConfidence: data.finalPersonalChoiceConfidence,
         finalPersonalChoiceRationale: data.finalPersonalChoiceRationale
@@ -736,6 +741,9 @@ export function renderQuestionnaireCsv(bundle) {
         ? ""
         : round.finalDecisionTimedOut ? "true" : "false",
       final_decision_finalized_at: round.finalDecisionFinalizedAt ?? "",
+      agrees_with_group_choice: data.agreesWithGroupChoice ?? "",
+      group_final_submitted_at: data.groupFinalSubmittedAt ?? "",
+      group_final_timeout_reason: data.groupFinalTimeoutReason ?? "",
       final_personal_choice: data.finalPersonalChoice ?? "",
       final_personal_confidence: data.finalPersonalChoiceConfidence ?? "",
       final_personal_rationale: data.finalPersonalChoiceRationale ?? "",
@@ -848,6 +856,7 @@ export function renderQuestionnaireCsv(bundle) {
     "final_personal_choice", "final_personal_confidence", "final_personal_rationale",
     "initial_decision_server_received_at", "initial_decision_accepted_on_time",
     "initial_decision_timeout_reason", "initial_decision_completion_duration_ms", "test_mode",
+    "agrees_with_group_choice", "group_final_submitted_at", "group_final_timeout_reason",
   ];
   const csv = toCsv(rows, columns);
   return { csv, columns, rowCount: rows.length };
@@ -1156,6 +1165,7 @@ function titleCase(value) {
 export function describeFinalDecisionOutcome(outcome) {
   if (outcome === "test_skipped") return "The researchers skipped this decision in a test session; no official choice was recorded.";
   if (outcome === "consensus_choice") return "All three participants confirmed the same option.";
+  if (outcome === "mismatch_fail") return "Participants reported different group choices; no consensus was recorded.";
   if (outcome === "declared_fail") return "All three participants confirmed that the group did not reach a final decision.";
   if (outcome === "timeout_fail") return "The group did not confirm a final decision before time ran out.";
   return null;

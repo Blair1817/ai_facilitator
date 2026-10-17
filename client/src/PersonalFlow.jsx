@@ -37,7 +37,7 @@ export function PersonalFlow() {
   const player = usePlayer(), round = useRound(), stage = useStage();
   const stageName = stage.get("name");
   const progress = player.round.get(personalProgressKey(stageName));
-  const pages = personalPages(stageName, round.get("taskIndex"));
+  const pages = personalPages(stageName, round.get("taskIndex"), round.get("decisionFlowVersion"));
   // Server-owned cursor survives refresh and advances only after saving responses.
   return progress ? <PersonalPage key={`${stage.id}:${progress.index}:${player.round.get("testProgressVersion") || 0}`}
     {...{ player, round, stage, stageName, progress, pages }} /> : <p role="status">Loading your page…</p>;
@@ -141,7 +141,7 @@ function PersonalPage({ player, round, stage, stageName, progress, pages }) {
   if (page === "Break") return <Break progress={progress} />;
   const Component = components[page];
   const outcome = round.get("finalDecisionOutcome");
-  const showDecisionNotice = stageName === "Followup"
+  const showDecisionNotice = round.get("decisionFlowVersion") !== 2 && stageName === "Followup"
     && ((outcome === "consensus_choice" && page === "TLX")
       || (["declared_fail", "timeout_fail"].includes(outcome) && page === "IndividualAssessment"));
   return <div className="relative h-full">

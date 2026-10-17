@@ -80,8 +80,10 @@ export default function App() {
           connecting={ConnectionRecovery}
           playerCreate={recruitmentMode === "prolific" ? ProlificPlayerCreate : PlayerCreate}
           lobby={CustomLobby}>
-            <Game />
-            <TestControlPanel />
+            <div className="flex h-full min-h-0 flex-col">
+              <TestControlPanel />
+              <div className="min-h-0 flex-1"><Game /></div>
+            </div>
           </EmpiricaContext>
         </div>
       </div>

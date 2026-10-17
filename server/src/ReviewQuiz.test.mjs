@@ -248,7 +248,7 @@ test("both Rounds implement the approved task lifecycle in order", () => {
 
   // The within-stage page lifecycle lives in the shared personal-flow config.
   assert.match(personalFlowShared, /export const PREPARATION_PAGES = \["TaskInformation", "ReviewQuiz", "InitialDecision"\]/);
-  assert.match(personalFlowShared, /\["IndividualAssessment", "TLX", "SubjectiveSurvey",/);
+  assert.match(personalFlowShared, /"IndividualAssessment"\]\), "TLX", "SubjectiveSurvey",/);
   assert.match(personalFlowShared, /taskIndex === 0 \? \["Break"\] : \["FinalQuestions", "ExpFeedback", "Debriefing"\]/);
   // Break is a Round 1 Followup page, not a stage.
   assert.doesNotMatch(callbacksSource, /name: "Break"/);
@@ -286,7 +286,7 @@ test("global intro keeps only one-time global steps and round screens use round 
   assert.match(introductionSource, /round\?\.get\("taskVersion"\)/);
   assert.doesNotMatch(introductionSource, /IntroContent/);
   assert.equal([...callbacksSource.matchAll(/name: "Walkthrough"/g)].length, 0);
-  assert.match(callbacksSource, /addPracticeRound\(game\)/);
+  assert.match(callbacksSource, /addPracticeRound\(game, 2\)/);
   assert.doesNotMatch(gameSource, /Walkthrough|IceBreakerStartCountdown|IceBreakerEndCountdown|PracticeIcebreaker/);
   assert.match(personalFlowClientSource, /TaskInformation: Introduction, ReviewQuiz, InitialDecision/);
 });

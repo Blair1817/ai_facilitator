@@ -127,7 +127,9 @@ export function PracticeOnboarding() {
       <p className="text-sm font-semibold uppercase tracking-wide text-blue-700">Before the main tasks</p>
       <h1 className="text-3xl font-bold text-gray-900">{complete ? "Practice complete" : "Practice Round"}</h1>
       {complete ? <>
-        {round.get("finalDecisionOutcome") === "timeout_fail"
+        {round.get("decisionFlowVersion") === 2
+          ? <p role="status" className="rounded-lg bg-blue-50 p-4 font-semibold text-blue-900">The decision period is complete.</p>
+          : round.get("finalDecisionOutcome") === "timeout_fail"
           ? <p role="status" className="rounded-lg bg-amber-50 p-4 font-semibold text-amber-900">Time is up. Your group did not confirm a final decision.</p>
           : round.get("finalDecisionConfirmed") === true
             ? <p role="status" className="rounded-lg bg-green-50 p-4 font-semibold text-green-800">Your group decision has been submitted.</p>

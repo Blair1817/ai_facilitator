@@ -26,7 +26,7 @@ test('personal skip preserves missing answers and previous affects only owner',(
 });
 test('duplicate, stale stage and stale version do not advance again',()=>{
  const w=world();const q=request(w,'skip_page');assert.equal(handleTestControl(w.players[0],q).status,'accepted');
- assert.deepEqual(handleTestControl(w.players[0],q),{requestId:q.requestId,status:'accepted',reason:'skip_page'});
+ assert.deepEqual(handleTestControl(w.players[0],q),{requestId:q.requestId,status:'accepted',reason:'skip_page',destination:'Knowledge check'});
  assert.equal(w.players[0].round.get('personalProgress_Preparation').index,1);
  assert.equal(handleTestControl(w.players[0],{...q,requestId:crypto.randomUUID()}).reason,'stale_progress');
  assert.equal(handleTestControl(w.players[0],request(w,'next_stage',{stageId:'old'})).reason,'stale_stage');
@@ -118,4 +118,29 @@ test('practice continuation from before a test return cannot replay on the same 
  const submit=version=>listeners.get('practiceRequest')({}, {player:p,practiceRequest:{roundId:w.round.id,stageId:w.stage.id,page:'PracticeWelcome',action:'continue',version}});
  submit(0);assert.equal(p.round.get('practicePageIndex'),undefined);
  submit(2);assert.equal(p.round.get('practicePageIndex'),1);
+});
+
+test('navigation previews cover practice, formal round boundaries and legacy follow-up',async()=>{
+ const {testControlDestinations,testPersonalState}=await import('../../shared/testMode.mjs');
+ const w=world();const targets=()=>testControlDestinations(w.round,w.stage,testPersonalState(w.players[0],w.round,w.stage));
+ assert.equal(targets().skip_page,'Knowledge check');
+ assert.equal(targets().next_stage,'Round 1 · Discussion');
+ w.stage.set('name','FinalDecision');w.round.set('decisionFlowVersion',2);
+ assert.equal(targets().next_stage,'Round 1 · Workload questionnaire');
+ w.round.set('decisionFlowVersion',1);assert.equal(targets().next_stage,'Round 1 · Individual assessment');
+ w.stage.set('name','Followup');assert.equal(targets().next_stage,'Round 2 · Task information');
+ w.round.set('taskIndex',1);assert.equal(targets().next_stage,'Study complete');
+ w.round.set('isPractice',true);
+ for(const [name,target] of [['PracticeWelcome','Practice discussion'],['PracticeDiscussion','Practice · Group final decision'],['FinalDecision','Practice complete'],['PracticeComplete','Round 1 · Task information']]){
+  w.stage.set('name',name);assert.equal(targets().next_stage,target);
+ }
+});
+
+test('completed personal flow receipts describe waiting rather than immediate group advancement',()=>{
+ const w=world();const p=w.players[0];p.round.set('personalProgress_Preparation',{index:2});
+ const result=handleTestControl(p,request(w,'skip_page'));
+ assert.equal(result.destination,'Waiting for other participants → Round 1 · Discussion');
+ assert.equal(w.stage.get('ended'),undefined);
+ assert.equal(w.game.get('testControlLastResult').destination,result.destination);
+ assert.equal(handleTestControl(p,request(w,'next_stage',{stageId:'old'})).destination,undefined);
 });

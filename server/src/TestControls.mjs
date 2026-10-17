@@ -1,4 +1,4 @@
-import { isTestGame, testPersonalState } from "../../shared/testMode.mjs";
+import { isTestGame, testPersonalState, testControlDestinations } from "../../shared/testMode.mjs";
 import { allPersonalPagesDone, personalProgressKey } from "../../shared/personalFlow.mjs";
 import { sharedBreakState, clearSharedBreakTimer, synchroniseSharedBreak } from "./PersonalFlow.mjs";
 import { appendToAttribute } from "./AppendOnlyAttribute.mjs";
@@ -26,7 +26,9 @@ const completionKeys = {
 };
 export function handleTestControl(player, request, now = Date.now()) {
   const game = player.currentGame, round = game?.currentRound, stage = game?.currentStage;
-  const result = (status, reason) => ({ requestId: request?.requestId, status, reason });
+  let destination;
+  const result = (status, reason) => ({ requestId: request?.requestId, status, reason,
+    ...(status === "accepted" && destination ? { destination } : {}) });
   if (!request || typeof request.requestId !== "string" || !request.requestId.length || request.requestId.length > 128)
     return result("rejected", "invalid_request");
   if (!isTestGame(game) || !game.players.some(p => p.id === player.id)) return result("rejected", "not_authorized");
@@ -46,6 +48,7 @@ export function handleTestControl(player, request, now = Date.now()) {
   const state = testPersonalState(player, round, stage);
   if (request.version !== state.version || request.stageVersion !== (stage.get("testControlVersion") || 0))
     return finish("rejected", "stale_progress");
+  destination = testControlDestinations(round, stage, state)[request.action];
   const name = stage.get("name");
   if (["previous", "skip_page"].includes(request.action)) {
     if (!state.pages.length || request.index !== state.index) return finish("rejected", "not_personal_page");
@@ -69,7 +72,7 @@ export function handleTestControl(player, request, now = Date.now()) {
       if (game.players.length === 3 && game.players.every(p => progress[p.id])) stage.set("ended", true);
     } else {
       player.round.set(personalProgressKey(name), { index, startedAt: now });
-      if (allPersonalPagesDone(game.players, name, round.get("taskIndex"))) stage.set("ended", true);
+      if (allPersonalPagesDone(game.players, name, round.get("taskIndex"), round.get("decisionFlowVersion"))) stage.set("ended", true);
     }
   } else if (request.action === "skip_break") {
     const summary = sharedBreakState(game.players, name, round.get("taskIndex"));
@@ -84,7 +87,7 @@ export function handleTestControl(player, request, now = Date.now()) {
       p.round.set("testProgressVersion", ps.version + 1, { protected: true });
       p.round.set(personalProgressKey(name), { index: ps.index + 1, startedAt: now });
     }
-    if (allPersonalPagesDone(game.players, name, 0)) stage.set("ended", true);
+    if (allPersonalPagesDone(game.players, name, 0, round.get("decisionFlowVersion"))) stage.set("ended", true);
   } else if (request.action === "next_stage") {
     if (name === "FinalDecision" && !round.get("finalDecisionConfirmed")) {
       round.set("officialGroupFinalChoice", null);

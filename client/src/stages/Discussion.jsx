@@ -51,7 +51,7 @@ export function Discussion() {
               </p>
             )}
             <h1 className="text-lg font-bold text-gray-900">
-              Review the information available below, and discuss the options with your group.
+              Discuss the information with your group and work together to agree on one final choice.
             </h1>
             <p className="mt-1 text-sm text-gray-600">
               (The discussion will end when time runs out or when all participants are ready to make the final decision.)
