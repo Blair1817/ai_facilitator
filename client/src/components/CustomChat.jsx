@@ -10,6 +10,12 @@ import ReactMentionsStyling from "./ReactMentionsStyling.jsx";
 import reactStringReplace from "react-string-replace";
 import { draftKey, usePersistentDraft } from "../hooks/usePersistentDraft.js";
 import { FacilitatorMessageContent } from "./FacilitatorMessageContent.jsx";
+import {
+    buildChatMentionUsers,
+    CHAT_MENTION_MARKUP,
+    CHAT_MENTION_PATTERN,
+    CHAT_MENTION_TRIGGER,
+} from "./chatMentions.mjs";
 
 
 
@@ -194,7 +200,7 @@ function MessageComp({ attribute }) {
     const ts = attribute.createdAt;
 
     const renderMessageWithMentions = (text) => {
-        return reactStringReplace(text, /@\[(\w+(?:\s+\w+)*)\]/g, (match, i) => (
+        return reactStringReplace(text, CHAT_MENTION_PATTERN, (match, i) => (
             <span key={i} className="mention">
                 @{match}
             </span>
@@ -306,17 +312,10 @@ function Input({ onNewMessage, requestResult, disabled = false }) {
         setPendingRequestId(null);
     }, [pendingRequestId, requestResult]);
 
-    const mentionUsers = usePlayers().map((player) => ({
-        id: player.id,
-        display: player.get("name"),
-    }));
-
-    if (!round?.get("isPractice") && facilitation != "none" && facilitation != "human") {
-        mentionUsers.push({
-            id: "ai",
-            display: "Facilitator",
-        });
-    }
+    const mentionUsers = buildChatMentionUsers(usePlayers(), player.id, {
+        isPractice: round?.get("isPractice"),
+        facilitation,
+    });
 
 
 
@@ -404,11 +403,11 @@ function Input({ onNewMessage, requestResult, disabled = false }) {
                     className="w-full"
                 >
                     <Mention
-                        trigger="@"
+                        trigger={CHAT_MENTION_TRIGGER}
                         data={mentionUsers}
                         style={{ backgroundColor: "#daf4fa" }}
                         appendSpaceOnAdd={true}
-                        markup="@[__display__]"
+                        markup={CHAT_MENTION_MARKUP}
                     />
                 </MentionsInput>
                 {requestError && <p className="text-sm text-red-600" role="alert">{requestError}</p>}
