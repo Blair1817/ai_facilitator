@@ -13,6 +13,8 @@ import {
   buildChatCompletionPayload,
   buildSuccessfulLLMResult,
   extractChatCompletionResponseMetadata,
+  resolveLLMRequestTimeoutMs,
+  withLLMRequestTimeout,
 } from "./LLMTransport.mjs";
 import { assessSemanticFactors } from "./SemanticAssessor.js";
 import { checkEvidence } from "./EvidenceChecker.js";
@@ -114,11 +116,17 @@ async function finalizeAuditLog(store, entry) {
 }
 
 async function whileFacilitatorPublishesVisibleResponse(game, logEntry, task) {
-  const stillCurrent = () => canPublishTestResult(game, logEntry);
-  if (!stillCurrent()) return false;
+  const stillCurrent = () => canPublishTestResult(game, logEntry)
+    && (logEntry.participantRequested === true || game.get("humanMessageCount") === logEntry.humanMessageCount);
+  const rejectStale = () => {
+    logEntry.reason = "Discarded stale AI result before publication because the originating Discussion stage or automatic discussion context changed";
+    logEntry.outcome = "SILENT";
+    return false;
+  };
+  if (!stillCurrent()) return rejectStale();
   await setVisibleResponsePending(game, logEntry.auditRequestId, true, () => Empirica.flush());
   try {
-    if (!stillCurrent()) return false;
+    if (!stillCurrent()) return rejectStale();
     return await task();
   } finally {
     await setVisibleResponsePending(game, logEntry.auditRequestId, false, () => Empirica.flush());
@@ -166,6 +174,7 @@ const _llmBase = process.env.LLM_API_ENDPOINT || "https://api.minimax.chat/v1";
 const llmAPIEndpoint = _llmBase.endsWith("/chat/completions") ? _llmBase : `${_llmBase.replace(/\/$/, "")}/chat/completions`;
 const llmMaxOutputTokens = Number.parseInt(process.env.LLM_MAX_OUTPUT_TOKENS ?? "1000", 10);
 const CALLBACKS_INSTANCE_ID = randomUUID();
+const AUTOMATIC_PIPELINE_GROUP = "AUTOMATIC_INTERVENTION";
 
 // ── LLM API call ──────────────────────────────────────────────────────────────
 
@@ -187,43 +196,46 @@ async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens) {
     // platform supports json_object output, re-enable here.
   });
   try {
-    const completion = await fetch(llmAPIEndpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify(data),
-    });
-    const isJson = completion.headers.get("content-type")?.includes("application/json");
-    const responseBody = isJson ? await completion.json() : await completion.text();
-    if (!completion.ok) {
-      const errorPayload = isJson ? responseBody : { error: responseBody };
-      console.error("LLM endpoint HTTP error:", { status: completion.status, error: errorPayload?.error || errorPayload });
-      return { success: false, error: errorPayload?.error?.message || completion.statusText };
-    }
-    const responseMetadata = extractChatCompletionResponseMetadata(responseBody);
-    const text = responseBody?.choices?.[0]?.message?.content;
-    if (typeof text !== "string" || text.length === 0) {
-      console.error("LLM response missing message content", {
-        model: openaiModel,
-        ...responseMetadata,
-        reasoningDetailsPresent: Array.isArray(responseBody?.choices?.[0]?.message?.reasoning_details),
+    return await withLLMRequestTimeout(async (signal) => {
+      const completion = await fetch(llmAPIEndpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify(data),
+        signal,
       });
-      const finishReason = responseMetadata.finish_reason || "unknown";
-      return {
-        success: false,
-        error: `LLM response missing message content (finish_reason=${finishReason})`,
-        responseMetadata,
-      };
-    }
-    // Provider envelopes are parsed by the schema-owning downstream stage.
-    // In particular, MiniMax may wrap valid JSON in one Markdown code fence;
-    // rejecting that here would bypass the Generator/Assessor/Validator
-    // parsers that explicitly and safely support the envelope.
-    return buildSuccessfulLLMResult(text, responseMetadata);
+      const isJson = completion.headers.get("content-type")?.includes("application/json");
+      const responseBody = isJson ? await completion.json() : await completion.text();
+      if (!completion.ok) {
+        const errorPayload = isJson ? responseBody : { error: responseBody };
+        console.error("LLM endpoint HTTP error:", { status: completion.status, error: errorPayload?.error || errorPayload });
+        return { success: false, error: errorPayload?.error?.message || completion.statusText };
+      }
+      const responseMetadata = extractChatCompletionResponseMetadata(responseBody);
+      const text = responseBody?.choices?.[0]?.message?.content;
+      if (typeof text !== "string" || text.length === 0) {
+        console.error("LLM response missing message content", {
+          model: openaiModel,
+          ...responseMetadata,
+          reasoningDetailsPresent: Array.isArray(responseBody?.choices?.[0]?.message?.reasoning_details),
+        });
+        const finishReason = responseMetadata.finish_reason || "unknown";
+        return {
+          success: false,
+          error: `LLM response missing message content (finish_reason=${finishReason})`,
+          responseMetadata,
+        };
+      }
+      // Provider envelopes are parsed by the schema-owning downstream stage.
+      // In particular, MiniMax may wrap valid JSON in one Markdown code fence;
+      // rejecting that here would bypass the Generator/Assessor/Validator
+      // parsers that explicitly and safely support the envelope.
+      return buildSuccessfulLLMResult(text, responseMetadata);
+    }, resolveLLMRequestTimeoutMs(process.env.LLM_REQUEST_TIMEOUT_MS));
   } catch (error) {
-    console.error("LLM endpoint error:", error);
+    console.error("LLM endpoint error:", { code: error?.code || "LLM_REQUEST_ERROR", message: error?.message || String(error) });
     return { success: false, error: error.message };
   }
 }
@@ -500,7 +512,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       // applied to the participant-requested (@Facilitator) bundle, which
       // is tagged triggerType: "PARTICIPANT_REQUEST" in its prompt metadata
       // -- that role needs more room to ground a substantive answer.
-      maxWords: built.metadata.triggerType === "PARTICIPANT_REQUEST" ? null : AUTOMATIC_MAX_WORDS,
+      maxWords: built.metadata.triggerType === "PARTICIPANT_REQUEST" ? null : built.metadata.maxWords ?? AUTOMATIC_MAX_WORDS,
       maxSentences: built.metadata.triggerType === "PARTICIPANT_REQUEST" ? null : isSpecialistRole(built.metadata.generationRole) ? 3 : 2,
       maxSections: isSpecialistRole(built.metadata.generationRole) ? built.metadata.generationRole === "INFORMATION_SYNTHESISER" ? 2 : 0 : null,
       enforcePlanGrounding: isSpecialistRole(built.metadata.generationRole),
@@ -520,7 +532,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
         silent: true,
         reason: `Generator output failed validation: ${deterministicResult.failedCriteria.join(", ")}`,
         // Carried so the caller can offer a single, narrowly-scoped repair
-        // retry when the ONLY failure was the 50-word cap (see
+        // retry when the ONLY failure was the route's word cap (see
         // isWordLimitOnlyFailure / buildWordLimitRepairUserContent below).
         // Any other deterministic failure (ROLE_MISMATCH, MARKDOWN_DETECTED,
         // UNKNOWN_GROUNDING_ID, ...) still fails silently on attempt 1, same
@@ -534,7 +546,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     return { ok: true, candidate };
   }
 
-  // True only when the 50-word cap was the SOLE deterministic failure.
+  // True only when the route's word cap was the SOLE deterministic failure.
   // Scoped deliberately narrow: a message that is otherwise fully valid and
   // merely ran long is safe to ask the model to shorten; a message that
   // also failed grounding/role/markdown checks is not -- that goes silent
@@ -552,12 +564,13 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   // below) because the feedback here is deterministic and mechanical: keep
   // the same content/intent, just shorten it.
   function buildWordLimitRepairUserContent(priorCandidate) {
+    const maxWords = built.metadata.maxWords ?? AUTOMATIC_MAX_WORDS;
     const priorJson = JSON.stringify(
       { role: priorCandidate.role, message: priorCandidate.message, groundingMessageIds: priorCandidate.groundingMessageIds },
       null,
       2
     );
-    return `${built.userContent}\n\n---\n\n[PRIOR_FAILED_CRITERIA]\nThe previous candidate at this checkpoint was rejected for exceeding the 50-word limit on \`message\`.\nPrevious candidate (do NOT repeat it verbatim -- shorten the SAME idea/intent to at most 50 words):\n${priorJson}\nRegenerate a candidate with the same intent and role, at most 50 words.`;
+    return `${built.userContent}\n\n---\n\n[PRIOR_FAILED_CRITERIA]\nThe previous candidate at this checkpoint was rejected for exceeding the ${maxWords}-word limit on \`message\`.\nPrevious candidate (do NOT repeat it verbatim -- shorten the SAME idea/intent to at most ${maxWords} words):\n${priorJson}\nRegenerate a candidate with the same intent and role, at most ${maxWords} words.`;
   }
 
   // Build the user-content append for the repair attempt. The
@@ -1634,6 +1647,14 @@ async function handleChat(env, { game }) {
     Empirica.flush();
     return;
   }
+  // Attribute listeners may replay the same full chat value. Claim the
+  // canonical final human message synchronously after the stage/timing guards
+  // so a duplicate callback cannot increment pacing counters or start a
+  // second pipeline, while a transiently incomplete stage can still retry.
+  if (typeof lastMessage.messageId === "string" && lastMessage.messageId.length > 0) {
+    if (game.get("lastProcessedHumanMessageId") === lastMessage.messageId) return;
+    game.set("lastProcessedHumanMessageId", lastMessage.messageId);
+  }
   const originatingRoundId = currentRound.id;
   const originatingStageId = game.currentStage.id;
 
@@ -1746,11 +1767,18 @@ async function handleChat(env, { game }) {
   }
 
   logEntry.serverInstanceId = CALLBACKS_INSTANCE_ID;
-  await beginInFlight(
+  const beganInFlight = await beginInFlight(
     game,
     { ...logEntry, outcome: "PENDING" },
     () => Empirica.flush(),
+    isMentionCheckpoint ? undefined : { exclusiveGroup: AUTOMATIC_PIPELINE_GROUP },
   );
+  if (!beganInFlight) {
+    logEntry.outcome = "SILENT_AUTOMATIC_IN_FLIGHT";
+    logEntry.reason = "Skipped automatic checkpoint because an earlier automatic intervention pipeline is still in flight";
+    await finalizeAuditLog(game, logEntry);
+    return;
+  }
 
   // Explicit @Facilitator request: answer with the participant-requested
   // Generalist before either condition's automatic policy. This path uses

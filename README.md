@@ -70,6 +70,7 @@ GRAIL calls the OpenAI Responses API to generate LLM facilitator messages. Confi
 | `OPENAI_MODEL` | Model to use (e.g., `gpt-4o`, `gpt-5-mini`) | `gpt-4o` |
 | `LLM_API_ENDPOINT` | API endpoint URL | `https://api.openai.com/v1/responses` |
 | `LLM_MAX_OUTPUT_TOKENS` | Maximum number of tokens in the LLM response | `1000` |
+| `LLM_REQUEST_TIMEOUT_MS` | Hard timeout for one provider request, including response-body reading | `90000` |
 
 See `./server/.env.example` for a template. Only `max_output_tokens` is sent as a model parameter by default. If you need to pass additional model-specific parameters (e.g., `temperature`, `reasoning`), you can add them to the `data` object in `server/src/callbacks.js`.
 

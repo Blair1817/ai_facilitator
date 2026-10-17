@@ -43,7 +43,7 @@ A targeted question about a public claim is permitted; it must examine reasoning
 
 ## STYLE
 Use plain, natural English appropriate to the discussion. Be concise. Do not fill a word budget for its own sake.
-Every automatic intervention has a maximum of 50 English words (<=50), counted across all visible text. There is no minimum or target length. Follow the assigned role's sentence and section policy. A shorter intervention is valid when it completes the action.
+Obey the assigned role's word, sentence and section limits, counted across all visible text. There is no minimum length. A shorter intervention is valid when it completes the action.
 Avoid clinical diagnoses and generic encouragement when a concrete role-consistent action is available.
 
 ## OUTPUT CONTRACT

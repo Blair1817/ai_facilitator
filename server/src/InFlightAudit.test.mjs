@@ -139,6 +139,21 @@ test("two overlapping requests remain independent through visibility and termina
   assert.equal(s.get(LLM_LOG_INDEX_KEY).length, 2);
 });
 
+test("automatic coordination is exclusive while participant-requested lifecycles remain independent", async () => {
+  const s = { ...store(), id: "automatic-coordination-game" };
+  const first = { auditRequestId: "automatic-A", outcome: "PENDING" };
+  const second = { auditRequestId: "automatic-B", outcome: "PENDING" };
+  const requested = { auditRequestId: "requested-C", participantRequested: true, outcome: "PENDING" };
+
+  assert.equal(await beginInFlight(s, first, undefined, { exclusiveGroup: "AUTOMATIC_INTERVENTION" }), true);
+  assert.equal(await beginInFlight(s, second, undefined, { exclusiveGroup: "AUTOMATIC_INTERVENTION" }), false);
+  assert.equal(await beginInFlight(s, requested), true);
+  assert.deepEqual(new Set(Object.keys(s.get("llmInFlight"))), new Set(["automatic-A", "requested-C"]));
+
+  await finalizeAuditLog(s, { ...first, outcome: "SILENT" });
+  assert.equal(await beginInFlight(s, second, undefined, { exclusiveGroup: "AUTOMATIC_INTERVENTION" }), true);
+});
+
 test("same-process recovery prunes a terminal-backed stale marker without duplicating logs or chat", async () => {
   const s = { ...store(), id: "same-process-recovery-game" };
   const chat = [{ messageId: "facilitator-existing", speakerType: "facilitator" }];

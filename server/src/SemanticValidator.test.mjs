@@ -6,7 +6,9 @@
 // fake-entry.js trick those files' own tests use.
 import assert from "node:assert/strict";
 import test from "node:test";
+import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -191,10 +193,34 @@ test("getValidatorPromptBundle: loads validator.md successfully, not blocked", (
   assert.equal(result.metadata.sourceCompleteness, "no_markers_found");
 });
 
+test("Specialist Validator prompt uses the canonical field name and matches its simulator copy and manifest", () => {
+  const runtimeRoot = path.join(__dirname, "prompts/source/runtime");
+  const runtimePath = path.join(runtimeRoot, "specialist/validator.md");
+  const simulatorPath = path.join(__dirname, "../test/participant_sim/prompts/source/runtime/specialist/validator.md");
+  const prompt = fs.readFileSync(runtimePath);
+  assert.deepEqual(prompt, fs.readFileSync(simulatorPath));
+
+  const text = prompt.toString("utf8");
+  assert.match(text, /exact output property name `requiredReasoningActMissing`/);
+  assert.match(text, /Never output `requiredReasoningAct`/);
+
+  const manifest = JSON.parse(fs.readFileSync(path.join(runtimeRoot, "manifest.json"), "utf8"));
+  const entry = manifest.files["specialist/validator.md"];
+  assert.equal(entry.bytes, prompt.length);
+  assert.equal(entry.sha256, createHash("sha256").update(prompt).digest("hex"));
+});
+
 // ── schema validation ────────────────────────────────────────────────────────
 
 test("validateAgainstValidatorSchema: accepts a well-formed all-false object", () => {
   assert.equal(validateAgainstValidatorSchema(CANDIDATE_PASSED).ok, true);
+});
+
+test("validateAgainstValidatorSchema: accepts requiredReasoningActMissing and rejects requiredReasoningAct", () => {
+  assert.equal(validateAgainstValidatorSchema(CANDIDATE_PASSED).ok, true);
+  const legacyLooking = { ...CANDIDATE_PASSED, requiredReasoningAct: false };
+  delete legacyLooking.requiredReasoningActMissing;
+  assert.equal(validateAgainstValidatorSchema(legacyLooking).ok, false);
 });
 
 test("validateAgainstValidatorSchema: accepts a single criterion flagged true (rejection of a real audit verdict)", () => {

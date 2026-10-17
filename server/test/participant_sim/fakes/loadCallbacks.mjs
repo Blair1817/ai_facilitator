@@ -67,8 +67,24 @@ function findAttributeListener(Empirica, kind, key) {
   return hit.callback;
 }
 
-let offlinePromise = null;
+let offlineHarnessPromise = null;
 let livePromise = null;
+
+export async function getOfflineCallbacksHarness() {
+  if (!offlineHarnessPromise) {
+    offlineHarnessPromise = (async () => {
+      process.env.LLM_API_ENDPOINT = "http://127.0.0.1:65535";
+      process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || "offline-test-key-unused";
+      process.env.OPENAI_MODEL = process.env.OPENAI_MODEL || "offline-test-model";
+      const mod = await buildAndImport("offline");
+      return {
+        handleChat: findAttributeListener(mod.Empirica, "game", "chat_round_0"),
+        Empirica: mod.Empirica,
+      };
+    })();
+  }
+  return offlineHarnessPromise;
+}
 
 /**
  * "Offline" variant: LLM_API_ENDPOINT is pointed at an address that refuses
@@ -84,16 +100,7 @@ let livePromise = null;
  * generated text.
  */
 export async function getOfflineHandleChat() {
-  if (!offlinePromise) {
-    offlinePromise = (async () => {
-      process.env.LLM_API_ENDPOINT = "http://127.0.0.1:65535"; // unbound high port: instant ECONNREFUSED, not in undici's blocked-port list
-      process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || "offline-test-key-unused";
-      process.env.OPENAI_MODEL = process.env.OPENAI_MODEL || "offline-test-model";
-      const mod = await buildAndImport("offline");
-      return findAttributeListener(mod.Empirica, "game", "chat_round_0");
-    })();
-  }
-  return offlinePromise;
+  return (await getOfflineCallbacksHarness()).handleChat;
 }
 
 /**

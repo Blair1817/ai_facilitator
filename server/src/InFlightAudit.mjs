@@ -129,7 +129,7 @@ function appendLog(store, entry) {
   return appendToAttribute(store, LLM_LOG_NAMESPACE, { ...entry, id });
 }
 
-export function beginInFlight(store, entry, flush) {
+export function beginInFlight(store, entry, flush, { exclusiveGroup = null } = {}) {
   if (!entry?.auditRequestId) throw new Error("An in-flight audit entry requires auditRequestId");
   return enqueueLifecycleMutation(store, async () => {
     const { active, pruned } = activeInFlight(store);
@@ -138,9 +138,14 @@ export function beginInFlight(store, entry, flush) {
       await flushLifecycleMutation(flush);
       return false;
     }
+    if (exclusiveGroup && Object.values(active).some((candidate) => candidate?.exclusiveGroup === exclusiveGroup)) {
+      if (pruned) store.set(IN_FLIGHT_KEY, active);
+      await flushLifecycleMutation(flush);
+      return false;
+    }
     store.set(IN_FLIGHT_KEY, {
       ...active,
-      [entry.auditRequestId]: { ...entry, visibleResponsePending: false },
+      [entry.auditRequestId]: { ...entry, exclusiveGroup, visibleResponsePending: false },
     });
     await flushLifecycleMutation(flush);
     return true;

@@ -1,4 +1,4 @@
-> **2026-10-16 superseding implementation:** v3.2 is now connected through `source/runtime/manifest.json`. Automatic paths share a 50-word ceiling; requested facilitation retains its frozen bundle. See [runtime integration](../../../PROMPTS_V3_2.md). The implementation notes below describe earlier package versions and must not be used to infer the active source route.
+> **2026-10-17 superseding implementation:** v3.2 is connected through `source/runtime/manifest.json`. Static, automatic Generalist, Expander and Challenger retain a 50-word ceiling; Synthesiser has a 55-word ceiling; requested facilitation retains its frozen bundle. See [runtime integration](../../../PROMPTS_V3_2.md). The implementation notes below describe earlier package versions and must not be used to infer the active source route.
 
 # Prompt module status
 

@@ -80,11 +80,15 @@ test('practice skip and return preserve saved answers and reset readiness',()=>{
 });
 
 
-test('late AI result is blocked when test stage ended or changed',()=>{
- const w=world(true,'Task'),origin={stageId:w.stage.id,roundId:w.round.id};
- assert.equal(canPublishTestResult(w.game,origin),true);
- w.stage.set('ended',true);assert.equal(canPublishTestResult(w.game,origin),false);
- w.game.currentStage=store({name:'FinalDecision'},'next');assert.equal(canPublishTestResult(w.game,origin),false);
+test('late AI result is blocked for both formal and test games when its Task stage ended or changed',()=>{
+ for (const testMode of [false, true]) {
+  const w=world(testMode,'Task'),origin={stageId:w.stage.id,roundId:w.round.id};
+  assert.equal(canPublishTestResult(w.game,origin),true);
+  w.stage.set('ended',true);assert.equal(canPublishTestResult(w.game,origin),false);
+  w.stage.set('ended',false);w.game.set('endedAt',new Date().toISOString());assert.equal(canPublishTestResult(w.game,origin),false);
+  w.game.set('endedAt',undefined);w.game.set('ended',true);assert.equal(canPublishTestResult(w.game,origin),false);
+  w.game.set('ended',false);w.game.currentStage=store({name:'FinalDecision'},'next');assert.equal(canPublishTestResult(w.game,origin),false);
+ }
 });
 
 test('old personal submission cannot replay after returning to the same page',async()=>{

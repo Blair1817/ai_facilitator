@@ -4,8 +4,12 @@ import { sharedBreakState, clearSharedBreakTimer, synchroniseSharedBreak } from 
 import { appendToAttribute } from "./AppendOnlyAttribute.mjs";
 
 export function canPublishTestResult(game, origin) {
-  return !isTestGame(game) || (game.currentStage?.id === origin.stageId
-    && game.currentRound?.id === origin.roundId && !game.currentStage.get("ended"));
+  return game.currentStage?.id === origin.stageId
+    && game.currentRound?.id === origin.roundId
+    && game.currentStage?.get("name") === "Task"
+    && !game.currentStage.get("ended")
+    && !game.get("ended")
+    && !game.get("endedAt");
 }
 
 export function initializeTestControls(game) {

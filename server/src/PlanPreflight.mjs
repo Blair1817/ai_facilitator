@@ -1,5 +1,6 @@
 import { GENERATION_ROLES, OPERATION_ROLE, isPublicParticipantMessage } from "./CognitiveOperations.mjs";
 import { withMessageIds } from "./prompts/DynamicContext.mjs";
+import { AUTOMATIC_MAX_WORDS, SYNTHESISER_MAX_WORDS } from "./prompts/PromptRuntime.mjs";
 
 /** Input/source checks, not an independent proof of semantic correctness.
  * Public-target interpretations remain subject to semantic validation. */
@@ -25,7 +26,7 @@ export function preflightPlan(plan, { chat = [], taskGeneralContext = "", active
   const repeated = interventionHistory.some(h => h.signature === plan?.signature ||
     h.requiredReasoningAct === plan?.requiredReasoningAct && JSON.stringify([...(h.target?.messageIds || [])].sort()) === JSON.stringify([...(target?.messageIds || [])].sort()));
   const checks = {
-    roleOperationMatch: !!plan && OPERATION_ROLE[plan.requiredReasoningAct] === plan.role && GENERATION_ROLES[plan.role] === plan.generationRole && plan.maxWords === 50 && plan.maxSentences === 3,
+    roleOperationMatch: !!plan && OPERATION_ROLE[plan.requiredReasoningAct] === plan.role && GENERATION_ROLES[plan.role] === plan.generationRole && plan.maxWords === (plan.role === "synthesiser" ? SYNTHESISER_MAX_WORDS : AUTOMATIC_MAX_WORDS) && plan.maxSentences === 3,
     publicTargetVerified: targetVerified,
     evidenceCoverageVerified: enough,
     // Compiler targets never assert global absence: generation must qualify scope.

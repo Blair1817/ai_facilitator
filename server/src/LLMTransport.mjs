@@ -1,6 +1,44 @@
 import { strictParseJsonObject } from "./prompts/GeneratorContract.mjs";
 
 export const MINIMAX_REASONING_COMPLETION_FLOOR = 4096;
+export const DEFAULT_LLM_REQUEST_TIMEOUT_MS = 90_000;
+
+export function resolveLLMRequestTimeoutMs(value) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_LLM_REQUEST_TIMEOUT_MS;
+}
+
+export class LLMRequestTimeoutError extends Error {
+  constructor(timeoutMs) {
+    super(`LLM request timed out after ${timeoutMs}ms`);
+    this.name = "LLMRequestTimeoutError";
+    this.code = "LLM_REQUEST_TIMEOUT";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/**
+ * Bound the complete provider operation, including response-body parsing.
+ * Aborting the supplied signal stops a compliant fetch implementation; the
+ * Promise race still enforces the deadline if a provider or test double
+ * ignores AbortSignal.
+ */
+export async function withLLMRequestTimeout(operation, timeoutMs = DEFAULT_LLM_REQUEST_TIMEOUT_MS) {
+  const effectiveTimeoutMs = resolveLLMRequestTimeoutMs(timeoutMs);
+  const controller = new AbortController();
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new LLMRequestTimeoutError(effectiveTimeoutMs));
+    }, effectiveTimeoutMs);
+  });
+  try {
+    return await Promise.race([operation(controller.signal), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export function isMiniMaxReasoningModel(model) {
   return typeof model === "string" && /^MiniMax-M2(?:$|[.\-])/i.test(model.trim());

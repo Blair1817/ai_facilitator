@@ -1,0 +1,324 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { FakeGame, FakeRound, FakeStage, FakeScope, makeFakePlayer } from "../test/participant_sim/fakes/fakeStore.mjs";
+import { getOfflineCallbacksHarness } from "../test/participant_sim/fakes/loadCallbacks.mjs";
+import { buildCanonicalMessage } from "./ExperimentPolicies.mjs";
+import { FACTOR_KEYS } from "./EvidenceChecker.js";
+import { VALIDATOR_CRITERIA } from "./SemanticValidator.js";
+import { readAppendOnlyAttribute } from "./AppendOnlyAttribute.mjs";
+
+const dirname = path.dirname(fileURLToPath(import.meta.url));
+process.argv[1] = path.join(dirname, "fake-entry.js");
+
+function world(facilitation = "static") {
+  const players = ["Alex", "Casey", "Jordan"].map((name, index) => makeFakePlayer({
+    id: `reliability-${index}`,
+    name,
+    hexCode: "ffffff",
+  }));
+  const game = new FakeGame({}, players);
+  const round = new FakeRound({
+    index: 0,
+    taskIndex: 0,
+    taskVersion: "A",
+    facilitation,
+    generalInfo: "Choose City A or City B using public transport and cost evidence.",
+    decisionOptions: [{ id: "a", label: "City A" }, { id: "b", label: "City B" }],
+  }, game);
+  const stage = new FakeStage({ name: "Task" }, round);
+  stage.currentGame = game;
+  game.currentRound = round;
+  game.currentStage = stage;
+  for (const player of players) {
+    player.currentGame = game;
+    player.round = new FakeScope("playerRound");
+    player.stage = new FakeScope("playerStage");
+  }
+  game.set("deadline", Date.now() + 400_000);
+  game.set("taskStartTime", Date.now() - 100_000);
+  game.set("humanMessageCount", 5);
+  game.set("messagesSinceLastPublish", 5);
+  const lines = [
+    "I prefer City B.",
+    "City A transport is 12 minutes.",
+    "City B transport is 18 minutes.",
+    "City A cost is 25000.",
+    "City B cost is 32000.",
+    "Those are my reported figures.",
+  ];
+  game.set("chat_round_0", lines.map((content, index) => humanMessage(game, players[index % players.length], content, index)));
+  return { game, round, stage, players };
+}
+
+function humanMessage(game, player, content, index) {
+  return buildCanonicalMessage({
+    messageId: `reliability-human-${index}`,
+    groupId: game.id,
+    participantId: player.id,
+    roundIndex: 0,
+    stage: "Discussion",
+    messageType: "human",
+    speakerType: "human",
+    timestamp: Date.now() + index,
+    sequencePosition: index,
+    content,
+    sender: { id: player.id, name: player.get("name") },
+  });
+}
+
+function response(data) {
+  return new Response(JSON.stringify({
+    choices: [{ message: { content: JSON.stringify(data) }, finish_reason: "stop" }],
+    usage: { total_tokens: 10 },
+  }), { headers: { "content-type": "application/json" } });
+}
+
+function absentFactors() {
+  return {
+    ...Object.fromEntries(FACTOR_KEYS.map((key) => [key, {
+      status: "absent",
+      strength: 0,
+      message_ids: [],
+      evidence: [],
+    }])),
+    evidenceRelations: [],
+    cognitiveTargets: [],
+  };
+}
+
+function validatorPass() {
+  return Object.fromEntries(VALIDATOR_CRITERIA.map((key) => [key, false]));
+}
+
+function validResponseFor(body) {
+  const system = body.messages[0].content;
+  if (system.startsWith("# assessor.md")) return response(absentFactors());
+  if (system.startsWith("# validator.md")) return response(validatorPass());
+  return response({
+    role: system.includes("# requested_generalist.md") || system.includes("# generalist.md") ? "GENERALIST" : "STATIC",
+    message: "What public evidence should the group compare next?",
+    groundingMessageIds: [],
+  });
+}
+
+function transitionToNextStage(w) {
+  w.stage.set("ended", true);
+  const next = new FakeStage({ name: "FinalDecision" }, w.round);
+  next.currentGame = w.game;
+  w.game.currentStage = next;
+}
+
+async function waitUntil(predicate) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.fail("Timed out waiting for callback checkpoint");
+}
+
+async function withMockedFetch(fetchImpl, task) {
+  const priorFetch = globalThis.fetch;
+  const priorSetTimeout = globalThis.setTimeout;
+  const priorError = console.error;
+  const priorWarn = console.warn;
+  const timers = [];
+  globalThis.fetch = fetchImpl;
+  globalThis.setTimeout = (...args) => {
+    const timer = priorSetTimeout(...args);
+    timers.push(timer);
+    return timer;
+  };
+  console.error = () => {};
+  console.warn = () => {};
+  try {
+    return await task();
+  } finally {
+    globalThis.fetch = priorFetch;
+    globalThis.setTimeout = priorSetTimeout;
+    timers.forEach(clearTimeout);
+    console.error = priorError;
+    console.warn = priorWarn;
+  }
+}
+
+function published(w) {
+  return w.game.get("chat_round_0").filter((message) => message.sender?.id === "ai");
+}
+
+test("formal stage transitions during Assessor, Generator, or Validator execution prevent publication", async () => {
+  const { handleChat } = await getOfflineCallbacksHarness();
+  for (const phase of ["assessor", "generator", "validator"]) {
+    const w = world(phase === "assessor" ? "adaptive" : "static");
+    let transitioned = false;
+    await withMockedFetch(async (_url, options) => {
+      const body = JSON.parse(options.body);
+      const system = body.messages[0].content;
+      const currentPhase = system.startsWith("# assessor.md")
+        ? "assessor"
+        : system.startsWith("# validator.md") ? "validator" : "generator";
+      if (!transitioned && currentPhase === phase) {
+        transitioned = true;
+        transitionToNextStage(w);
+      }
+      return validResponseFor(body);
+    }, () => handleChat(undefined, { game: w.game }));
+    assert.equal(transitioned, true, `${phase} transition hook must execute`);
+    assert.equal(published(w).length, 0, `${phase} result must not publish after a formal transition`);
+  }
+});
+
+test("formal stage ending in the final pre-publication flush closes the append race", async () => {
+  const { handleChat, Empirica } = await getOfflineCallbacksHarness();
+  const w = world("static");
+  Empirica.setFlusher({
+    async flush() {
+      const active = Object.values(w.game.get("llmInFlight") || {});
+      if (active.some((entry) => entry.visibleResponsePending === true)) w.stage.set("ended", true);
+    },
+  });
+  try {
+    await withMockedFetch(async (_url, options) => validResponseFor(JSON.parse(options.body)),
+      () => handleChat(undefined, { game: w.game }));
+  } finally {
+    Empirica.setFlusher(undefined);
+  }
+  assert.equal(published(w).length, 0);
+  assert.match(readAppendOnlyAttribute(w.game, "llmLog").at(-1).reason, /before publication/);
+});
+
+test("participant-requested generation cannot publish or fall back after its formal stage changes", async () => {
+  const { handleChat } = await getOfflineCallbacksHarness();
+  const w = world("static");
+  const chat = w.game.get("chat_round_0");
+  chat.at(-1).content += " @[Facilitator]";
+  chat.at(-1).text = chat.at(-1).content;
+  let transitioned = false;
+  await withMockedFetch(async (_url, options) => {
+    if (!transitioned) {
+      transitioned = true;
+      transitionToNextStage(w);
+    }
+    return validResponseFor(JSON.parse(options.body));
+  }, () => handleChat(undefined, { game: w.game }));
+  assert.equal(published(w).length, 0);
+  assert.equal(w.game.get("totalFallbackMessages") || 0, 0);
+  assert.deepEqual(w.game.get("llmInFlight"), {});
+});
+
+test("a stalled automatic request times out, finalizes its audit, and leaves no visible typing state", async () => {
+  const { handleChat } = await getOfflineCallbacksHarness();
+  const w = world("static");
+  const priorTimeout = process.env.LLM_REQUEST_TIMEOUT_MS;
+  process.env.LLM_REQUEST_TIMEOUT_MS = "5";
+  try {
+    await withMockedFetch(() => new Promise(() => {}), () => handleChat(undefined, { game: w.game }));
+  } finally {
+    if (priorTimeout === undefined) delete process.env.LLM_REQUEST_TIMEOUT_MS;
+    else process.env.LLM_REQUEST_TIMEOUT_MS = priorTimeout;
+  }
+  const last = readAppendOnlyAttribute(w.game, "llmLog").at(-1);
+  assert.equal(last.outcome, "SILENT");
+  assert.equal(last.failureStage, "generator_api");
+  assert.match(last.reason, /timed out after 5ms/);
+  assert.deepEqual(w.game.get("llmInFlight"), {});
+  assert.equal(published(w).length, 0);
+});
+
+test("a participant-requested timeout keeps the safe fallback and finalizes cleanly", async () => {
+  const { handleChat } = await getOfflineCallbacksHarness();
+  const w = world("static");
+  const chat = w.game.get("chat_round_0");
+  chat.at(-1).content += " @[Facilitator]";
+  chat.at(-1).text = chat.at(-1).content;
+  const priorTimeout = process.env.LLM_REQUEST_TIMEOUT_MS;
+  process.env.LLM_REQUEST_TIMEOUT_MS = "5";
+  try {
+    await withMockedFetch(() => new Promise(() => {}), () => handleChat(undefined, { game: w.game }));
+  } finally {
+    if (priorTimeout === undefined) delete process.env.LLM_REQUEST_TIMEOUT_MS;
+    else process.env.LLM_REQUEST_TIMEOUT_MS = priorTimeout;
+  }
+  const last = readAppendOnlyAttribute(w.game, "llmLog").at(-1);
+  assert.equal(last.outcome, "PUBLISHED_REQUEST_FALLBACK");
+  assert.equal(last.fallbackUsed, "PARTICIPANT_REQUEST_SAFE_CLARIFICATION");
+  assert.equal(published(w).length, 1);
+  assert.deepEqual(w.game.get("llmInFlight"), {});
+});
+
+test("overlapping automatic callbacks do not start a second pipeline or publish stale context", async () => {
+  const { handleChat } = await getOfflineCallbacksHarness();
+  const w = world("static");
+  let resolveFirst;
+  const firstResponse = new Promise((resolve) => { resolveFirst = resolve; });
+  let requests = 0;
+  await withMockedFetch(async (_url, options) => {
+    requests += 1;
+    if (requests === 1) return firstResponse;
+    return validResponseFor(JSON.parse(options.body));
+  }, async () => {
+    const first = handleChat(undefined, { game: w.game });
+    await waitUntil(() => requests === 1);
+    const chat = w.game.get("chat_round_0");
+    chat.push(humanMessage(w.game, w.players[0], "A later public fact.", 6));
+    w.game.set("lastAttemptTimestamp", Date.now() - 31_000);
+    const second = handleChat(undefined, { game: w.game });
+    await second;
+    assert.equal(requests, 1, "the overlapping automatic callback must not reach the provider");
+    resolveFirst(validResponseFor({ messages: [{ content: "# static.md" }] }));
+    await first;
+  });
+  assert.equal(w.game.get("attemptedThisRound"), 1);
+  assert.equal(w.game.get("publishedThisRound") || 0, 0);
+  assert.equal(published(w).length, 0, "the older automatic result is stale after the later human message");
+  assert.ok(readAppendOnlyAttribute(w.game, "llmLog").some((entry) => entry.outcome === "SILENT_AUTOMATIC_IN_FLIGHT"));
+});
+
+test("duplicate chat callbacks are idempotent while the first provider request is slow", async () => {
+  const { handleChat } = await getOfflineCallbacksHarness();
+  const w = world("static");
+  let resolveFirst;
+  const firstResponse = new Promise((resolve) => { resolveFirst = resolve; });
+  let requests = 0;
+  await withMockedFetch(async (_url, options) => {
+    requests += 1;
+    if (requests === 1) return firstResponse;
+    return validResponseFor(JSON.parse(options.body));
+  }, async () => {
+    const first = handleChat(undefined, { game: w.game });
+    await waitUntil(() => requests === 1);
+    await handleChat(undefined, { game: w.game });
+    assert.equal(requests, 1);
+    assert.equal(w.game.get("humanMessageCount"), 6);
+    resolveFirst(validResponseFor({ messages: [{ content: "# static.md" }] }));
+    await first;
+  });
+  assert.equal(published(w).length, 1);
+  assert.equal(w.game.get("attemptedThisRound"), 1);
+});
+
+test("participant request remains immediate during an automatic pipeline and supersedes its stale publication", async () => {
+  const { handleChat } = await getOfflineCallbacksHarness();
+  const w = world("static");
+  let resolveAutomatic;
+  const automaticResponse = new Promise((resolve) => { resolveAutomatic = resolve; });
+  let requests = 0;
+  await withMockedFetch(async (_url, options) => {
+    requests += 1;
+    if (requests === 1) return automaticResponse;
+    return validResponseFor(JSON.parse(options.body));
+  }, async () => {
+    const automatic = handleChat(undefined, { game: w.game });
+    await waitUntil(() => requests === 1);
+    const chat = w.game.get("chat_round_0");
+    chat.push(humanMessage(w.game, w.players[1], "@[Facilitator] please help organise this.", 6));
+    await handleChat(undefined, { game: w.game });
+    assert.equal(published(w).length, 1, "the participant-requested reply should not wait for the automatic pipeline");
+    assert.equal(published(w)[0].facilitatorTrigger, "PARTICIPANT_REQUEST");
+    resolveAutomatic(validResponseFor({ messages: [{ content: "# static.md" }] }));
+    await automatic;
+  });
+  assert.equal(published(w).length, 1, "the older automatic response must not publish after the requested reply");
+  assert.deepEqual(w.game.get("llmInFlight"), {});
+});
