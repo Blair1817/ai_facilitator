@@ -1,3 +1,5 @@
+import { acceptIndependentDecision, finalizeIndependentDecision } from "./FinalDecisionSubmission.mjs";
+import { DECISION_NUDGE } from "../../shared/decisionSubmission.mjs";
 import { ClassicListenersCollector } from "@empirica/core/admin/classic";
 export const Empirica = new ClassicListenersCollector();
 import _ from "lodash";
@@ -910,10 +912,11 @@ Empirica.onGameStart(({ game }) => {
   // This container is explicitly non-formal: it has no taskVersion,
   // facilitation, or taskIndex, and exists only to synchronize the shared
   // practice activity before the two experimental rounds.
-  addPracticeRound(game);
+  addPracticeRound(game, 2);
 
   const round1 = game.addRound({
     name: "Round 1",
+    decisionFlowVersion: 2,
     facilitation: sequence.facilitationOrder[0],
     taskIndex:    0,
     taskVersion:  sequence.taskVersionOrder[0],
@@ -925,6 +928,7 @@ Empirica.onGameStart(({ game }) => {
 
   const round2 = game.addRound({
     name: "Round 2",
+    decisionFlowVersion: 2,
     facilitation: sequence.facilitationOrder[1],
     taskIndex:    1,
     taskVersion:  sequence.taskVersionOrder[1],
@@ -1087,6 +1091,15 @@ function clearFinalDecisionConfirmations(game) {
 }
 
 function finalizeGroupDecision(stage, { timedOut = false, now = Date.now(), endStage = true } = {}) {
+  if (stage?.get("testSkippedAt")) return false;
+  if (stage?.round?.get("decisionFlowVersion") === 2) {
+    const finalized = finalizeIndependentDecision(stage, { timedOut, now, endStage });
+    if (finalized) {
+      if (stage.round.get("isPractice")) logPractice(stage.currentGame, "group_choice", null, { choice: stage.round.get("officialGroupFinalChoice") });
+      Empirica.flush();
+    }
+    return finalized;
+  }
   const round = stage?.round;
   const game = stage?.currentGame;
   if (!round || !game || round.get("finalDecisionConfirmed")) return false;
@@ -1216,7 +1229,7 @@ function appendFacilitatorNudge(stage, attribute, content, onceFlagKey, facilita
 // no Generator/Validator, no option-specific or task-specific content, so
 // it carries no steering risk regardless of round/treatment.
 const TASK_OPENING_MESSAGE =
-  "Welcome! I\u2019m the Facilitator for this discussion. I won\u2019t make the decision for you, but I\u2019m here to help make sure everyone is heard and to help you keep track of what\u2019s been discussed. Feel free to start sharing what you each know about the options \u2014 and you can address me anytime by typing @ and selecting Facilitator.";
+  "Welcome! Please work together to agree on one final choice. I\u2019m the Facilitator for this discussion. I won\u2019t make the decision for you, but I\u2019m here to help make sure everyone is heard and to help you keep track of what\u2019s been discussed. Feel free to start sharing what you each know about the options \u2014 and you can address me anytime by typing @ and selecting Facilitator.";
 
 // Two fixed, non-LLM nudge variants for the SAME silence watchdog (see
 // armSilenceWatchdog below) -- distinguished only by whether the group has
@@ -1310,8 +1323,8 @@ export function handleFormalStageStart(stage) {
     const reminderMinutes = Math.ceil(gameDuration / 2);
     const reminderAt = game.get("deadline") - reminderMinutes * 60 * 1000;
     const reminderDelayMs = Math.max(0, reminderAt - Date.now());
-    setTimeout(() => appendTimedMessage(stage, chatKey, `${reminderMinutes} minutes remain in the discussion.`), reminderDelayMs);
-    if (durationMs > 60_000) setTimeout(() => appendTimedMessage(stage, chatKey, "One minute remains in the discussion."), durationMs - 60_000);
+    setTimeout(() => appendTimedMessage(stage, chatKey, `${reminderMinutes} minutes remain in the discussion. ${DECISION_NUDGE}`), reminderDelayMs);
+    if (durationMs > 60_000) setTimeout(() => appendTimedMessage(stage, chatKey, `One minute remains in the discussion. ${DECISION_NUDGE}`), durationMs - 60_000);
 
     // Opening message: one fixed, non-LLM Facilitator message at the very
     // start of every Task-stage discussion. Independent of the checkpoint
@@ -1327,6 +1340,7 @@ export function handleFormalStageStart(stage) {
     }
   }
   if (stageName === "FinalDecision") {
+    stage.round.set("FinalDecisionStartedAt", now);
     stage.round.set("finalDecisionAgreementStatus", "not_agreed");
     stage.round.set("finalDecisionMatchedChoice", null);
     stage.round.set("officialGroupFinalChoice", null);
@@ -1337,6 +1351,11 @@ export function handleFormalStageStart(stage) {
     stage.round.set("finalDecisionConfirmed", false);
     stage.round.set("finalDecisionDeadline", now + GROUP_DECISION_SECONDS * 1000);
     for (const participant of assignedHumanPlayers(game)) {
+      if (stage.round.get("decisionFlowVersion") === 2) {
+        for (const key of ["finalDecisionSubmission", "finalDecisionSubmissionResult", "finalDecision",
+          "agreesWithGroupChoice", "finalPersonalChoice", "finalPersonalChoiceRationale",
+          "groupFinalSubmittedAt", "groupFinalTimeoutReason"]) participant.round.set(key, null);
+      }
       participant.round.set("groupFinalChoice", "");
       participant.round.set("groupChoiceConfidence", null);
       participant.round.set("groupFinalConfirmedChoice", null);
@@ -1385,11 +1404,22 @@ Empirica.on("player", "discussionAdvanceRequest", (_ctx, { player, discussionAdv
   Empirica.flush();
 });
 
+Empirica.on("player", "finalDecisionSubmitRequest", (_ctx, { player, finalDecisionSubmitRequest: request }) => {
+  const round = player.currentGame?.currentRound;
+  const wasFinalized = round?.get("finalDecisionConfirmed");
+  acceptIndependentDecision(player, request);
+  if (!wasFinalized && round?.get("isPractice") && round.get("finalDecisionConfirmed")) {
+    logPractice(player.currentGame, "group_choice", null, { choice: round.get("officialGroupFinalChoice") });
+  }
+  Empirica.flush();
+});
+
 Empirica.on("player", "finalDecisionDraftRequest", (_ctx, { player, finalDecisionDraftRequest: request }) => {
   const game = player.currentGame;
   const round = game?.currentRound;
   const stage = game?.currentStage;
   if (!game || !round || !stage || stage.get("name") !== "FinalDecision" || round.get("finalDecisionConfirmed")) return;
+  if (round.get("decisionFlowVersion") === 2 || stage.get("testSkippedAt")) return;
   if (!request || request.roundId !== round.id || request.stageId !== stage.id) return;
   if (Date.now() >= round.get("finalDecisionDeadline")) {
     finalizeGroupDecision(stage, { timedOut: true });
@@ -1422,6 +1452,7 @@ Empirica.on("player", "finalDecisionConfirmRequest", (_ctx, { player, finalDecis
   const round = game?.currentRound;
   const stage = game?.currentStage;
   if (!game || !round || !stage || stage.get("name") !== "FinalDecision" || round.get("finalDecisionConfirmed")) return;
+  if (round.get("decisionFlowVersion") === 2 || stage.get("testSkippedAt")) return;
   if (!request || request.roundId !== round.id || request.stageId !== stage.id) return;
   if (Date.now() >= round.get("finalDecisionDeadline")) {
     finalizeGroupDecision(stage, { timedOut: true });
@@ -1449,6 +1480,7 @@ Empirica.on("playerStage", "submit", (_ctx, { playerStage, submit }) => {
   const player = playerStage.player;
   const round = playerStage.stage.round;
   const stageName = playerStage.stage.get("name");
+  if (stageName === "FinalDecision" && round.get("decisionFlowVersion") === 2) return;
   const now = Date.now();
   const fieldsByStage = {
     InitialDecision: ["initialSubmittedAt", "initialCompletionDurationMs", "initialDecisionTimeoutReason"],
@@ -2103,7 +2135,7 @@ Empirica.onStageEnded(({ stage }) => {
 
   if (stageName === "FinalDecision") {
     for (const player of assignedHumanPlayers(game)) {
-      if (round.get("finalDecisionTimedOut")) player.round.set("groupFinalTimeoutReason", "stage_timeout");
+      if (round.get("finalDecisionTimedOut") && (round.get("decisionFlowVersion") !== 2 || !player.round.get("finalDecisionSubmission"))) player.round.set("groupFinalTimeoutReason", "stage_timeout");
     }
   }
 

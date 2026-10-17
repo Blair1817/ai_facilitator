@@ -1,3 +1,4 @@
+import { DECISION_NUDGE } from "../../shared/decisionSubmission.mjs";
 import { isTestGame } from "../../shared/testMode.mjs";
 import { randomUUID } from "node:crypto";
 import { appendToAttribute } from "./AppendOnlyAttribute.mjs";
@@ -28,12 +29,12 @@ export function logPractice(game, event, player = null, data = {}) {
     speaker_id: player?.id ?? null, speaker_colour: player?.get("name") ?? null, ...data,
   });
 }
-export function addPracticeRound(game) {
+export function addPracticeRound(game, decisionFlowVersion = 1) {
   if (!PRACTICE.enabled) return;
   const round = game.addRound({
     name: "Practice Round", isPractice: true, phase: "practice",
     exclude_from_primary_analysis: true, practice_mode: true, ai_intervention_enabled: false,
-    practiceConfig: PRACTICE,
+    practiceConfig: PRACTICE, decisionFlowVersion,
   });
   for (const name of PRACTICE_STAGES) {
     // Empirica 1.12 requires an integer duration (5..1e9). Its maximum is a
@@ -103,7 +104,7 @@ export function deliverPracticeDiscussionReminder(stage, appendMessage, Empirica
     phase: "practice",
     source: "server_timer",
     exclude_from_primary_analysis: true,
-    content: "One minute remains in the discussion.",
+    content: `One minute remains in the discussion. ${DECISION_NUDGE}`,
     sender: { id: `system-${MESSAGE_TYPES.TIMER_REMINDER}`, name: "Timer", hexCode: "4B5563", avatar: "⏱️" },
   });
   logPractice(stage.currentGame, "discussion_one_minute_reminder", null, { message_id: messageId });
@@ -162,7 +163,7 @@ export function handlePracticeStageStart(stage, appendMessage, Empirica) {
         role: FACILITATOR_ROLES.FIXED_MESSAGE,
         facilitatorOrigin: "DETERMINISTIC_FIXED",
         facilitatorTrigger: "PRACTICE_DISCUSSION_OPENING",
-        content: "Welcome! Start by saying hello, introducing your colour, and sharing which room currently looks best to you and why.",
+        content: "Welcome! Please work together to agree on one final choice. Start by saying hello, introducing your colour, and sharing which room currently looks best to you and why.",
         sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
       });
     }

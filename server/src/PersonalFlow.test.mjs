@@ -35,9 +35,9 @@ function scope(id, initial = {}) {
 
 let fixtureSequence = 0;
 
-function fixture(indices = [3, 3, 3]) {
+function fixture(indices = [3, 3, 3], decisionFlowVersion = 1) {
   fixtureSequence += 1;
-  const round = scope(`round-${fixtureSequence}`, { taskIndex: 0 });
+  const round = scope(`round-${fixtureSequence}`, { taskIndex: 0, decisionFlowVersion });
   const stage = scope(`followup-${fixtureSequence}`, { name: "Followup" });
   const game = scope(`game-${fixtureSequence}`);
   const key = personalProgressKey("Followup");
@@ -518,4 +518,21 @@ test("legacy skipBreak requests cannot bypass the shared Break barrier", () => {
   assert.deepEqual(f.players[0].round.get(f.key), before);
   assert.equal(f.players[0].round.get("breakSkippedAt"), undefined);
   assert.equal(f.stage.get("ended"), undefined);
+});
+
+test("v2 shared break uses the shorter follow-up cursor and completes after the original deadline", () => {
+  const f = fixture([2, 2, 1], 2), now = Date.now();
+  synchroniseSharedBreak(f.stage, f.mirror, f.api, now);
+  assert.equal(f.round.get("sharedBreakArrivalCount"), 2);
+  assert.equal(f.round.get("sharedBreakDeadline"), undefined);
+  f.players[2].round.set(f.key, { index: 2, startedAt: now });
+  synchroniseSharedBreak(f.stage, f.mirror, f.api, now);
+  const deadline = f.round.get("sharedBreakDeadline");
+  assert.equal(deadline, now + SHARED_BREAK_SECONDS * 1000);
+  for (const player of f.players) player.round.set("sharedBreakReadyStatus", "ready");
+  assert.equal(synchroniseSharedBreak(f.stage, f.mirror, f.api, deadline - 1), false);
+  assert.equal(synchroniseSharedBreak(f.stage, f.mirror, f.api, deadline), true);
+  assert.equal(f.stage.get("ended"), true);
+  assert.ok(f.players.every((player) => player.round.get(f.key).index === 3));
+  assert.equal(f.mirrors.length, 3);
 });

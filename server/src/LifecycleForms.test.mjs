@@ -77,7 +77,7 @@ const gamesFullSource = readFileSync(
 test("one technical practice container wraps the current Practice flow and formal rounds contain no legacy stages", () => {
 
   const practiceStages = callbacksSource.slice(
-    callbacksSource.indexOf('addPracticeRound(game);'),
+    callbacksSource.indexOf('addPracticeRound(game, 2);'),
     callbacksSource.indexOf('const round1 = game.addRound({'),
   );
 
@@ -89,7 +89,7 @@ test("one technical practice container wraps the current Practice flow and forma
     callbacksSource.indexOf('round2.addStage({ name: "Preparation"'),
     callbacksSource.indexOf("// Restore the original stable colour aliases"),
   );
-  assert.match(practiceStages, /addPracticeRound\(game\)/);
+  assert.match(practiceStages, /addPracticeRound\(game, 2\)/);
   for (const stages of [round1Stages, round2Stages]) assert.doesNotMatch(stages, /Walkthrough|IceBreaker|PracticeIcebreaker|Introduction/);
 
   assert.match(practiceSharedSource, /PRACTICE_STAGES = \[\s*"PracticeWelcome", "PracticeDiscussion", "FinalDecision", "PracticeComplete"/);
@@ -147,7 +147,7 @@ test("R3-R7/R19: personal pages advance individually; only group activities gate
   assert.match(personalFlowServer, /player\.round\.set\(key, \{ index, startedAt: now \}\)/);
   // Group synchronisation happens only at the group-activity entry: the
   // stage ends once every assigned participant has finished their pages.
-  assert.match(personalFlowServer, /if \(allPersonalPagesDone\(game\.players, stageName, taskIndex\)\) stage\.set\("ended", true\)/);
+  assert.match(personalFlowServer, /if \(allPersonalPagesDone\(game\.players, stageName, taskIndex, round\.get\("decisionFlowVersion"\)\)\) stage\.set\("ended", true\)/);
   assert.match(personalFlowShared, /players\.every\(\(p\) => \(p\.round\.get\(personalProgressKey\(stageName\)\)\?\.index \?\? 0\) >= length\)/);
   // The ReviewQuiz page cannot be passed without passing the quiz.
   assert.match(personalFlowServer, /page === "ReviewQuiz" && player\.round\.get\("reviewQuizPassed"\) !== true/);
@@ -167,7 +167,7 @@ test("R3-R7/R19: personal pages advance individually; only group activities gate
   assert.match(breakSource, /setInterval\(retry, 2000\)/);
   assert.match(personalFlowServer, /sharedBreakReadyRequestId/);
   assert.match(personalFlowServer, /sharedBreakReadyRejectedRequestId/);
-  assert.match(callbacksSource, /addPracticeRound\(game\)/);
+  assert.match(callbacksSource, /addPracticeRound\(game, 2\)/);
   assert.equal((callbacksSource.match(/name: "Preparation", duration: 1e9/g) ?? []).length, 2);
   assert.doesNotMatch(callbacksSource, /name: "TaskInformation",\s+duration: TASK_INFORMATION_DURATION_SECONDS/);
   assert.doesNotMatch(callbacksSource, /name: "Break"/);

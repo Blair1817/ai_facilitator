@@ -158,7 +158,7 @@ test("Practice Discussion posts exactly one server-authored one-minute timer mes
 
   const reminders = f.messages.filter((message) => message.messageType === "timer_reminder");
   assert.equal(reminders.length, 1);
-  assert.equal(reminders[0].content, "One minute remains in the discussion.");
+  assert.equal(reminders[0].content, "One minute remains in the discussion. Please work together to agree on one final choice before the discussion ends.");
   assert.equal(reminders[0].attribute, PRACTICE_CHAT);
   assert.equal(reminders[0].exclude_from_primary_analysis, true);
   assert.equal(f.game.get("humanMessageCount"), undefined);
