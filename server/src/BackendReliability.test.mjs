@@ -322,3 +322,74 @@ test("participant request remains immediate during an automatic pipeline and sup
   assert.equal(published(w).length, 1, "the older automatic response must not publish after the requested reply");
   assert.deepEqual(w.game.get("llmInFlight"), {});
 });
+
+// Synthetic public discussion; checks real callback/prompt delivery, not
+// live-model effectiveness.
+test("requested criteria, recap and terminology use requested validation in both conditions", async () => {
+  const { handleChat } = await getOfflineCallbacksHarness();
+  const cases = [
+    ["what are some criteria", "Criteria are factors used to compare options, such as the transport times and costs you have discussed."],
+    ["what we have discussed", "You have shared transport times and costs for both cities. City A was reported as 12 minutes and 25000. City B was reported as 18 minutes and 32000."],
+    ['what do you mean by "criterion"', "A criterion is a factor used to compare options; transport time is one example from your discussion."],
+  ];
+  for (const condition of ["static", "adaptive"]) {
+    for (const [request, answer] of cases) {
+      const w = world(condition);
+      w.game.get("chat_round_0").push(buildCanonicalMessage({
+        sequencePosition: 6, messageId: "prior-ai", groupId: w.game.id, speakerId: "ai", roundIndex: 0, stage: "Discussion",
+        messageType: "facilitator", speakerType: "facilitator", timestamp: Date.now(),
+        content: "Which shared criterion should you use to compare the options next?",
+        sender: { id: "ai", name: "Facilitator" },
+      }));
+      w.game.get("chat_round_0").push(humanMessage(w.game, w.players[0], `@[Facilitator] ${request}`, 7));
+      let audits = 0;
+      await withMockedFetch(async (_url, options) => {
+        const { messages } = JSON.parse(options.body);
+        assert.match(messages[1].content, /\[PARTICIPANT_REQUEST\]/);
+        assert.ok(messages[1].content.includes(request));
+        if (messages[0].content.startsWith("# validator.md")) {
+          audits++;
+          assert.match(messages[0].content, /PARTICIPANT-REQUESTED SCOPE/);
+          assert.match(messages[0].content, /requested recap, explanation, or renewed/);
+          assert.match(messages[1].content, /Which shared criterion/);
+          return response(validatorPass());
+        }
+        assert.match(messages[0].content, /Requested clarification and repetition/);
+        return response({ role: "GENERALIST", message: answer, groundingMessageIds: ["m1", "m2", "m3", "m4"] });
+      }, () => handleChat(undefined, { game: w.game }));
+      assert.equal(audits, 1);
+      assert.equal(published(w).at(-1).content, answer);
+      assert.equal(readAppendOnlyAttribute(w.game, "llmLog").at(-1).outcome, "PUBLISHED");
+      assert.equal(w.game.get("totalFallbackMessages") || 0, 0);
+      assert.equal(w.game.get("publishedThisRound") || 0, 0);
+    }
+  }
+});
+
+test("requested rejection repairs once and never publishes unsafe or repeated candidates", async () => {
+  const { handleChat } = await getOfflineCallbacksHarness();
+  for (const criterion of ["repetition", "recommendationDetected", "hiddenInformationInference", "notGrounded"]) {
+    const w = world("adaptive");
+    w.game.get("chat_round_0").push(humanMessage(w.game, w.players[0], "@[Facilitator] what have we discussed?", 6));
+    let audits = 0;
+    let generations = 0;
+    await withMockedFetch(async (_url, options) => {
+      const { messages } = JSON.parse(options.body);
+      if (messages[0].content.startsWith("# validator.md")) {
+        audits++;
+        return response({ ...validatorPass(), [criterion]: true });
+      }
+      generations++;
+      return response({ role: "GENERALIST", message: "What information should the group compare next?", groundingMessageIds: [] });
+    }, () => handleChat(undefined, { game: w.game }));
+    assert.equal(generations, 2);
+    assert.equal(audits, 2);
+    assert.equal(published(w).length, 1);
+    assert.equal(published(w)[0].facilitatorOrigin, "NON_LLM_FALLBACK");
+    assert.match(published(w)[0].content, /couldn’t complete that reply/);
+    assert.doesNotMatch(published(w)[0].content, /correct|which option/);
+    const audit = readAppendOnlyAttribute(w.game, "llmLog").at(-1);
+    assert.match(audit.reason, new RegExp(criterion));
+    assert.equal(audit.outcome, "PUBLISHED_REQUEST_FALLBACK");
+  }
+});

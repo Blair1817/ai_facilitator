@@ -138,7 +138,7 @@ test("formal Adaptive Assessor receives the explicit complete-current-round scop
 });
 test("automatic vs participant-requested Generalist have separate validator and budget routes", () => {
   assert.equal(validatorRuntimePath("GENERALIST", null), "control_50/validator.md");
-  assert.equal(validatorRuntimePath("GENERALIST", "PARTICIPANT_REQUEST"), "frozen_control/validator.md");
+  assert.equal(validatorRuntimePath("GENERALIST", "PARTICIPANT_REQUEST"), "frozen_control/requested_validator.md");
   assert.equal(runtimeGeneratorBundle("requested_generalist").metadata.maxWords, null);
   for (const role of ["STATIC", "GENERALIST", "INFORMATION_EXPANDER", "EVIDENCE_CHALLENGER"]) {
     for (const count of [49, 50, 51]) {

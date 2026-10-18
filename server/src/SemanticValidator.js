@@ -319,6 +319,10 @@ export function buildValidatorUserContext({
     ["[LOCAL_CONTEXT]", localContext || "(no messages yet)"],
   ];
 
+  if (triggerType === "PARTICIPANT_REQUEST") {
+    sections.push(["[TRIGGER_TYPE]", triggerType],
+      ["[PARTICIPANT_REQUEST]", formatMessagesWithIds(humanWithIds.slice(-1)) || "(not provided)"]);
+  }
   sections.push(["[CONTEXT_SCOPE]", contextScope], ["[ACTIVE_PARTICIPANT_NAMES]", JSON.stringify(activeParticipantNames)], ["[RECENT_AI_MESSAGES]", JSON.stringify(recentAiMessages)]);
   if (isSpecialistRole(selectedRole)) {
     sections.push(["[INTERVENTION_PLAN]", JSON.stringify(interventionPlan)], ["[PLAN_PREFLIGHT]", JSON.stringify(planPreflight)], ["[INTERVENTION_HISTORY]", JSON.stringify(interventionHistory)]);

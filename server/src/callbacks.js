@@ -1,3 +1,4 @@
+import { isPublicParticipantMessage } from "./CognitiveOperations.mjs";
 import { acceptIndependentDecision, finalizeIndependentDecision } from "./FinalDecisionSubmission.mjs";
 import { DECISION_NUDGE } from "../../shared/decisionSubmission.mjs";
 import { ClassicListenersCollector } from "@empirica/core/admin/classic";
@@ -9,7 +10,7 @@ import taskConfig from "./HPTConfig.json";
 import { llmSystemPrompts } from "./LLMConfig.js";
 import { evaluateGate, chooseRole, getRoleThreshold, THRESHOLDS } from "./utils.js";
 import { parseGeneratorOutputStrict, validateAgainstGenerationSchema, runDeterministicValidation } from "./prompts/GeneratorContract.mjs";
-import { buildDynamicUserContext, withMessageIds } from "./prompts/DynamicContext.mjs";
+import { buildDynamicUserContext, withMessageIds, formatMessagesWithIds } from "./prompts/DynamicContext.mjs";
 import { getRequestedGeneralistPromptBundle } from "./prompts/promptLoader.js";
 import { buildStaticSharedTaskOverview, buildStaticUserContext } from "./prompts/StaticContext.mjs";
 import {
@@ -397,7 +398,9 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
     systemPrompt: promptResult.content,
     taskGeneralContext: publicTaskOverview,
     interventionPlan: plan, planPreflight, interventionHistory, contextScope: "complete_current_round",
-    userContent: dynamicContext.userContent,
+    userContent: promptResult.metadata.triggerType === "PARTICIPANT_REQUEST"
+      ? `${dynamicContext.userContent}\n\n[TRIGGER_TYPE]\nPARTICIPANT_REQUEST\n\n[PARTICIPANT_REQUEST]\n${formatMessagesWithIds(withMessageIds(chat).filter(isPublicParticipantMessage).slice(-1))}`
+      : dynamicContext.userContent,
     eligibleMessageIds: dynamicContext.eligibleMessageIds,
     aiOrSystemMessageIds: dynamicContext.aiOrSystemMessageIds,
     recentAiMessageTexts: dynamicContext.recentAiMessageTexts,
@@ -1636,7 +1639,7 @@ async function postParticipantRequestFallback(game, chatKey, logEntry) {
       messageType: MESSAGE_TYPES.FACILITATOR,
       speakerType: MESSAGE_TYPES.FACILITATOR,
       timestamp: publishedAt,
-      content: "I can’t tell you which option is correct. That’s for your group to decide, but I’m glad to help organise or clarify what’s already been discussed. Could you point me to the specific option, claim, or message you’d like help with?",
+      content: "Sorry, I couldn’t complete that reply. Please try asking me again; I can help explain terms or summarise and compare what your group has shared.",
       ...(practice ? { phase: "practice", source: "facilitator_fallback", exclude_from_primary_analysis: true } : {}),
       role: FACILITATOR_ROLES.NON_LLM_FALLBACK,
       facilitatorOrigin: "NON_LLM_FALLBACK",

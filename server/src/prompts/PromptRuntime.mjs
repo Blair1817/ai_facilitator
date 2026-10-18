@@ -26,7 +26,7 @@ export function runtimeGeneratorBundle(route) {
   } catch (error) { return { blocked: true, reason: error.message, metadata: { ...metadata, sourceCompleteness: "missing_or_invalid_runtime_package" } }; }
 }
 export function validatorRuntimePath(selectedRole, triggerType) {
-  if (triggerType === "PARTICIPANT_REQUEST") return "frozen_control/validator.md";
+  if (triggerType === "PARTICIPANT_REQUEST") return "frozen_control/requested_validator.md";
   return isSpecialistRole(selectedRole) ? "specialist/validator.md" : "control_50/validator.md";
 }
 export function verifyRuntimeSources() {

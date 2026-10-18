@@ -35,12 +35,12 @@
         "frozen_control/base.md",
         "frozen_control/requested_generalist.md"
       ],
-      "validatorFile": "frozen_control/validator.md",
+      "validatorFile": "frozen_control/requested_validator.md",
       "generationSchema": "frozen_control/generation.schema.json",
       "validationSchema": "frozen_control/validation.schema.json",
       "planRequired": false,
-      "generatorSha256": "314f6c10f61c3d7a10b2c018f11da5371d952eae467ac7384eaa7c468b5a4f48",
-      "validatorSha256": "81079392353f534de4538e028684246eb4213d38749539b84f5afe2ef81f2246"
+      "generatorSha256": "32d3ea5b399c2ff97c786b032e2b2c6badb6574b7d49b1b76285816272dc318c",
+      "validatorSha256": "017d5e326bb57c9be0dcbd3110fdf3c693b8caec0a6aeee26dc556cb6be2fccd"
     },
     "expander": {
       "generatorFiles": [
@@ -176,8 +176,12 @@
       "bytes": 2810
     },
     "frozen_control/requested_generalist.md": {
-      "sha256": "fbb6eba88b1311814e075a3b4519fe0f3d5118ab1d57408e6a9186e86e446df5",
-      "bytes": 3395
+      "sha256": "845771464c6de586455913f7127cc29125e98111629d26e1732c2b8e39414210",
+      "bytes": 4311
+    },
+    "frozen_control/requested_validator.md": {
+      "sha256": "017d5e326bb57c9be0dcbd3110fdf3c693b8caec0a6aeee26dc556cb6be2fccd",
+      "bytes": 12731
     },
     "frozen_control/static.md": {
       "sha256": "33f6f3fb08f6903cf4fc0d79430facc735ef123719429aecc33549858a6088ff",
