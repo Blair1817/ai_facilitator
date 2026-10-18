@@ -1,7 +1,7 @@
 export const REVIEW_QUIZZES = Object.freeze({
   A: {
     title: "Task A: Choose a host city",
-    scenario: "This quiz concerns the International Youth Games host-city task with Talwick, Rovenna, and Meridia.",
+    scenario: "These questions concern the International Youth Games host-city task with Talwick, Rovenna, and Meridia.",
     remediation: {
       evidenceRule: {
         title: "Information to use",
@@ -35,15 +35,16 @@ export const REVIEW_QUIZZES = Object.freeze({
       {
         id: "alternativeCount",
         remediationKey: "taskOverview",
-        type: "number",
-        prompt: "How many candidate alternatives must the group compare?",
+        type: "radio",
+        prompt: "How many cities will your group compare when choosing a host for the International Youth Games?",
+        options: ["2", "3", "4", "5"].map((value) => ({ value, label: value })),
         correctAnswer: "3",
       },
       {
         id: "mandatoryRequirements",
         remediationKey: "taskOverview",
         type: "radio",
-        prompt: "Do all alternatives meet the requirements stated in their task?",
+        prompt: "Do all three cities meet the essential requirements stated in the task?",
         options: [
           { value: "yes", label: "Yes" },
           { value: "no", label: "No" },
@@ -53,8 +54,9 @@ export const REVIEW_QUIZZES = Object.freeze({
       {
         id: "discussionMinutes",
         remediationKey: "discussionDuration",
-        type: "number",
-        prompt: "How long is the discussion period?",
+        type: "radio",
+        prompt: "What is the maximum time allowed for the group discussion?",
+        options: ["5", "10", "15", "20"].map((value) => ({ value, label: `${value} minutes` })),
         correctAnswer: "15",
       },
       {
@@ -74,7 +76,7 @@ export const REVIEW_QUIZZES = Object.freeze({
   },
   B: {
     title: "Task B: Choose a host campus",
-    scenario: "This quiz concerns the Global Innovation Summit host-campus task with Halden University, Fenwick University, and Norvale University.",
+    scenario: "These questions concern the Global Innovation Summit host-campus task with Halden University, Fenwick University, and Norvale University.",
     remediation: {
       evidenceRule: {
         title: "Information to use",
@@ -108,15 +110,16 @@ export const REVIEW_QUIZZES = Object.freeze({
       {
         id: "alternativeCount",
         remediationKey: "taskOverview",
-        type: "number",
-        prompt: "How many candidate alternatives must the group compare?",
+        type: "radio",
+        prompt: "How many university campuses will your group compare when choosing a host for the Global Innovation Summit?",
+        options: ["2", "3", "4", "5"].map((value) => ({ value, label: value })),
         correctAnswer: "3",
       },
       {
         id: "mandatoryRequirements",
         remediationKey: "taskOverview",
         type: "radio",
-        prompt: "Do all alternatives meet the requirements stated in their task?",
+        prompt: "Do all three campuses meet the essential requirements stated in the task?",
         options: [
           { value: "yes", label: "Yes" },
           { value: "no", label: "No" },
@@ -126,8 +129,9 @@ export const REVIEW_QUIZZES = Object.freeze({
       {
         id: "discussionMinutes",
         remediationKey: "discussionDuration",
-        type: "number",
-        prompt: "How long is the discussion period?",
+        type: "radio",
+        prompt: "What is the maximum time allowed for the group discussion?",
+        options: ["5", "10", "15", "20"].map((value) => ({ value, label: `${value} minutes` })),
         correctAnswer: "15",
       },
       {

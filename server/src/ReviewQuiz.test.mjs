@@ -268,8 +268,10 @@ test("client routes ReviewQuiz, guards double-submit, preserves drafts locally, 
   assert.match(reviewQuizSource, /if \(evaluation\.allCorrect\)[\s\S]*if \(onNext\) onNext\(\); else player\.stage\.set\("submit", true\)/);
   assert.match(reviewQuizSource, /processingRef\.current/);
   assert.match(reviewQuizSource, /disabled=\{!isComplete \|\| isProcessing\}/);
-  assert.match(reviewQuizSource, /clearIncorrectReviewQuizAnswers/);
-  assert.match(reviewQuizSource, /Return to Review Quiz/);
+  assert.match(reviewQuizSource, /setIncorrectQuestionIds\(evaluation\.incorrectQuestionIds\)/);
+  assert.doesNotMatch(reviewQuizSource, /clearIncorrectReviewQuizAnswers/);
+  assert.match(reviewQuizSource, /Check answers again/);
+  assert.match(reviewQuizSource, /View instructions/);
   assert.match(reviewQuizSource, /usePersistentDraft/);
   assert.match(reviewQuizSource, /player\.round\.set\("reviewQuizPassed", true\)/);
   assert.doesNotMatch(reviewQuizSource, /reviewQuizAttempts|reviewQuizResult|attemptNumber|submittedAt|questionCorrectness/);
