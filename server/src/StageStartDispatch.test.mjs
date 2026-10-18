@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { handlePersonalFlowStageStart } from "./PersonalFlow.mjs";
+import { DISCUSSION_OPENING_MESSAGE } from "../../shared/discussionOpening.mjs";
 import {
   handlePracticeStageStart,
   registerPractice,
@@ -58,6 +59,16 @@ test("production registers exactly one Empirica onStageStart dispatcher", () => 
   );
 });
 
+test("Practice and formal Discussion use the same three-paragraph fixed opening", () => {
+  assert.equal(DISCUSSION_OPENING_MESSAGE.split("\n\n").length, 3);
+  assert.match(DISCUSSION_OPENING_MESSAGE, /^Hi everyone, welcome!/);
+  assert.match(DISCUSSION_OPENING_MESSAGE, /type @ and select Facilitator/);
+  assert.match(DISCUSSION_OPENING_MESSAGE, /share and compare what you each know/);
+  assert.match(DISCUSSION_OPENING_MESSAGE, /agree on one final choice before the discussion ends\. Have a great discussion!$/);
+  assert.match(practiceSource, /content: DISCUSSION_OPENING_MESSAGE/);
+  assert.match(callbacksSource, /appendFacilitatorNudge\(stage, chatKey, DISCUSSION_OPENING_MESSAGE,/);
+});
+
 test("single dispatch preserves PracticeWelcome and PracticeDiscussion initialisation", () => {
   const game = gameFixture();
   const messages = [];
@@ -82,6 +93,7 @@ test("single dispatch preserves PracticeWelcome and PracticeDiscussion initialis
   assert.deepEqual(discussion.round.get("practiceMessageCounts"), {});
   assert.equal(discussion.round.get("practiceTotalMessages"), 0);
   assert.deepEqual(discussion.round.get("practiceReady"), {});
+  assert.equal(messages.filter((message) => message.speakerType === "facilitator_fixed").length, 2);
 });
 
 test("three PracticeComplete participants enter formal Preparation with personal cursors", () => {

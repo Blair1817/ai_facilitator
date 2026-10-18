@@ -8,6 +8,12 @@ import { PRACTICE, PRACTICE_CHAT, PRACTICE_STAGES, PRACTICE_PERSONAL_PAGES, prac
 
 // Research metadata only: never stored on a participant-visible scope or sent to an LLM.
 export const PRACTICE_RESEARCH_METADATA = { fullInformationOptimum: "GARDEN" };
+export const PRACTICE_SILENCE_NUDGE_DELAY_MS = 90_000;
+const PRACTICE_SILENCE_NUDGE_OPENING =
+  "Whenever you’re ready, feel free to jump in — sharing what you each know about the options is a good place to start.";
+const PRACTICE_SILENCE_NUDGE_LULL =
+  "No rush — feel free to keep sharing your thoughts whenever you’re ready.";
+const practiceSilenceWatchdogTimers = new Map();
 const options = [
   { id: "MAPLE", label: "Maple Room" },
   { id: "RIVERSIDE", label: "Riverside Room" },
@@ -68,10 +74,88 @@ function finishPracticeDiscussion(stage, Empirica, now = Date.now()) {
   });
   const ready = round.get("practiceReady") || {};
   if (!timedOut && !(eligible && game.players.every((p) => ready[p.id]))) return;
+  clearPracticeSilenceWatchdog(stage);
   round.set("practiceDiscussionEnded", timedOut ? "timeout" : "early");
   logPractice(game, timedOut ? "discussion_timeout" : "discussion_ended_early");
   stage.set("ended", true);
   Empirica.flush();
+}
+
+function practiceSilenceTimerKey(stage) {
+  return `${stage.currentGame.id}:${stage.round.id}:${stage.id}`;
+}
+
+function clearPracticeSilenceWatchdog(stage) {
+  const key = practiceSilenceTimerKey(stage);
+  const timer = practiceSilenceWatchdogTimers.get(key);
+  if (timer) clearTimeout(timer);
+  practiceSilenceWatchdogTimers.delete(key);
+}
+
+export function deliverPracticeSilenceNudge(stage, appendMessage, Empirica, now = Date.now()) {
+  const round = stage?.round;
+  const deadline = round?.get("practiceDeadline");
+  const lastHumanMessageAt = round?.get("practiceLastHumanMessageAt");
+  const activityVersion = round?.get("practiceSilenceActivityVersion") ?? 0;
+  if (!round?.get("isPractice")
+    || stage.get("name") !== "PracticeDiscussion"
+    || !stage.isCurrent()
+    || stage.get("ended")
+    || round.get("practiceDiscussionEnded")
+    || !Number.isFinite(deadline)
+    || now >= deadline
+    || !Number.isFinite(lastHumanMessageAt)
+    || now < lastHumanMessageAt + PRACTICE_SILENCE_NUDGE_DELAY_MS
+    || round.get("practiceSilenceNudgeActivityVersion") === activityVersion) return false;
+
+  const hasTalked = (round.get("practiceTotalMessages") || 0) > 0;
+  const kind = hasTalked ? "lull" : "opening";
+  const messageId = `practice-silence-${kind}-${round.id}-${activityVersion}`;
+  // Claim this exact silence episode before appending, so reconnects and
+  // competing callbacks cannot publish the same deterministic nudge twice.
+  round.set("practiceSilenceNudgeActivityVersion", activityVersion);
+  appendMessage(stage.currentGame, PRACTICE_CHAT, {
+    messageId,
+    groupId: stage.currentGame.id,
+    speakerId: "ai",
+    roundIndex: round.get("index"),
+    stage: "PracticeDiscussion",
+    messageType: MESSAGE_TYPES.FACILITATOR,
+    speakerType: "facilitator_fixed",
+    timestamp: now,
+    phase: "practice",
+    source: "facilitator_fixed",
+    exclude_from_primary_analysis: true,
+    role: FACILITATOR_ROLES.FIXED_MESSAGE,
+    facilitatorOrigin: "DETERMINISTIC_FIXED",
+    facilitatorTrigger: "PRACTICE_SILENCE_NUDGE",
+    content: hasTalked ? PRACTICE_SILENCE_NUDGE_LULL : PRACTICE_SILENCE_NUDGE_OPENING,
+    sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
+  });
+  logPractice(stage.currentGame, "discussion_silence_nudge", null, { message_id: messageId, kind });
+  Empirica?.flush?.();
+  return true;
+}
+
+function armPracticeSilenceWatchdog(stage, appendMessage, Empirica) {
+  clearPracticeSilenceWatchdog(stage);
+  const round = stage?.round;
+  const lastHumanMessageAt = round?.get("practiceLastHumanMessageAt");
+  if (!round?.get("isPractice")
+    || stage.get("name") !== "PracticeDiscussion"
+    || !stage.isCurrent()
+    || stage.get("ended")
+    || round.get("practiceDiscussionEnded")
+    || !Number.isFinite(lastHumanMessageAt)) return;
+  const timer = setTimeout(
+    () => {
+      practiceSilenceWatchdogTimers.delete(practiceSilenceTimerKey(stage));
+      deliverPracticeSilenceNudge(stage, appendMessage, Empirica);
+    },
+    Math.max(0, lastHumanMessageAt + PRACTICE_SILENCE_NUDGE_DELAY_MS - Date.now()),
+  );
+  timer.unref?.();
+  practiceSilenceWatchdogTimers.set(practiceSilenceTimerKey(stage), timer);
 }
 
 export function deliverPracticeDiscussionReminder(stage, appendMessage, Empirica, now = Date.now()) {
@@ -125,10 +209,8 @@ export function handlePracticeStageStart(stage, appendMessage, Empirica) {
     round.set("practiceStarted", true);
     logPractice(game, "practice_started");
   }
-  // Icebreaker chat on the Welcome page: the facilitator opens the
-  // conversation so participants greet each other and see they are real
-  // people before the formal rounds. ~1 minute of casual chat; not
-  // counted towards the PracticeDiscussion early-finish conditions.
+  // Fixed, deterministic orientation message. This never calls the LLM;
+  // only an explicit participant @[Facilitator] mention enters the API path.
   if (name === "PracticeWelcome" && !round.get("practiceWelcomeGreetSent")) {
     round.set("practiceWelcomeGreetSent", true);
     const colours = game.players.map((p) => p.get("name")).join(", ");
@@ -152,8 +234,13 @@ export function handlePracticeStageStart(stage, appendMessage, Empirica) {
       round.set("practiceMessageCounts", {});
       round.set("practiceTotalMessages", 0);
       round.set("practiceReady", {});
+      round.set("practiceLastHumanMessageAt", now);
+      round.set("practiceSilenceActivityVersion", 0);
+      round.set("practiceSilenceNudgeActivityVersion", null);
       logPractice(game, "discussion_started");
     }
+    // Fixed, deterministic discussion opening. It is not an automatic LLM
+    // intervention and does not enter the Assessor/Controller pipeline.
     if (!round.get("practiceWelcomeSent")) {
       round.set("practiceWelcomeSent", true);
       appendMessage(game, PRACTICE_CHAT, {
@@ -168,6 +255,7 @@ export function handlePracticeStageStart(stage, appendMessage, Empirica) {
         sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
       });
     }
+    armPracticeSilenceWatchdog(stage, appendMessage, Empirica);
     const reminderAt = round.get("practiceDeadline") - PRACTICE.discussionReminderSeconds * 1000;
     const reminder = setTimeout(
       () => deliverPracticeDiscussionReminder(stage, appendMessage, Empirica),
@@ -246,10 +334,14 @@ export function registerPractice(Empirica, appendMessage) {
 }
 
 // Handled before the formal human-message / LLM paths. No formal state is touched.
-export function handlePracticeMessage(player, request, appendMessage) {
+export function handlePracticeMessage(player, request, appendMessage, Empirica) {
   const game = player.currentGame, round = game.currentRound, stage = game.currentStage;
   const key = `practiceMessageResult.${player.id}.${request?.requestId}`;
-  if (game.get(key)) { player.set("humanMessageRequestResult", game.get(key)); return; }
+  if (game.get(key)) {
+    const priorResult = game.get(key);
+    player.set("humanMessageRequestResult", priorResult);
+    return priorResult;
+  }
   const now = Date.now();
   // Welcome icebreaker chat: only while the sender is still ON the Welcome
   // page (pageIndex 0). Advancing to Reading/InitialChoice/Tutorial locks it,
@@ -264,9 +356,15 @@ export function handlePracticeMessage(player, request, appendMessage) {
     && typeof request.requestId === "string" && request.requestId.length > 0 && request.requestId.length <= 128
     && typeof request.content === "string" && request.content.trim().length > 0 && request.content.trim().length <= 1024
     && (welcomeChat || (Number.isFinite(round.get("practiceDeadline")) && now < round.get("practiceDeadline")));
-  const result = { requestId: request?.requestId, status: accepted ? "accepted" : "rejected" };
+  const text = accepted ? request.content.trim() : null;
+  const messageId = accepted ? `${player.id}-${request.requestId}` : null;
+  const messageStage = welcomeChat ? "PracticeWelcome" : "PracticeDiscussion";
+  const result = {
+    requestId: request?.requestId,
+    status: accepted ? "accepted" : "rejected",
+    ...(accepted ? { content: text, messageId, stage: messageStage } : {}),
+  };
   if (accepted) {
-    const text = request.content.trim();
     if (welcomeChat) {
       const counts = { ...(round.get("practiceWelcomeMessageCounts") || {}) };
       counts[player.id] = (counts[player.id] || 0) + 1;
@@ -276,22 +374,26 @@ export function handlePracticeMessage(player, request, appendMessage) {
       counts[player.id] = (counts[player.id] || 0) + 1;
       round.set("practiceMessageCounts", counts);
       round.set("practiceTotalMessages", Object.values(counts).reduce((sum, count) => sum + count, 0));
+      round.set("practiceLastHumanMessageAt", now);
+      round.set("practiceSilenceActivityVersion", (round.get("practiceSilenceActivityVersion") || 0) + 1);
     }
     game.set(key, result);
     appendMessage(game, PRACTICE_CHAT, {
-      messageId: `${player.id}-${request.requestId}`, groupId: game.id, participantId: player.id,
-      roundIndex: round.get("index"), stage: welcomeChat ? "PracticeWelcome" : "PracticeDiscussion",
+      messageId, groupId: game.id, participantId: player.id,
+      roundIndex: round.get("index"), stage: messageStage,
       messageType: "human", speakerType: "human",
       timestamp: now, content: text, phase: "practice", source: "participant",
       speaker_colour: player.get("name"), exclude_from_primary_analysis: true,
       sender: { id: player.id, name: player.get("name"), hexCode: player.get("hexCode"),
         avatar: `https://api.dicebear.com/8.x/identicon/svg?rowColor=${player.get("hexCode")}` },
     });
-    logPractice(game, "message_sent", player, { message_id: `${player.id}-${request.requestId}` });
+    logPractice(game, "message_sent", player, { message_id: messageId });
+    if (!welcomeChat) armPracticeSilenceWatchdog(stage, appendMessage, Empirica);
     if (game.players.some((p) => p.id !== player.id && text.includes(`@[${p.get("name")}]`))) {
       player.round.set("practiceMentionUsed", true);
       logPractice(game, "mention_used", player);
     }
   }
   player.set("humanMessageRequestResult", result);
+  return result;
 }

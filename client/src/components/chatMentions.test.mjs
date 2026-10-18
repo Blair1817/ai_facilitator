@@ -35,6 +35,13 @@ function adaptiveSuggestions() {
   });
 }
 
+function practiceSuggestions() {
+  return buildChatMentionUsers(players, "p-green", {
+    isPractice: true,
+    facilitation: undefined,
+  });
+}
+
 test("@ opens suggestions containing the other Adaptive Discussion participants", () => {
   assert.equal(CHAT_MENTION_TRIGGER, "@");
   assert.deepEqual(adaptiveSuggestions().slice(0, 2), [
@@ -89,6 +96,14 @@ test("multiple participants remain distinguishable and the sender is excluded", 
 test("Adaptive Discussion uses the shared chat tagging path", () => {
   assert.match(discussionSource, /<Chat scope=\{game\} attribute=\{`chat_round_\$\{roundIndex \?\? 0\}`\} \/>/);
   assert.deepEqual(adaptiveSuggestions(), [
+    { id: "p-blue", display: "Blue" },
+    { id: "p-pink", display: "Pink" },
+    { id: "ai", display: "Facilitator" },
+  ]);
+});
+
+test("Practice offers the same participants plus an explicitly selectable Facilitator", () => {
+  assert.deepEqual(practiceSuggestions(), [
     { id: "p-blue", display: "Blue" },
     { id: "p-pink", display: "Pink" },
     { id: "ai", display: "Facilitator" },
