@@ -68,8 +68,15 @@ additions (2026-08-11).
    vote / pick a "best" is also non-neutral. *(Delibra spec §11 "tone".)*
 3. **roleMisaligned** — Inconsistent with what `SELECTED_ROLE` is
    allowed to do:
-   - `STATIC` / `GENERALIST` — prompt, summarise, or invite; must
-     not adopt any Specialist behaviour.
+   - `STATIC` — prompt, summarise, or invite; must not adopt any
+     Specialist behaviour.
+   - `GENERALIST` (role v2, process only) — invite further sharing on
+     any option, restart a stalled discussion, or (about 4 minutes or
+     less remaining) a time check, where people stand, or a reminder
+     to confirm. Flag if it names / describes / compares any option or
+     shared point, asks for reasons, asks for information about one
+     particular option, summarises, uses `@[Name]`, or asks for
+     preferences while more than about 4 minutes remain.
    - `INFORMATION_EXPANDER` — elicit additional concrete task-relevant
      public information. A `@[Name]` to a visibly under-contributing
      participant is allowed (no hard cap on the number of `@[Name]`
@@ -157,10 +164,13 @@ additions (2026-08-11).
      same-criterion comparison / relationship / trade-off explicitly
      established by participants. A tagged question that asks the
      participant to perform the synthesis fails this.
-   - `STATIC` / `GENERALIST` — perform a balanced contribution
-     prompt. Pure summarisation, opinion, or steering fail this.
-     A tasteful `@[Name]` is allowed; flag only when the tagged
-     message becomes steering / opinion / recommendation.
+   - `STATIC` — perform a balanced contribution prompt. Pure
+     summarisation, opinion, or steering fail this. A tasteful
+     `@[Name]` is allowed; flag only when the tagged message becomes
+     steering / opinion / recommendation.
+   - `GENERALIST` — perform one process move and end with a question
+     or a confirmation reminder. A flat statement with neither fails
+     this.
    *(Delibra spec §11 "required reasoning act fidelity".)*
 10. **unanswerable** — Asks a question participants cannot answer:
     subject not in the public record, assumes a missing option, or

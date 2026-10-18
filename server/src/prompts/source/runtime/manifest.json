@@ -14,7 +14,7 @@
       "validationSchema": "control_50/validation.schema.json",
       "planRequired": false,
       "generatorSha256": "1113e9f40ba2c95a5667195787aa17d6c0d23c4848e46754b8c1f2516b570ac9",
-      "validatorSha256": "fcafe3fa8a90c5dca041074798983121ec657fe61a3f0ee1b562477395a38ff4",
+      "validatorSha256": "202517f48d1c60ecdd342d63e5d852d4fdb8716f52c72ca8008d57469db2aa5b",
       "maxWords": 50
     },
     "generalist": {
@@ -26,8 +26,8 @@
       "generationSchema": "control_50/generation.schema.json",
       "validationSchema": "control_50/validation.schema.json",
       "planRequired": false,
-      "generatorSha256": "07335dd44701f3e050228679e632c7c92b75a4cff757638b08e34fc21d4a4a22",
-      "validatorSha256": "fcafe3fa8a90c5dca041074798983121ec657fe61a3f0ee1b562477395a38ff4",
+      "generatorSha256": "451038067e32bdcd863aa1c28ac7d37a731669676934b778308413185f803cc4",
+      "validatorSha256": "202517f48d1c60ecdd342d63e5d852d4fdb8716f52c72ca8008d57469db2aa5b",
       "maxWords": 50
     },
     "requested_generalist": {
@@ -53,8 +53,8 @@
       "validationSchema": "specialist/validation.schema.json",
       "preflightSchema": "specialist/plan_preflight.schema.json",
       "planRequired": true,
-      "generatorSha256": "4d241b31ed0a17b91f20580d5a95894ea582b54f729c354e972b3e4ec4141d1e",
-      "validatorSha256": "bdc8895011bd15624aaa8bfa9b7334a5a9c38f31692ce652073084036f325deb",
+      "generatorSha256": "8f7f92d2b45b9f809d6a8fb36b7f16dd1f674d3abb0c92d5cd97928e523fd88e",
+      "validatorSha256": "1ce28344b8e5a6fe0d74aabe19ea4fa598be376616b7d8e42043866f9e605f9c",
       "maxWords": 50
     },
     "challenger": {
@@ -68,8 +68,8 @@
       "validationSchema": "specialist/validation.schema.json",
       "preflightSchema": "specialist/plan_preflight.schema.json",
       "planRequired": true,
-      "generatorSha256": "a16e13f4db5c2cd58841bb52db94428e441aae79d4cc015271a2bc004606f4a9",
-      "validatorSha256": "bdc8895011bd15624aaa8bfa9b7334a5a9c38f31692ce652073084036f325deb",
+      "generatorSha256": "e769f191790a23d22a8c7aa03f95e88f4ecf5f058e0e8070aae07fefd8e944dc",
+      "validatorSha256": "1ce28344b8e5a6fe0d74aabe19ea4fa598be376616b7d8e42043866f9e605f9c",
       "maxWords": 50
     },
     "synthesiser": {
@@ -83,8 +83,8 @@
       "validationSchema": "specialist/validation.schema.json",
       "preflightSchema": "specialist/plan_preflight.schema.json",
       "planRequired": true,
-      "generatorSha256": "fd66192cb5f2406a0082582b4ab21c3e4a77480c9a12165a48c119c6fcb829f5",
-      "validatorSha256": "bdc8895011bd15624aaa8bfa9b7334a5a9c38f31692ce652073084036f325deb",
+      "generatorSha256": "a4aa2b3152da96d801417fe90f2ec297d74560a9aaa807108e454cdff76241c8",
+      "validatorSha256": "1ce28344b8e5a6fe0d74aabe19ea4fa598be376616b7d8e42043866f9e605f9c",
       "maxWords": 55
     }
   },
@@ -104,12 +104,12 @@
       "bytes": 9654
     },
     "specialist/challenger.md": {
-      "sha256": "1e913363a6921cfca8a6c5dd3a4e617b089e20ff7e56e0ca8d303a4ed9460f63",
-      "bytes": 4399
+      "sha256": "1d6fd2883c2cc2b6c99ca6d3a5fe506239ab535dadc1a2a187290fd7aa6bbd38",
+      "bytes": 5793
     },
     "specialist/expander.md": {
-      "sha256": "f68ea4a03f6e477ed2f0351235b2152da068a78eee4a7e34d8b9afb6e47055b0",
-      "bytes": 3453
+      "sha256": "7f5f450060781a7c0237bdf7a8561d55c213585e76a50530b99f06938e2a6085",
+      "bytes": 5059
     },
     "specialist/generation.schema.json": {
       "sha256": "999d83eb6e97e115b658b502c0f9902f9ada8cc62940c1d384cc7106eb75daaf",
@@ -124,28 +124,28 @@
       "bytes": 7791
     },
     "specialist/specialist_common.md": {
-      "sha256": "dc8b07444273b985959aff8e41c3e3ce08146618ecd337a27836b93c7ed544b3",
-      "bytes": 4302
+      "sha256": "7b70e562899bd7cdd8e3871908d303fc8c2bc74d68b1fd2ab6a0a2d1a6f5374c",
+      "bytes": 4761
     },
     "specialist/synthesiser.md": {
-      "sha256": "6da3318762f5da33da40f024f6eab4095e54fe83af08940a120a86ec898c6c52",
-      "bytes": 5472
+      "sha256": "7d3bff4cfa62002fcc0b5f43a990b5ae2d548908b048151eb524da2c43eba0c2",
+      "bytes": 6308
     },
     "specialist/validation.schema.json": {
       "sha256": "be606ed0b1ae46987a1305c7ec128df3b1e111fedb0cb8e68eac86359f67285b",
       "bytes": 3110
     },
     "specialist/validator.md": {
-      "sha256": "bdc8895011bd15624aaa8bfa9b7334a5a9c38f31692ce652073084036f325deb",
-      "bytes": 10626
+      "sha256": "1ce28344b8e5a6fe0d74aabe19ea4fa598be376616b7d8e42043866f9e605f9c",
+      "bytes": 13255
     },
     "control_50/base.md": {
       "sha256": "91ffc1b86c43048bfc4b4fae1b2f3a0e9e8c5ed5e2ab02f96b3df7febd6158fc",
       "bytes": 11352
     },
     "control_50/generalist.md": {
-      "sha256": "3b509df2d0652c1a773258edde5fb9e8bdbaea3d1fe27e4443bfe0c5b14cd169",
-      "bytes": 5638
+      "sha256": "418b58322e8c5953ff0113d1c379255a102837a0d62b5deb47df8d8bd3a88aee",
+      "bytes": 3525
     },
     "control_50/generation.schema.json": {
       "sha256": "27ad27af7ed2dbee18dc264f555bbe22bf3fc79a02b473464ede595e094ade6c",
@@ -160,8 +160,8 @@
       "bytes": 5444
     },
     "control_50/validator.md": {
-      "sha256": "fcafe3fa8a90c5dca041074798983121ec657fe61a3f0ee1b562477395a38ff4",
-      "bytes": 11657
+      "sha256": "202517f48d1c60ecdd342d63e5d852d4fdb8716f52c72ca8008d57469db2aa5b",
+      "bytes": 12249
     },
     "frozen_control/base.md": {
       "sha256": "075deb1c9d1ddfc4d773e4b686079abc7e1a023957156fe4d4bd069e6b2c383e",
