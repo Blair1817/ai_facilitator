@@ -637,6 +637,6 @@ test("test data is hidden by default, included explicitly, and labelled in direc
     assert.match(md.body, /TEST SESSION/);
     const csv = await fetchText(`${srv.base}/games/GAME1/questionnaire.csv`);
     assert.match(csv.body.split('\n')[0], /test_mode/);
-    assert.ok(csv.body.split('\n').slice(1).filter(Boolean).every(line => line.endsWith('true')));
+    assert.ok(csv.body.split('\n').slice(1).filter(Boolean).every(line => line.split(',')[csv.body.split('\n')[0].split(',').indexOf('test_mode')] === 'true'));
   } finally { await srv.close(); }
 });

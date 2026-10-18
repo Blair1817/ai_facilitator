@@ -37,8 +37,8 @@ test("formal InitialDecision keeps a local draft but the server authors receipt 
   assert.match(personalFlowSource, /initialDecisionAcceptedOnTime/);
 });
 
-test("FinalDecision restores private local drafts but only the server writes its finalized timestamped record", () => {
-  const source = read("stages/FinalDecision.jsx");
+test("Legacy FinalDecision restores private drafts and the server writes its finalized record", () => {
+  const source = read("stages/LegacyFinalDecision.jsx");
   assert.match(source, /usePersistentDraft/);
   assert.match(source, /finalDecisionDraftRequest/);
   assert.match(source, /finalDecisionConfirmRequest/);

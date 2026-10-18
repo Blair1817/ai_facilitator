@@ -18,8 +18,9 @@ function setIfChanged(scope, key, value) {
 }
 
 function currentPersonalPage(player, stageName, taskIndex) {
+  const round = player.currentGame?.currentRound;
   const progress = player.round.get(personalProgressKey(stageName));
-  return progress ? personalPages(stageName, taskIndex)[progress.index] ?? null : null;
+  return progress ? personalPages(stageName, taskIndex, round?.get("decisionFlowVersion"))[progress.index] ?? null : null;
 }
 
 export function sharedBreakState(players, stageName, taskIndex) {
@@ -59,7 +60,7 @@ function advanceSharedBreak(stage, mirrorResponse, now = Date.now()) {
     || !canAdvanceSharedBreak(deadline, summary.allReady, now)) return false;
 
   const key = personalProgressKey(stageName);
-  const pages = personalPages(stageName, taskIndex);
+  const pages = personalPages(stageName, taskIndex, round.get("decisionFlowVersion"));
   const breakIndex = pages.indexOf("Break");
   for (const player of game.players) {
     const progress = player.round.get(key);
@@ -72,7 +73,7 @@ function advanceSharedBreak(stage, mirrorResponse, now = Date.now()) {
     player.round.set(key, { index: breakIndex + 1, startedAt: now });
   }
   clearSharedBreakTimer(round.id);
-  if (allPersonalPagesDone(game.players, stageName, taskIndex)) stage.set("ended", true);
+  if (allPersonalPagesDone(game.players, stageName, taskIndex, round.get("decisionFlowVersion"))) stage.set("ended", true);
   return true;
 }
 
@@ -103,7 +104,7 @@ export function synchroniseSharedBreak(stage, mirrorResponse, Empirica, now = Da
   if (!round || !game || stageName !== "Followup" || taskIndex !== 0 || stage.get("ended")) return false;
 
   const key = personalProgressKey(stageName);
-  const pages = personalPages(stageName, taskIndex);
+  const pages = personalPages(stageName, taskIndex, round.get("decisionFlowVersion"));
   const breakIndex = pages.indexOf("Break");
   for (const player of game.players) {
     if (player.round.get(key)?.index === breakIndex && !player.round.get("breakWaitingArrivedAt")) {
@@ -135,7 +136,7 @@ export function synchroniseSharedBreak(stage, mirrorResponse, Empirica, now = Da
 }
 
 export function handlePersonalFlowStageStart(stage) {
-  if (!personalPages(stage.get("name"), stage.round.get("taskIndex")).length) return;
+  if (!personalPages(stage.get("name"), stage.round.get("taskIndex"), stage.round.get("decisionFlowVersion")).length) return;
   const key = personalProgressKey(stage.get("name"));
   for (const player of stage.currentGame.players) {
     if (!player.round.get(key)) player.round.set(key, { index: 0, startedAt: Date.now() });
@@ -148,7 +149,7 @@ export function registerPersonalFlow(Empirica, mirrorResponse) {
     if (!request || !stage || stage.get("ended") || request.stageId !== stage.id || request.roundId !== round.id) return;
     if (isTestGame(game) && (request.version ?? 0) !== (player.round.get("testProgressVersion") || 0)) return;
     const stageName = stage.get("name"), taskIndex = round.get("taskIndex");
-    const pages = personalPages(stageName, taskIndex), key = personalProgressKey(stageName);
+    const pages = personalPages(stageName, taskIndex, round.get("decisionFlowVersion")), key = personalProgressKey(stageName);
     const progress = player.round.get(key);
     if (!progress || request.index !== progress.index || progress.index >= pages.length) return;
     const page = pages[progress.index], now = Date.now();
@@ -215,7 +216,7 @@ export function registerPersonalFlow(Empirica, mirrorResponse) {
     // Do not use native submit: Empirica ignores disconnected players there.
     // Group activities start only when all three assigned participants are ready.
     synchroniseSharedBreak(stage, mirrorResponse, Empirica, now);
-    if (allPersonalPagesDone(game.players, stageName, taskIndex)) stage.set("ended", true);
+    if (allPersonalPagesDone(game.players, stageName, taskIndex, round.get("decisionFlowVersion"))) stage.set("ended", true);
     Empirica.flush();
   });
 
@@ -228,7 +229,7 @@ export function registerPersonalFlow(Empirica, mirrorResponse) {
       || request.requestId.length > 128) return;
     const key = personalProgressKey("Followup");
     const progress = player.round.get(key);
-    const pages = personalPages("Followup", 0);
+    const pages = personalPages("Followup", 0, round.get("decisionFlowVersion"));
     if (!progress || request.index !== progress.index || pages[progress.index] !== "Break") return;
 
     const now = Date.now();

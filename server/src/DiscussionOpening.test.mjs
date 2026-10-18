@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { DISCUSSION_OPENING_MESSAGE } from "../../shared/discussionOpening.mjs";
+import { DECISION_NUDGE } from "../../shared/decisionSubmission.mjs";
 import { PRACTICE_CHAT } from "../../shared/practice.mjs";
 import { containsFacilitatorMention } from "./CheckpointManager.mjs";
 import { buildAssessorUserContext } from "./SemanticAssessor.js";
@@ -253,8 +254,8 @@ test("opening remains independent of formal silence and Timer reminders", async 
     for (const timer of scheduled.filter(({ delay }) => delay > 100_000)) timer.callback();
     const timerMessages = world.game.get(world.chatKey).filter((message) => message.messageType === "timer_reminder");
     assert.deepEqual(timerMessages.map((message) => message.content), [
-      "8 minutes remain in the discussion.",
-      "One minute remains in the discussion.",
+      `8 minutes remain in the discussion. ${DECISION_NUDGE}`,
+      `One minute remains in the discussion. ${DECISION_NUDGE}`,
     ]);
   });
 });

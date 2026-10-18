@@ -16,7 +16,7 @@ const taskInformation = await read("client/src/intro-exit/Introduction.jsx");
 const reviewQuiz = await read("client/src/stages/ReviewQuiz.jsx");
 const initial = await read("client/src/stages/InitialDecision.jsx");
 const discussion = await read("client/src/stages/Discussion.jsx");
-const finalDecision = await read("client/src/stages/FinalDecision.jsx");
+const finalDecision = await read("client/src/stages/LegacyFinalDecision.jsx");
 const individual = await read("client/src/stages/IndividualAssessment.jsx");
 const decisionControls = await read("client/src/components/DecisionControls.jsx");
 const survey = await read("client/src/intro-exit/SubjectiveSurvey.jsx");
@@ -65,7 +65,7 @@ test("T1-T7: locked routing includes one pre-round practice container and per-ro
   }
   assert.match(callbacks, /taskIndex:\s+0/);
   assert.match(callbacks, /taskIndex:\s+1/);
-  assert.match(callbacks, /addPracticeRound\(game\)/);
+  assert.match(callbacks, /addPracticeRound\(game, 2\)/);
   // The former per-page stages collapsed into two untimed personal-flow
   // stages per round (Preparation / Followup); IndividualAssessment is now
   // a Followup page, not a stage.
@@ -73,12 +73,12 @@ test("T1-T7: locked routing includes one pre-round practice container and per-ro
   assert.equal((callbacks.match(/name: "Preparation", duration: 1e9/g) ?? []).length, 2);
   assert.equal((callbacks.match(/name: "Followup", duration: 1e9/g) ?? []).length, 2);
   assert.match(personalFlowShared, /PREPARATION_PAGES = \["TaskInformation", "ReviewQuiz", "InitialDecision"\]/);
-  assert.match(personalFlowShared, /"IndividualAssessment", "TLX", "SubjectiveSurvey"/);
+  assert.match(personalFlowShared, /"IndividualAssessment"\]\), "TLX", "SubjectiveSurvey"/);
   assert.match(game, /\["Preparation", "Followup"\]\.includes\(stageName\)\) return <PersonalFlow/);
 });
 
 test("one practice container precedes two Icebreaker-free formal rounds and Round 1 resets formal state", () => {
-  const practiceStart = callbacks.indexOf('addPracticeRound(game);');
+  const practiceStart = callbacks.indexOf('addPracticeRound(game, 2);');
   const round1Start = callbacks.indexOf('const round1 = game.addRound({');
   const round2Start = callbacks.indexOf('const round2 = game.addRound({');
   const roundStartHandler = callbacks.indexOf('Empirica.onRoundStart(({ round }) => {');
@@ -87,7 +87,7 @@ test("one practice container precedes two Icebreaker-free formal rounds and Roun
   const practiceBlock = callbacks.slice(practiceStart, round1Start);
   const round1Block = callbacks.slice(round1Start, round2Start);
   const round2Block = callbacks.slice(round2Start, callbacks.indexOf('// Restore the original stable colour aliases'));
-  assert.match(practiceBlock, /addPracticeRound\(game\)/);
+  assert.match(practiceBlock, /addPracticeRound\(game, 2\)/);
   for (const formalBlock of [round1Block, round2Block]) {
     assert.doesNotMatch(formalBlock, /Walkthrough|IceBreaker|PracticeIcebreaker|Introduction/);
   }
@@ -249,9 +249,9 @@ test("the formal Discussion reminder is scheduled for eight minutes remaining ra
   assert.match(taskBlock, /const reminderMinutes = Math\.ceil\(gameDuration \/ 2\)/);
   assert.match(taskBlock, /const reminderAt = game\.get\("deadline"\) - reminderMinutes \* 60 \* 1000/);
   assert.match(taskBlock, /const reminderDelayMs = Math\.max\(0, reminderAt - Date\.now\(\)\)/);
-  assert.match(taskBlock, /`\$\{reminderMinutes\} minutes remain in the discussion\.`\), reminderDelayMs\)/);
+  assert.match(taskBlock, /`\$\{reminderMinutes\} minutes remain in the discussion\. \$\{DECISION_NUDGE\}`\), reminderDelayMs\)/);
   assert.doesNotMatch(taskBlock, /durationMs \/ 2/);
-  assert.match(taskBlock, /"One minute remains in the discussion\."\), durationMs - 60_000/);
+  assert.match(taskBlock, /`One minute remains in the discussion\. \$\{DECISION_NUDGE\}`\), durationMs - 60_000/);
 
   const durationSeconds = 15 * 60;
   const reminderSeconds = Math.ceil(15 / 2) * 60;
@@ -299,7 +299,7 @@ test("T16-T26/T46: stable participant and official group-decision fields are sep
   assert.doesNotMatch(callbacks + policies, /groupChoiceMismatch(Status)?/);
 });
 
-test("Group Final Decision is a 90-second server-authoritative unanimous confirmation stage", () => {
+test("Legacy Group Final Decision retains its 90-second unanimous confirmation stage", () => {
   assert.equal(GROUP_DECISION_SECONDS, 90);
   assert.equal((callbacks.match(/name: "FinalDecision",\s+duration: GROUP_DECISION_SECONDS/g) ?? []).length, 2);
   assert.match(decisionControls, /id: "NO_GROUP_FINAL_DECISION"/);
