@@ -4,8 +4,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { PRACTICE, PRACTICE_STAGES, PRACTICE_CHAT, practiceReadiness } from "../../shared/practice.mjs";
+import { DISCUSSION_OPENING_MESSAGE } from "../../shared/discussionOpening.mjs";
 import { resolveTimerVisibility } from "../../shared/timerVisibility.mjs";
-import { addPracticeRound, deliverPracticeDiscussionReminder, initialisePractice, handlePracticeStageStart, registerPractice, handlePracticeMessage } from "./PracticeOnboarding.mjs";
+import { addPracticeRound, deliverPracticeDiscussionReminder, deliverPracticeSilenceNudge, initialisePractice, handlePracticeStageStart, registerPractice, handlePracticeMessage, PRACTICE_SILENCE_NUDGE_DELAY_MS } from "./PracticeOnboarding.mjs";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const practiceClientSource = readFileSync(path.join(dirname, "../../client/src/practice/PracticeOnboarding.jsx"), "utf8");
@@ -38,7 +39,7 @@ function fixture(name = "PracticeDiscussion") {
   });
   const send = (player, id, content = "Hello") => handlePracticeMessage(player, {
     requestId: id, roundId: round.id, stageId: stage.id, content,
-  }, append);
+  }, append, api);
   return { game, round, stage, players: game.players, listeners, messages, request, send };
 }
 
@@ -84,7 +85,7 @@ test("initial submission validates confidence including zero, persists privately
   assert.equal(f.game.get("practiceEventsIndex"), undefined);
   assert.equal(f.players[0].round.get("practiceEventsIndex").length, 2);
 });
-test("discussion start is idempotent: one fixed welcome, unchanged deadline and counts on reconnect", () => {
+test("discussion start is idempotent with one fixed non-LLM Facilitator opening", () => {
   const f = fixture();
   f.listeners.get("start")({ stage: f.stage });
   const startedAt = f.round.get("practiceDiscussionStartedAt");
@@ -92,9 +93,70 @@ test("discussion start is idempotent: one fixed welcome, unchanged deadline and 
   f.listeners.get("start")({ stage: f.stage });
   assert.equal(f.round.get("practiceDiscussionStartedAt"), startedAt);
   assert.equal(f.round.get("practiceDeadline"), startedAt + 240000);
-  assert.equal(f.messages.filter((m) => m.source === "facilitator_fixed").length, 1);
+  assert.equal(f.messages.filter((m) => m.speakerType === "facilitator_fixed").length, 1);
+  const opening = f.messages.find((m) => m.facilitatorTrigger === "PRACTICE_DISCUSSION_OPENING");
+  assert.equal(opening.content, DISCUSSION_OPENING_MESSAGE);
   assert.equal(f.round.get("practiceMessageCounts").p0, 1);
   assert.equal(f.game.get("humanMessageCount"), undefined);
+});
+test("Practice Discussion sends distinct fixed nudges for opening silence and a later lull", () => {
+  const f = fixture();
+  f.listeners.get("start")({ stage: f.stage });
+  const append = (_game, attribute, value) => f.messages.push({ attribute, ...value });
+  const startedAt = f.round.get("practiceDiscussionStartedAt");
+
+  assert.equal(deliverPracticeSilenceNudge(f.stage, append, { flush() {} }, startedAt + PRACTICE_SILENCE_NUDGE_DELAY_MS - 1), false);
+  assert.equal(deliverPracticeSilenceNudge(f.stage, append, { flush() {} }, startedAt + PRACTICE_SILENCE_NUDGE_DELAY_MS), true);
+  assert.equal(deliverPracticeSilenceNudge(f.stage, append, { flush() {} }, startedAt + PRACTICE_SILENCE_NUDGE_DELAY_MS + 1), false);
+  const openingNudge = f.messages.find((message) => message.messageId?.startsWith("practice-silence-opening-"));
+  assert.equal(openingNudge.content, "Whenever you’re ready, feel free to jump in — sharing what you each know about the options is a good place to start.");
+
+  f.send(f.players[0], "after-opening", "Garden has good ventilation");
+  const lastHumanMessageAt = f.round.get("practiceLastHumanMessageAt");
+  assert.equal(deliverPracticeSilenceNudge(f.stage, append, { flush() {} }, lastHumanMessageAt + PRACTICE_SILENCE_NUDGE_DELAY_MS - 1), false);
+  assert.equal(deliverPracticeSilenceNudge(f.stage, append, { flush() {} }, lastHumanMessageAt + PRACTICE_SILENCE_NUDGE_DELAY_MS), true);
+  const lullNudge = f.messages.find((message) => message.messageId?.startsWith("practice-silence-lull-"));
+  assert.equal(lullNudge.content, "No rush — feel free to keep sharing your thoughts whenever you’re ready.");
+
+  for (const nudge of [openingNudge, lullNudge]) {
+    assert.equal(nudge.speakerType, "facilitator_fixed");
+    assert.equal(nudge.facilitatorOrigin, "DETERMINISTIC_FIXED");
+    assert.equal(nudge.facilitatorTrigger, "PRACTICE_SILENCE_NUDGE");
+    assert.equal(nudge.exclude_from_primary_analysis, true);
+  }
+  assert.equal(f.game.get("humanMessageCount"), undefined);
+});
+test("participant activity replaces the silence watchdog and Discussion completion clears it", () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const scheduled = [];
+  const cleared = [];
+  globalThis.setTimeout = (callback, delay) => {
+    const handle = { callback, delay, unref() {} };
+    scheduled.push(handle);
+    return handle;
+  };
+  globalThis.clearTimeout = (handle) => cleared.push(handle);
+  try {
+    const f = fixture();
+    f.listeners.get("start")({ stage: f.stage });
+    const initialWatchdog = scheduled[0];
+    assert.ok(initialWatchdog.delay <= PRACTICE_SILENCE_NUDGE_DELAY_MS);
+
+    f.send(f.players[0], "watchdog-reset", "Garden has good ventilation");
+    const replacementWatchdog = scheduled.at(-1);
+    assert.ok(cleared.includes(initialWatchdog));
+    assert.notEqual(replacementWatchdog, initialWatchdog);
+
+    f.round.set("practiceDiscussionStartedAt", Date.now() - 120_001);
+    f.round.set("practiceMessageCounts", { p0: 2, p1: 2, p2: 2 });
+    for (const player of f.players) f.request(player, "ready", { ready: true });
+    assert.equal(f.stage.get("ended"), true);
+    assert.ok(cleared.includes(replacementWatchdog));
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
 });
 test("early finish needs two minutes, every participant and six human messages", () => {
   const base = { startedAt: 0, now: 120000, counts: { a: 2, b: 2, c: 2 }, participantIds: ["a", "b", "c"] };
@@ -107,15 +169,19 @@ test("only accepted human messages count, retries deduplicate and mentions persi
   const f = fixture();
   f.listeners.get("start")({ stage: f.stage });
   assert.deepEqual(f.round.get("practiceMessageCounts"), {});
-  f.send(f.players[0], "one", "Hello @[Pink]");
-  f.send(f.players[0], "one", "Hello @[Pink]");
+  const accepted = f.send(f.players[0], "one", "Hello @[Pink]");
+  const duplicate = f.send(f.players[0], "one", "Hello @[Pink]");
   assert.equal(f.round.get("practiceMessageCounts").p0, 1);
   assert.equal(f.players[0].round.get("practiceMentionUsed"), true);
+  assert.deepEqual(accepted, duplicate);
+  assert.equal(accepted.content, "Hello @[Pink]");
+  assert.equal(accepted.stage, "PracticeDiscussion");
   assert.equal(f.messages[1].phase, "practice");
   assert.equal(f.messages[1].exclude_from_primary_analysis, true);
   assert.equal(f.messages[1].attribute, PRACTICE_CHAT);
   f.round.set("practiceDeadline", Date.now() - 1);
-  f.send(f.players[1], "two");
+  const rejected = f.send(f.players[1], "two");
+  assert.equal(rejected.status, "rejected");
   assert.equal(f.messages.length, 2);
 });
 test("ready is server gated, cancellable, and finishes only on unanimous readiness", () => {
@@ -220,7 +286,7 @@ test("practice completion waits for all participants before the main experiment"
   assert.equal(f.stage.get("ended"), true);
   assert.equal(f.game.get("practice_complete"), true);
 });
-test("welcome icebreaker: facilitator opens once, chat works, and counts stay separate from discussion", () => {
+test("welcome icebreaker has one fixed non-LLM Facilitator opening and keeps counts separate", () => {
   const f = fixture("PracticeWelcome");
   f.listeners.get("start")({ stage: f.stage });
   assert.equal(f.round.get("practiceWelcomeGreetSent"), true);
@@ -228,6 +294,7 @@ test("welcome icebreaker: facilitator opens once, chat works, and counts stay se
   assert.equal(greets.length, 1);
   assert.match(greets[0].content, /Blue, Pink, Green/);
   assert.equal(greets[0].stage, "PracticeWelcome");
+  assert.equal(greets[0].facilitatorOrigin, "DETERMINISTIC_FIXED");
   // Reconnect / repeated stage start does not duplicate the greeting.
   f.listeners.get("start")({ stage: f.stage });
   assert.equal(f.messages.filter((m) => m.messageId?.startsWith("practice-greet-")).length, 1);

@@ -22,7 +22,7 @@ export function PlayerList() {
                         </div>
                     </div>
                 ))}
-                {(facilitation === "static" || facilitation === "adaptive") &&
+                {(round?.get("isPractice") === true || facilitation === "static" || facilitation === "adaptive") &&
                     <div style={styles.playerCard}>
                         <div style={styles.avatar}><img
                             className="h-full w-full rounded-md shadow bg-white p-1"

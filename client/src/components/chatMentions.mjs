@@ -10,7 +10,7 @@ export function buildChatMentionUsers(players, currentPlayerId, { isPractice, fa
       display: participant.get("name"),
     }));
 
-  if (!isPractice && facilitation !== "none" && facilitation !== "human") {
+  if (isPractice || (facilitation !== "none" && facilitation !== "human")) {
     users.push({ id: "ai", display: "Facilitator" });
   }
 

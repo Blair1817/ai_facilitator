@@ -7,6 +7,7 @@ import { testPersonalState } from "../../shared/testMode.mjs";
 import { registerPersonalFlow } from "./PersonalFlow.mjs";
 import { buildRoundResponseRows } from "./SupabasePersistence.mjs";
 import { describeFinalDecisionOutcome } from "./ExportService.mjs";
+import { readAppendOnlyAttribute } from "./AppendOnlyAttribute.mjs";
 function scope(id, values = {}) {
   const data = new Map(Object.entries(values));
   return { id, get: (key) => data.get(key), set: (key, value) => data.set(key, value) };
@@ -143,6 +144,81 @@ test("registered callbacks accept independent responses and ignore legacy drafts
     listener("stage", "ended")({}, { stage: w.stage, ended: true });
     assert.equal(w.round.get("finalDecisionOutcome"), "mismatch_fail");
   }
+});
+
+test("Practice uses the complete v2 FinalDecision lifecycle and records one authoritative result", async () => {
+  const { getOfflineCallbacksHarness } = await import("../test/participant_sim/fakes/loadCallbacks.mjs");
+  const { Empirica } = await getOfflineCallbacksHarness();
+  const listener = (kind, key) => Empirica.attributeListeners.find((l) => l.kind === kind && l.key === key).callback;
+  const w = world({ isPractice: true, index: 0 });
+  w.game.set("treatment", { gameDuration: 10 });
+
+  listener("stage", "start")({}, { stage: w.stage, start: true });
+  assert.equal(w.round.get("FinalDecisionStartedAt") + 90_000, w.round.get("finalDecisionDeadline"));
+  assert.equal(w.round.get("finalDecisionConfirmed"), false);
+
+  const requests = [
+    { choice: "a", confidence: 0, ...dissent },
+    { choice: "a", confidence: 50, agreesWithGroupChoice: true },
+    { choice: "a", confidence: 100, agreesWithGroupChoice: true },
+  ];
+  requests.forEach((response, index) => listener("player", "finalDecisionSubmitRequest")({}, {
+    player: w.players[index],
+    finalDecisionSubmitRequest: {
+      requestId: `practice-final-${index}`, roundId: "r", stageId: "s", ...response,
+    },
+  }));
+
+  assert.equal(w.stage.get("ended"), true);
+  assert.equal(w.round.get("finalDecisionOutcome"), "consensus_choice");
+  assert.equal(w.round.get("officialGroupFinalChoice"), "a");
+  assert.equal(w.round.get("finalDecisionTimedOut"), false);
+  assert.equal(w.round.get("finalDecisionDraftChoices").length, 3);
+  assert.equal(w.players[0].round.get("groupFinalChoice"), "a");
+  assert.equal(w.players[0].round.get("groupChoiceConfidence"), 0);
+  assert.equal(w.players[0].round.get("agreesWithGroupChoice"), false);
+  assert.equal(w.players[0].round.get("finalPersonalChoice"), "b");
+  assert.equal(w.players[0].round.get("finalPersonalChoiceRationale"), "Better evidence");
+  assert.equal(w.players[0].round.get("finalDecision").officialGroupFinalChoice, "a");
+  assert.equal(w.players[0].round.get("finalDecision").finalDecisionOutcome, "consensus_choice");
+  assert.ok(Number.isFinite(w.players[0].round.get("groupFinalSubmittedAt")));
+  assert.ok(Number.isFinite(w.players[0].round.get("groupFinalCompletionDurationMs")));
+  assert.equal(w.players[0].round.get("groupFinalTimeoutReason"), null);
+
+  const events = readAppendOnlyAttribute(w.game, "practiceEvents");
+  assert.equal(events.filter((event) => event.event === "group_choice").length, 1);
+  assert.equal(events.find((event) => event.event === "group_choice").choice, "a");
+  assert.ok(events.every((event) => event.phase === "practice" && event.exclude_from_primary_analysis === true));
+
+  // Native stage-end delivery after the third submission must not overwrite
+  // the accepted result or append a duplicate Practice decision event.
+  listener("stage", "ended")({}, { stage: w.stage, ended: true });
+  assert.equal(w.round.get("finalDecisionOutcome"), "consensus_choice");
+  assert.equal(readAppendOnlyAttribute(w.game, "practiceEvents").filter((event) => event.event === "group_choice").length, 1);
+
+  const timeout = world({ isPractice: true, index: 0 });
+  timeout.game.set("treatment", { gameDuration: 10 });
+  listener("stage", "start")({}, { stage: timeout.stage, start: true });
+  listener("player", "finalDecisionSubmitRequest")({}, {
+    player: timeout.players[0],
+    finalDecisionSubmitRequest: {
+      requestId: "practice-timeout-submission", roundId: "r", stageId: "s",
+      choice: "b", confidence: 75, agreesWithGroupChoice: true,
+    },
+  });
+  listener("stage", "ended")({}, { stage: timeout.stage, ended: true });
+  assert.equal(timeout.round.get("finalDecisionOutcome"), "timeout_fail");
+  assert.equal(timeout.round.get("officialGroupFinalChoice"), "FAIL");
+  assert.equal(timeout.round.get("finalDecisionTimedOut"), true);
+  assert.equal(timeout.round.get("finalDecisionDraftChoices").length, 1);
+  assert.equal(timeout.players[0].round.get("finalDecision").choice, "b");
+  assert.equal(timeout.players[0].round.get("finalDecision").finalDecisionOutcome, "timeout_fail");
+  assert.equal(timeout.players[0].round.get("groupFinalTimeoutReason"), null);
+  assert.equal(timeout.players[1].round.get("finalDecision"), null);
+  assert.equal(timeout.players[1].round.get("groupFinalTimeoutReason"), "stage_timeout");
+  const timeoutEvents = readAppendOnlyAttribute(timeout.game, "practiceEvents");
+  assert.equal(timeoutEvents.filter((event) => event.event === "group_choice").length, 1);
+  assert.equal(timeoutEvents.find((event) => event.event === "group_choice").choice, "FAIL");
 });
 
 test("test controls finish the shorter v2 Followup cursor including shared break", async () => {

@@ -98,8 +98,8 @@ export function PracticeOnboarding() {
   }
   const complete = name === "PracticeComplete";
   // Welcome page doubles as the icebreaker: while waiting for everyone to
-  // start, participants greet each other in the chat (facilitator opens
-  // with a fixed message). Chat is read-only once this participant moves on.
+  // start, participants can greet each other after a fixed Facilitator
+  // opening. Chat is read-only once this participant moves on.
   const welcomeIcebreaker = name === "PracticeWelcome";
   if (welcomeIcebreaker) {
     return <div className="flex h-full w-full overflow-hidden bg-gray-50">
@@ -110,7 +110,7 @@ export function PracticeOnboarding() {
           <p>Before the main tasks, you will complete a short practice activity with your group. This will show you how to use the task information, group chat, and decision interface.</p>
           <Identity player={player} />
           <p>Other group members will appear using colour nicknames.</p>
-          <p className="rounded-lg bg-blue-50 p-4 text-sm text-blue-950">The facilitator has started a conversation in the chat. Say hello to your group while everyone gets ready.</p>
+          <p className="rounded-lg bg-blue-50 p-4 text-sm text-blue-950">The facilitator has started a conversation in the chat. Say hello while everyone gets ready. If you want help, type <strong>@</strong> and select Facilitator.</p>
           {done ? <p role="status">Waiting for the other group members…</p> : <Button disabled={pending} handleClick={() => next()}>Start practice</Button>}
         </main>
       </div>
@@ -217,7 +217,7 @@ function PracticeDiscussion({ game, player, players, round, stage, now, config, 
             <div className="rounded-md border border-gray-300 p-4 text-gray-400">Write a message…</div>
           </div> : <Chat scope={game} attribute={PRACTICE_CHAT} disabled={remaining === 0} />}
         </div>
-        {!player.round.get("practiceMentionUsed") && <p className="flex-none px-4 py-2 text-sm text-gray-500">Tip: Type <strong>@</strong> to tag another group member.</p>}
+        {!player.round.get("practiceMentionUsed") && <p className="flex-none px-4 py-2 text-sm text-gray-500">Tip: Type <strong>@</strong> to tag another group member or ask the Facilitator for help.</p>}
       </div>
     </div>
     {tutorial && <div className="absolute inset-0 z-20 flex items-center justify-center bg-gray-900/40 p-6">
@@ -225,7 +225,7 @@ function PracticeDiscussion({ game, player, players, round, stage, now, config, 
         <h1 id="practice-chat-title" className="text-2xl font-bold">Group Discussion</h1>
         <p className="my-4">Use the chat to compare the options and reach a group decision.</p>
         <Callout title="Type your messages here.">The message box is at the bottom of the chat panel on the right.</Callout>
-        <Callout title="Type @ to tag another group member.">Select their colour nickname from the suggestions.</Callout>
+        <Callout title="Type @ to tag someone.">Select a colour nickname, or select Facilitator if you want help.</Callout>
         <p className="mb-4 text-sm text-gray-600">The discussion starts when everyone is ready. You can show or hide the timer; it will appear automatically for the final 30 seconds.</p>
         <GroupProgress players={players} progress={progress} pending="Viewing guide…" />
         {done ? <p role="status">Waiting for the other group members…</p> : <Button disabled={pending} handleClick={() => next()}>Got it</Button>}

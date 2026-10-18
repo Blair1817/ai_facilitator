@@ -65,6 +65,7 @@ import {
   FORMAL_INITIAL_DECISION_SECONDS,
   GROUP_DECISION_SECONDS,
 } from "../../shared/personalFlow.mjs";
+import { PRACTICE_CHAT } from "../../shared/practice.mjs";
 import {
   buildGlobalResponseRow,
   buildInterventionMirror,
@@ -118,8 +119,21 @@ async function finalizeAuditLog(store, entry) {
   });
 }
 
+function canPublishFacilitatorResult(game, origin) {
+  if (origin?.phase !== "practice") return canPublishTestResult(game, origin);
+  const stage = game.currentStage;
+  return game.currentRound?.id === origin.originatingRoundId
+    && game.currentRound?.get("isPractice") === true
+    && stage?.id === origin.originatingStageId
+    && stage?.get("name") === origin.originatingStageName
+    && ["PracticeWelcome", "PracticeDiscussion"].includes(origin.originatingStageName)
+    && !stage.get("ended")
+    && !game.get("ended")
+    && !game.get("endedAt");
+}
+
 async function whileFacilitatorPublishesVisibleResponse(game, logEntry, task) {
-  const stillCurrent = () => canPublishTestResult(game, logEntry)
+  const stillCurrent = () => canPublishFacilitatorResult(game, logEntry)
     && (logEntry.participantRequested === true || game.get("humanMessageCount") === logEntry.humanMessageCount);
   const rejectStale = () => {
     logEntry.reason = "Discarded stale AI result before publication because the originating Discussion stage or automatic discussion context changed";
@@ -437,12 +451,13 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   // attempt would be responding to a stale world). True if the same
   // stage is still active.
   function isOriginatingStageActive() {
-    return (
-      game.currentRound?.id === originatingRoundId &&
-      game.currentStage?.id === originatingStageId &&
-      game.currentStage?.get("name") === "Task"
-      && canPublishTestResult(game, { roundId: originatingRoundId, stageId: originatingStageId })
-    );
+    return canPublishFacilitatorResult(game, {
+      ...logEntry,
+      originatingRoundId,
+      originatingStageId,
+      roundId: originatingRoundId,
+      stageId: originatingStageId,
+    });
   }
 
   // One Generator attempt: LLM call + strict parse + schema + deterministic.
@@ -1489,14 +1504,31 @@ Empirica.on("playerStage", "submit", (_ctx, { playerStage, submit }) => {
   if (fields[2]) player.round.set(fields[2], null);
 });
 
-Empirica.on("player", "humanMessageRequest", (_ctx, { player, humanMessageRequest: request }) => {
+Empirica.on("player", "humanMessageRequest", async (_ctx, { player, humanMessageRequest: request }) => {
   const game = player.currentGame;
   const round = game?.currentRound;
   const stage = game?.currentStage;
   if (!game || !round || !stage) return;
   if (round.get("isPractice")) {
-    handlePracticeMessage(player, request, appendCanonicalMessage);
+    const practiceResult = handlePracticeMessage(player, request, appendCanonicalMessage, Empirica);
     Empirica.flush();
+    if (practiceResult?.status === "accepted" && containsFacilitatorMention(practiceResult.content)) {
+      try {
+        await handlePracticeFacilitatorRequest(game, {
+          ...practiceResult,
+          participantId: player.id,
+        });
+      } catch (error) {
+        recordOperationalEvent(game, {
+          type: "PRACTICE_FACILITATOR_REQUEST_FAILED",
+          roundId: round.id,
+          stageId: stage.id,
+          messageId: practiceResult.messageId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        Empirica.flush();
+      }
+    }
     return;
   }
   const dedupeKey = `${player.id}:${request?.requestId ?? "invalid"}`;
@@ -1559,16 +1591,18 @@ async function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole
   }
   return whileFacilitatorPublishesVisibleResponse(game, logEntry, () => {
     const publishedAt = Date.now();
+    const practice = logEntry.phase === "practice";
     const publishedMessage = appendCanonicalMessage(game, chatKey, {
       messageId: `facilitator-${game.currentRound?.id}-${publishedAt}`,
       groupId: game.id,
       speakerId: "ai",
-      roundIndex: game.currentRound?.get("taskIndex"),
-      stage: "Discussion",
+      roundIndex: practice ? game.currentRound?.get("index") : game.currentRound?.get("taskIndex"),
+      stage: practice ? logEntry.originatingStageName : "Discussion",
       messageType: MESSAGE_TYPES.FACILITATOR,
       speakerType: MESSAGE_TYPES.FACILITATOR,
       timestamp: publishedAt,
       content: llmAction.message,
+      ...(practice ? { phase: "practice", source: "facilitator_api", exclude_from_primary_analysis: true } : {}),
       role: llmAction.role,
       facilitatorOrigin: "LLM_GENERATED",
       facilitatorTrigger: logEntry.triggerType === "PARTICIPANT_REQUEST"
@@ -1579,9 +1613,9 @@ async function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole
       sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
     });
     logEntry.messageAdded = true;
-    logEntry.countsAsIntervention = true;
+    logEntry.countsAsIntervention = !practice;
     logEntry.publishedMessageId = publishedMessage.messageId;
-    game.set("totalInterventions", (game.get("totalInterventions") || 0) + 1);
+    if (!practice) game.set("totalInterventions", (game.get("totalInterventions") || 0) + 1);
     return true;
   });
 }
@@ -1592,16 +1626,18 @@ async function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole
 async function postParticipantRequestFallback(game, chatKey, logEntry) {
   return whileFacilitatorPublishesVisibleResponse(game, logEntry, () => {
     const publishedAt = Date.now();
+    const practice = logEntry.phase === "practice";
     const publishedMessage = appendCanonicalMessage(game, chatKey, {
       messageId: `facilitator-fallback-${game.currentRound?.id}-${publishedAt}`,
       groupId: game.id,
       speakerId: "ai",
-      roundIndex: game.currentRound?.get("taskIndex"),
-      stage: "Discussion",
+      roundIndex: practice ? game.currentRound?.get("index") : game.currentRound?.get("taskIndex"),
+      stage: practice ? logEntry.originatingStageName : "Discussion",
       messageType: MESSAGE_TYPES.FACILITATOR,
       speakerType: MESSAGE_TYPES.FACILITATOR,
       timestamp: publishedAt,
       content: "I can’t tell you which option is correct. That’s for your group to decide, but I’m glad to help organise or clarify what’s already been discussed. Could you point me to the specific option, claim, or message you’d like help with?",
+      ...(practice ? { phase: "practice", source: "facilitator_fallback", exclude_from_primary_analysis: true } : {}),
       role: FACILITATOR_ROLES.NON_LLM_FALLBACK,
       facilitatorOrigin: "NON_LLM_FALLBACK",
       facilitatorTrigger: "PARTICIPANT_REQUEST",
@@ -1613,9 +1649,120 @@ async function postParticipantRequestFallback(game, chatKey, logEntry) {
     logEntry.publishedMessageId = publishedMessage.messageId;
     logEntry.fallbackUsed = "PARTICIPANT_REQUEST_SAFE_CLARIFICATION";
     logEntry.outcome = "PUBLISHED_REQUEST_FALLBACK";
-    game.set("totalFallbackMessages", (game.get("totalFallbackMessages") || 0) + 1);
+    if (!practice) game.set("totalFallbackMessages", (game.get("totalFallbackMessages") || 0) + 1);
     return true;
   });
+}
+
+function practiceRequestedContext(chat, stageName) {
+  return chat
+    .filter((message) => message?.phase === "practice"
+      && message?.stage === stageName
+      && [MESSAGE_TYPES.HUMAN, MESSAGE_TYPES.FACILITATOR].includes(message?.messageType))
+    .map((message) => ({ ...message, stage: "Discussion" }));
+}
+
+async function handlePracticeFacilitatorRequest(game, requestMessage) {
+  const round = game.currentRound;
+  const stage = game.currentStage;
+  const stageName = requestMessage?.stage;
+  if (!round?.get("isPractice")
+    || !stage
+    || stage.id !== game.currentStage?.id
+    || stage.get("name") !== stageName
+    || !["PracticeWelcome", "PracticeDiscussion"].includes(stageName)
+    || stage.get("ended")
+    || !containsFacilitatorMention(requestMessage?.content)) return;
+
+  const now = Date.now();
+  const auditRequestId = `practice:${requestMessage.messageId}`;
+  const contextChat = practiceRequestedContext(game.get(PRACTICE_CHAT) || [], stageName);
+  const humanMessageCount = getHumanMessages(contextChat).length;
+  const logEntry = {
+    stageId: stage.id,
+    roundId: round.id,
+    auditRequestId,
+    timestamp: now,
+    roundIndex: round.get("index"),
+    facilitation: "practice_requested",
+    phase: "practice",
+    excludeFromPrimaryAnalysis: true,
+    humanMessageCount,
+    messagesSinceLastPublish: 0,
+    messagesSinceLastIntervention: 0,
+    remainingTime: Number.isFinite(round.get("practiceDeadline"))
+      ? Math.max(0, round.get("practiceDeadline") - now)
+      : 0,
+    timeElapsed: Number.isFinite(round.get("practiceDiscussionStartedAt"))
+      ? Math.max(0, now - round.get("practiceDiscussionStartedAt"))
+      : Math.max(0, now - (stage.get("practiceStartedAt") || now)),
+    requestMade: false,
+    requestSuccess: false,
+    messageAdded: false,
+    outcome: "PENDING",
+    model: openaiModel,
+    mentionDetected: true,
+    participantRequested: true,
+    triggerType: "PARTICIPANT_REQUEST",
+    routingDecision: "REQUESTED_GENERALIST",
+    selectedRole: "REQUESTED_GENERALIST",
+    originatingRoundId: round.id,
+    originatingStageId: stage.id,
+    originatingStageName: stageName,
+    originatingMessageId: requestMessage.messageId,
+    serverInstanceId: CALLBACKS_INSTANCE_ID,
+  };
+
+  const beganInFlight = await beginInFlight(game, logEntry, () => Empirica.flush());
+  if (!beganInFlight) return;
+  logPractice(game, "facilitator_requested", null, {
+    speaker_id: requestMessage.participantId,
+    message_id: requestMessage.messageId,
+    stage: stageName,
+  });
+
+  try {
+    const requestedPrompt = getRequestedGeneralistPromptBundle();
+    const built = buildGeneratorContext(
+      game,
+      game.players,
+      contextChat,
+      logEntry.remainingTime,
+      logEntry.timeElapsed,
+      "adaptive",
+      "generalist",
+      null,
+      requestedPrompt,
+    );
+    const result = await runSharedGeneration(
+      game,
+      PRACTICE_CHAT,
+      built,
+      logEntry,
+      round.id,
+      stage.id,
+      contextChat,
+    );
+    if (!result.published && canPublishFacilitatorResult(game, logEntry)) {
+      await postParticipantRequestFallback(game, PRACTICE_CHAT, logEntry);
+    }
+  } catch (error) {
+    logEntry.failureStage = "practice_requested_pipeline";
+    logEntry.reason = error instanceof Error ? error.message : String(error);
+    logEntry.outcome = "SILENT_ERROR";
+    if (canPublishFacilitatorResult(game, logEntry)) {
+      await postParticipantRequestFallback(game, PRACTICE_CHAT, logEntry);
+    }
+  } finally {
+    logPractice(game, "facilitator_request_completed", null, {
+      speaker_id: requestMessage.participantId,
+      message_id: requestMessage.messageId,
+      response_message_id: logEntry.publishedMessageId ?? null,
+      outcome: logEntry.outcome,
+      stage: stageName,
+    });
+    await finalizeAuditLogBase(game, logEntry, () => Empirica.flush());
+  }
 }
 
 async function handleChat(env, { game }) {
