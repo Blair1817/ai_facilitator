@@ -2,6 +2,7 @@ import { acceptIndependentDecision, finalizeIndependentDecision } from "./FinalD
 import { DECISION_NUDGE } from "../../shared/decisionSubmission.mjs";
 import { ClassicListenersCollector } from "@empirica/core/admin/classic";
 export const Empirica = new ClassicListenersCollector();
+import { DISCUSSION_OPENING_MESSAGE } from "../../shared/discussionOpening.mjs";
 import _ from "lodash";
 import dotenv from "dotenv";
 import taskConfig from "./HPTConfig.json";
@@ -1224,13 +1225,6 @@ function appendFacilitatorNudge(stage, attribute, content, onceFlagKey, facilita
   return true;
 }
 
-// Fixed, human-reviewable text -- same review discipline as
-// opening_message.md / the icebreaker opening previously had. No LLM call,
-// no Generator/Validator, no option-specific or task-specific content, so
-// it carries no steering risk regardless of round/treatment.
-const TASK_OPENING_MESSAGE =
-  "Welcome! Please work together to agree on one final choice. I\u2019m the Facilitator for this discussion. I won\u2019t make the decision for you, but I\u2019m here to help make sure everyone is heard and to help you keep track of what\u2019s been discussed. Feel free to start sharing what you each know about the options \u2014 and you can address me anytime by typing @ and selecting Facilitator.";
-
 // Two fixed, non-LLM nudge variants for the SAME silence watchdog (see
 // armSilenceWatchdog below) -- distinguished only by whether the group has
 // ever sent a message yet at the moment the watchdog fires:
@@ -1329,7 +1323,7 @@ export function handleFormalStageStart(stage) {
     // Opening message: one fixed, non-LLM Facilitator message at the very
     // start of every Task-stage discussion. Independent of the checkpoint
     // pipeline (no Generator/Validator call, no CheckpointManager state).
-    appendFacilitatorNudge(stage, chatKey, TASK_OPENING_MESSAGE, `openingPosted_${chatKey}`, "DISCUSSION_OPENING");
+    appendFacilitatorNudge(stage, chatKey, DISCUSSION_OPENING_MESSAGE, `openingPosted_${chatKey}`, "DISCUSSION_OPENING");
 
     // Silence watchdog: covers both a dead-silent opening AND a later lull
     // after the group has already been talking (see armSilenceWatchdog).
