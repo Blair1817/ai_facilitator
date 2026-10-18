@@ -1,4 +1,5 @@
 import { isTestGame } from "../../shared/testMode.mjs";
+import { DISCUSSION_OPENING_MESSAGE } from "../../shared/discussionOpening.mjs";
 import { randomUUID } from "node:crypto";
 import { appendToAttribute } from "./AppendOnlyAttribute.mjs";
 import { FACILITATOR_ROLES, MESSAGE_TYPES } from "./ExperimentPolicies.mjs";
@@ -162,7 +163,7 @@ export function handlePracticeStageStart(stage, appendMessage, Empirica) {
         role: FACILITATOR_ROLES.FIXED_MESSAGE,
         facilitatorOrigin: "DETERMINISTIC_FIXED",
         facilitatorTrigger: "PRACTICE_DISCUSSION_OPENING",
-        content: "Welcome! Start by saying hello, introducing your colour, and sharing which room currently looks best to you and why.",
+        content: DISCUSSION_OPENING_MESSAGE,
         sender: { id: "ai", name: "Facilitator", avatar: "https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F" },
       });
     }

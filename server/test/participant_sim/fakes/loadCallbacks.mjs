@@ -79,6 +79,7 @@ export async function getOfflineCallbacksHarness() {
       const mod = await buildAndImport("offline");
       return {
         handleChat: findAttributeListener(mod.Empirica, "game", "chat_round_0"),
+        handleFormalStageStart: mod.handleFormalStageStart,
         Empirica: mod.Empirica,
       };
     })();
