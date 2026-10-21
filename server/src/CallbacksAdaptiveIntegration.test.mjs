@@ -141,7 +141,8 @@ test("every in-flight lifecycle mutation is awaited and committed through the se
   const finalizations = [
     ...handleChatBody.matchAll(/(^|\n)\s*(await\s+)?finalizeAuditLog\(game, logEntry\);/g),
   ];
-  assert.equal(finalizations.length, 9, "all nine terminal callback paths, including automatic-overlap suppression, must remain covered");
+  // 2026-10-21: +1 terminal path for the Static matched-delay stale discard.
+  assert.equal(finalizations.length, 10, "all ten terminal callback paths, including automatic-overlap suppression and the Static matched-delay stale discard, must remain covered");
   assert.ok(
     finalizations.every((match) => match[2] === "await "),
     "no terminal callback path may release its lifecycle commit without awaiting it",
@@ -178,9 +179,10 @@ test("routing: Static reaches generation before and without every Adaptive asses
 
 test("routing: Adaptive ABSTAIN returns before prompt construction and Generator invocation", () => {
   const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
-  const gateIndex = handleChatBody.indexOf("const gateResult = evaluateGate(");
+  const gateIndex = handleChatBody.indexOf("const gateResult = evaluateNeedGate(");
   const abstainStart = handleChatBody.indexOf('if (gateResult.decision === "abstain")', gateIndex);
-  const generalistStart = handleChatBody.indexOf('if (gateResult.decision === "generalist")', abstainStart);
+  // 2026-10-21: the non-Specialist route is now the Static policy.
+  const generalistStart = handleChatBody.indexOf('if (gateResult.decision === "static_policy")', abstainStart);
   const roleSelectionIndex = handleChatBody.indexOf("const chosenRole = chooseRole(", abstainStart);
   const abstainBlock = handleChatBody.slice(abstainStart, generalistStart);
 
@@ -258,7 +260,7 @@ test("failed generation, Validator rejection, repair/fallback failure, and stale
 test("Static, Adaptive, and participant-requested replies share publication-only typing", () => {
   const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
   assert.match(handleChatBody, /if \(facilitation === "static"\)[\s\S]*?runSharedGeneration\(/);
-  assert.match(handleChatBody, /if \(gateResult\.decision === "generalist"\)[\s\S]*?runSharedGeneration\(/);
+  assert.match(handleChatBody, /if \(gateResult\.decision === "static_policy"\)[\s\S]*?runSharedGeneration\(/);
   assert.match(handleChatBody, /if \(isMentionCheckpoint\)[\s\S]*?runSharedGeneration\([\s\S]*?postParticipantRequestFallback\(/);
 
   const fallbackStart = callbacksSource.indexOf("function postParticipantRequestFallback");

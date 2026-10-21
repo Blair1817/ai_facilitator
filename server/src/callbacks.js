@@ -1,4 +1,4 @@
-import { isPublicParticipantMessage } from "./CognitiveOperations.mjs";
+import { isPublicParticipantMessage, countPublicMessagesByName, quietParticipants } from "./CognitiveOperations.mjs";
 import { acceptIndependentDecision, finalizeIndependentDecision } from "./FinalDecisionSubmission.mjs";
 import { DECISION_NUDGE } from "../../shared/decisionSubmission.mjs";
 import { ClassicListenersCollector } from "@empirica/core/admin/classic";
@@ -8,7 +8,7 @@ import _ from "lodash";
 import dotenv from "dotenv";
 import taskConfig from "./HPTConfig.json";
 import { llmSystemPrompts } from "./LLMConfig.js";
-import { evaluateGate, chooseRole, getRoleThreshold, THRESHOLDS } from "./utils.js";
+import { evaluateNeedGate, chooseRole, THRESHOLDS } from "./utils.js";
 import { parseGeneratorOutputStrict, validateAgainstGenerationSchema, runDeterministicValidation } from "./prompts/GeneratorContract.mjs";
 import { buildDynamicUserContext, withMessageIds, formatMessagesWithIds } from "./prompts/DynamicContext.mjs";
 import { getRequestedGeneralistPromptBundle } from "./prompts/promptLoader.js";
@@ -21,7 +21,7 @@ import {
   withLLMRequestTimeout,
 } from "./LLMTransport.mjs";
 import { assessSemanticFactors } from "./SemanticAssessor.js";
-import { checkEvidence } from "./EvidenceChecker.js";
+import { checkNeedAssessment } from "./EvidenceChecker.js";
 import { compilePlan } from "./PolicyCompiler.js";
 import { preflightPlan } from "./PlanPreflight.mjs";
 import { AUTOMATIC_MAX_WORDS, isSpecialistRole } from "./prompts/PromptRuntime.mjs";
@@ -191,6 +191,15 @@ const openaiModel = process.env.OPENAI_MODEL || "MiniMax-Text-01";
 const _llmBase = process.env.LLM_API_ENDPOINT || "https://api.minimax.chat/v1";
 const llmAPIEndpoint = _llmBase.endsWith("/chat/completions") ? _llmBase : `${_llmBase.replace(/\/$/, "")}/chat/completions`;
 const llmMaxOutputTokens = Number.parseInt(process.env.LLM_MAX_OUTPUT_TOKENS ?? "1000", 10);
+// 2026-10-21: matched-latency delay for Static checkpoints. Adaptive makes
+// one extra LLM call (the need detector) before generating, so Static waits
+// this long before its own generation to keep checkpoint-to-message timing
+// comparable across conditions. Placeholder default: set it to the median
+// Adaptive `detectorLatency` observed in pilot logs. 0 disables it. Read at
+// call time so tests and operators can change it without a rebuild.
+function staticMatchedDelayMs() {
+  return Math.max(0, Number(process.env.STATIC_MATCHED_DELAY_MS ?? 6000) || 0);
+}
 const CALLBACKS_INSTANCE_ID = randomUUID();
 const AUTOMATIC_PIPELINE_GROUP = "AUTOMATIC_INTERVENTION";
 
@@ -328,8 +337,9 @@ function recordOperationalEvent(game, event) {
 // path in runSharedGeneration.
 //
 // `role` is the Controller-selected Adaptive role (utils.js's chooseRole(),
-// only called once the shared gate -- utils.js's evaluateGate() -- has
-// already returned Act) for Adaptive, or null for Static. `plan` is
+// only called once the Adaptive gate -- utils.js's evaluateNeedGate() -- has
+// returned "specialist") for Adaptive, or null for Static and for Adaptive's
+// Static-policy route (which reuses the Static context). `plan` is
 // PolicyCompiler.js's compilePlan() output for that role (Adaptive with a
 // gate Act only) or null (Static, or Adaptive with no plan available).
 // Returns { blocked, reason?, metadata, systemPrompt?, userContent?,
@@ -439,7 +449,7 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
 // verdict (i.e. the one that authorised publication, or the last failed
 // one for the silent path). Callers (Static / Generalist / Specialist)
 // only read `published`; the rest is for llmLog / post-hoc audit.
-async function runSharedGeneration(game, chatKey, built, logEntry, originatingRoundId, originatingStageId, chat) {
+async function runSharedGeneration(game, chatKey, built, logEntry, originatingRoundId, originatingStageId, chat, { allowValidatorRepair = true } = {}) {
   logEntry.promptMetadata = built.metadata;
   if (built.planPreflight) logEntry.planPreflight = built.planPreflight;
 
@@ -707,7 +717,10 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     return { published: posted, candidate: a1.candidate, attempts: generatorAttempts, validator: v1.verdict };
   }
 
-  if (generatorAttempts >= 2) {
+  // 2026-10-21: Adaptive Specialist and its Static-policy fallback skip the
+  // Validator-feedback repair (allowValidatorRepair=false) to bound cost; a
+  // rejected Specialist falls back once to the Static policy instead.
+  if (generatorAttempts >= 2 || !allowValidatorRepair) {
     logEntry.attempts = generatorAttempts;
     logEntry.reason = "Specialist/control candidate rejected after the shared two-attempt repair budget was consumed";
     logEntry.outcome = "SILENT_VALIDATOR_REJECTED";
@@ -2021,6 +2034,21 @@ async function handleChat(env, { game }) {
   // fallback participant-facing message.
   if (facilitation === "static") {
     logEntry.routingDecision = "STATIC_REQUIRED_MESSAGE";
+    // 2026-10-21: matched-latency delay (see staticMatchedDelayMs()).
+    const matchedDelayMs = staticMatchedDelayMs();
+    if (matchedDelayMs > 0) {
+      logEntry.staticMatchedDelayMs = matchedDelayMs;
+      await new Promise((resolve) => setTimeout(resolve, matchedDelayMs));
+      if (
+        game.currentRound?.id !== originatingRoundId ||
+        game.currentStage?.id !== originatingStageId ||
+        game.currentStage?.get("name") !== "Task"
+      ) {
+        logEntry.reason = "Discarded Static checkpoint: the originating Discussion stage ended during the matched delay";
+        await finalizeAuditLog(game, logEntry);
+        return;
+      }
+    }
     const built = buildGeneratorContext(
       game,
       players,
@@ -2060,17 +2088,27 @@ async function handleChat(env, { game }) {
     return;
   }
 
-  // Adaptive detector: one LLM call assesses every semantic factor. There is
-  // no feature extraction, feature pre-filter, or feature-weighted score.
-  let checkedFactors = null;
+  // Adaptive need detector (2026-10-21 categorical redesign): one LLM call
+  // returns ONE of ELICIT / SCRUTINIZE / INTEGRATE / NONE with exact quotes.
+  // Code supplies exact per-participant message counts and re-verifies the
+  // result (EvidenceChecker.checkNeedAssessment). No numeric thresholds.
+  let checkedFactors = null;   // PolicyCompiler-compatible view of the verified need
+  let checkedNeed = null;
   const assessorStart = Date.now();
   const formalChat = chat.filter(isFormalContextMessage);
   const cognitiveHistory = currentRound.get("cognitiveInterventionHistory") || [];
+  const rosterNames = players.map(p => p.get("name")).filter(Boolean);
+  const participationCounts = countPublicMessagesByName(formalChat, rosterNames);
+  const quietNames = quietParticipants(participationCounts);
+  logEntry.participationCounts = participationCounts;
+  logEntry.quietParticipants = quietNames;
   const assessorResult = await assessSemanticFactors({
     chat: formalChat,
     contextScope: "complete_current_round",
     interventionHistory: cognitiveHistory,
-    activeParticipantNames: players.map(p => p.get("name")).filter(Boolean),
+    activeParticipantNames: rosterNames,
+    participationCounts,
+    quietParticipants: quietNames,
     taskGeneralContext: buildStaticSharedTaskOverview({
       generalInfo: currentRound?.get("generalInfo"),
       decisionOptions: currentRound?.get("decisionOptions"),
@@ -2094,23 +2132,28 @@ async function handleChat(env, { game }) {
 
   if (assessorResult.success) {
     logEntry.rawDetectorFactors = assessorResult.factors;
-    checkedFactors = checkEvidence(assessorResult.factors, { chat: formalChat });
-    logEntry.checkedDetectorFactors = checkedFactors;
+    checkedNeed = checkNeedAssessment(assessorResult.factors, { chat: formalChat, activeParticipantNames: rosterNames });
+    checkedFactors = checkedNeed.checkedFactors;
+    logEntry.checkedDetectorFactors = {
+      need: checkedNeed.need,
+      rawNeed: checkedNeed.rawNeed,
+      role: checkedNeed.role,
+      operation: checkedNeed.operation,
+      target: checkedNeed.target,
+      downgradedReason: checkedNeed.downgradedReason,
+      evidenceRelations: [],
+    };
   } else {
     logEntry.detectorError = `${assessorResult.code}: ${assessorResult.error}`;
   }
 
-  // Step 7: Adaptive intervention-permission gate (Phase 4 three-state).
-  // The gate's decision is one of: "specialist" (clear winner, run
-  // policy compiler + Generator), "generalist" (matched-frequency
-  // fallback, run Generalist bundle), or "abstain" (no message at
-  // all -- just log and return). Shared between Static and Adaptive,
-  // but the Static path never enters this branch (Static always
-  // emits; this gate only governs the Adaptive path).
+  // Adaptive gate: "abstain" only at the final time floor; "static_policy"
+  // for NONE / rejected evidence / unavailable detector (so Adaptive speaks
+  // at every checkpoint where Static would); "specialist" for a verified need.
   const lastRole                = game.get("lastRole");
-  const gateResult = evaluateGate(checkedFactors, { remainingTime, lastRole });
+  const gateResult = evaluateNeedGate(checkedNeed, { remainingTime });
 
-  logEntry.gateDecision  = gateResult.decision;  // "specialist" | "generalist" | "abstain"
+  logEntry.gateDecision  = gateResult.decision;  // "specialist" | "static_policy" | "abstain"
   logEntry.gateReason    = gateResult.reason;
   logEntry.eligibleRoles = gateResult.eligibleRoles;
   logEntry.stateScores   = gateResult.scores;
@@ -2118,11 +2161,8 @@ async function handleChat(env, { game }) {
   logEntry.abstentionKind = gateResult.abstentionKind;
   logEntry.fallbackKind  = gateResult.fallbackKind;
 
-  // Persist this checkpoint's checked factors for the next checkpoint's
-  // audit / calibration use. (computePersistence is currently outside
-  // the main score, but the per-round history is still valuable.)
-  if (checkedFactors) {
-    game.set("lastCheckedDetectorFactors", checkedFactors);
+  if (logEntry.checkedDetectorFactors) {
+    game.set("lastCheckedDetectorFactors", logEntry.checkedDetectorFactors);
   }
 
   if (gateResult.decision === "abstain") {
@@ -2131,31 +2171,28 @@ async function handleChat(env, { game }) {
     return;
   }
 
-  // ── Generalist path: Adaptive's matched-frequency control ─────────
-  // No policy compiler, no plan. The Generalist bundle is loaded by
-  // llmSystemPrompts("adaptive", "generalist") -- the dispatcher
-  // routes to getGeneralistPromptBundle() (Phase 2.4 fail-closed
-  // invariant: getAdaptivePromptBundle("generalist") is rejected).
-  if (gateResult.decision === "generalist") {
-    logEntry.selectedRole = "GENERALIST";
+  // ── Static-policy path: Adaptive's default when no verified need ─────
+  // Same prompt bundle and context assembler as the Static condition.
+  if (gateResult.decision === "static_policy") {
+    logEntry.routingDecision = "ADAPTIVE_STATIC_POLICY";
+    logEntry.selectedRole = "STATIC";
     logEntry.reasoning    = gateResult.reason;
 
-    const built = buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, "adaptive", "generalist", null);
+    const built = buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, "static", null, null);
     const result = await runSharedGeneration(
       game, chatKey, built, logEntry, originatingRoundId, originatingStageId, chat
     );
 
     if (result.published) {
-      recordPublish(game, { role: "GENERALIST", messageId: logEntry.publishedMessageId ?? result.candidate?.messageId ?? null, now });
+      recordPublish(game, { role: "STATIC", messageId: logEntry.publishedMessageId ?? result.candidate?.messageId ?? null, now });
     }
 
     await finalizeAuditLog(game, logEntry);
     return;
   }
 
-  // ── Specialist path: pick the controller-chosen role and run the
-  // policy compiler + Generator. chooseRole cannot return an Abstain
-  // (the three-state gate already handled that above).
+  // ── Specialist path: the verified need fixes the role; run the policy
+  // compiler + Generator. chooseRole cannot return an Abstain.
   const synthesiserFired = game.get("synthesiserFired");
   const chosenRole = chooseRole(gateResult, { remainingTime, lastRole, synthesiserFired });
 
@@ -2166,14 +2203,14 @@ async function handleChat(env, { game }) {
   const chatWithIds        = withMessageIds(chat.filter(isFormalContextMessage));
   const eligibleMessageIds = chatWithIds.filter(isFormalHumanMessage).map((m) => m.messageId);
   const plan = compilePlan(chosenRole.role, checkedFactors, {
-    score:     gateResult.scores[chosenRole.role],
-    threshold: getRoleThreshold(chosenRole.role),
+    score:     null,
+    threshold: null,
     eligibleMessageIds, interventionHistory: cognitiveHistory,
   });
   logEntry.plan = plan;
 
-  // ── Shared: build context, run the bounded generation/repair/validation
-  // pipeline, publish at most once, and log ─────────────────────────────
+  // ── Shared: build context, run ONE Generator + Validator attempt (no
+  // Validator-feedback repair for Specialists), publish at most once ──────
   const built  = buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, "adaptive", chosenRole.role, plan);
   let result = await runSharedGeneration(
     game,
@@ -2183,12 +2220,13 @@ async function handleChat(env, { game }) {
     originatingRoundId,
     originatingStageId,
     chat,
+    { allowValidatorRepair: false },
   );
 
-  // Architecture fallback: if a Specialist candidate and its one repair are
-  // both semantically rejected, retry this checkpoint with the shared
-  // Generalist prompt. Preserve the complete Specialist failure separately
-  // so the final Generalist audit fields cannot overwrite its evidence.
+  // Fallback: if the Specialist plan fails preflight or its candidate is
+  // rejected by the Validator, regenerate ONCE with the Static policy.
+  // Preserve the complete Specialist failure separately so the fallback's
+  // audit fields cannot overwrite its evidence.
   let publishedRole = chosenRole.role;
   if (!result.published && (built.blocked || logEntry.outcome === "SILENT_VALIDATOR_REJECTED")) {
     logEntry.controllerSelectedRole = chosenRole.role;
@@ -2200,34 +2238,35 @@ async function handleChat(env, { game }) {
       validator: logEntry.validator,
       validatorRepair: logEntry.validatorRepair,
     };
-    logEntry.fallbackRoute = "SPECIALIST_TO_GENERALIST";
+    logEntry.fallbackRoute = "SPECIALIST_TO_STATIC_POLICY";
     delete logEntry.validator;
     delete logEntry.validatorRepair;
 
-    const generalistBuilt = buildGeneratorContext(
+    const staticPolicyBuilt = buildGeneratorContext(
       game,
       players,
       chat,
       remainingTime,
       timeElapsed,
-      "adaptive",
-      "generalist",
+      "static",
+      null,
       null,
     );
     result = await runSharedGeneration(
       game,
       chatKey,
-      generalistBuilt,
+      staticPolicyBuilt,
       logEntry,
       originatingRoundId,
       originatingStageId,
       chat,
+      { allowValidatorRepair: false },
     );
     logEntry.fallbackPublished = result.published;
     logEntry.totalGeneratorAttempts = logEntry.specialistFailure.attempts + (result.attempts ?? 0);
     if (result.published) {
-      publishedRole = "GENERALIST";
-      logEntry.selectedRole = "GENERALIST";
+      publishedRole = "STATIC";
+      logEntry.selectedRole = "STATIC";
     }
   }
 

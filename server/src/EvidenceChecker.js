@@ -21,7 +21,7 @@
  * DynamicContext.mjs/utils.js.
  */
 
-import { COGNITIVE_NEEDS, isPublicParticipantMessage } from "./CognitiveOperations.mjs";
+import { COGNITIVE_NEEDS, NEED_CATEGORIES, isPublicParticipantMessage, countPublicMessagesByName, quietParticipants } from "./CognitiveOperations.mjs";
 import { withMessageIds } from "./prompts/DynamicContext.mjs";
 
 // v2 design (Phase 4): expanded to the 8 factors listed in the
@@ -217,4 +217,89 @@ export function checkEvidence(rawFactors, { chat } = {}) {
   checked.evidenceRelations = checkEvidenceRelations(rawFactors?.evidenceRelations, messageById);
 
   return checked;
+}
+
+
+// ── Categorical need detector check (2026-10-21) ───────────────────────────
+//
+// Live Adaptive path. Deterministically verifies the categorical detector
+// output (SemanticAssessor.js with the categorical assessor.md) and returns:
+//   { need, role, operation, target, downgradedReason, rawNeed,
+//     participationCounts, quietParticipants, checkedFactors }
+// Any failed rule downgrades the result to need "NONE" (role null), which
+// the gate routes to the Static policy. `checkedFactors` is a compatibility
+// view in the shape PolicyCompiler.compilePlan() already consumes, so the
+// plan/preflight/Generator/Validator path is unchanged.
+//
+// Rules:
+//   N1  need must be one of NEED_CATEGORIES and the operation must belong
+//       to that need's role.
+//   N2  every cited messageId is a real public participant message; every
+//       cited message has a quote; every quote is an exact substring of its
+//       own message.
+//   N3  SCRUTINIZE and INTEGRATE cite at least two distinct participants;
+//       fragmented_evidence additionally cites at least three messages.
+//   N4  participation_gap names a roster participant who is quiet under the
+//       deterministic QUIET_PARTICIPANT_RULE.
+export function checkNeedAssessment(raw, { chat, activeParticipantNames = [] } = {}) {
+  const chatWithIds = withMessageIds(chat || []);
+  const publicMessages = chatWithIds.filter(isPublicParticipantMessage);
+  const messageById = new Map(publicMessages.map((m) => [m.messageId, m]));
+  const participationCounts = countPublicMessagesByName(publicMessages, activeParticipantNames);
+  const quiet = quietParticipants(participationCounts);
+  const base = { rawNeed: raw?.need ?? null, participationCounts, quietParticipants: quiet };
+  const none = (downgradedReason) => ({
+    ...base, need: "NONE", role: null, operation: null, target: null, downgradedReason, checkedFactors: null,
+  });
+
+  // N1
+  if (!raw || typeof raw !== "object" || !Object.prototype.hasOwnProperty.call(NEED_CATEGORIES, raw.need)) {
+    return none("INVALID_NEED");
+  }
+  if (raw.need === "NONE") return none(null);
+  const role = NEED_CATEGORIES[raw.need];
+  const definition = COGNITIVE_NEEDS[raw.operation];
+  if (!definition || definition[0] !== role) return none("OPERATION_NEED_MISMATCH");
+
+  // N2
+  const target = raw.target;
+  if (!target || typeof target !== "object") return none("MISSING_TARGET");
+  const ids = [...new Set(Array.isArray(target.messageIds) ? target.messageIds : [])];
+  const evidence = Array.isArray(target.evidence) ? target.evidence : [];
+  const quotesValid = ids.length > 0 && evidence.length > 0
+    && ids.every((id) => messageById.has(id) && evidence.some((q) => q?.messageId === id))
+    && evidence.every((q) => ids.includes(q?.messageId) && typeof q.span === "string" && q.span.length > 0
+      && typeof messageById.get(q.messageId)?.text === "string" && messageById.get(q.messageId).text.includes(q.span));
+  if (!quotesValid) return none("INVALID_EVIDENCE");
+
+  // N3
+  const authors = new Set(ids.map((id) => messageById.get(id)?.sender?.id ?? messageById.get(id)?.sender?.name));
+  if ((role === "challenger" || role === "synthesiser") && authors.size < 2) return none("INSUFFICIENT_DISTINCT_PARTICIPANTS");
+  if (raw.operation === "fragmented_evidence" && ids.length < 3) return none("INSUFFICIENT_DISTRIBUTED_EVIDENCE");
+
+  // N4
+  if (raw.operation === "participation_gap") {
+    const name = target.participantName;
+    if (typeof name !== "string" || !activeParticipantNames.includes(name) || !quiet.includes(name)) {
+      return none("PARTICIPANT_NOT_VERIFIED_QUIET");
+    }
+  }
+
+  const checkedTarget = {
+    need: raw.operation,
+    label: String(target.label || ""),
+    messageIds: ids,
+    evidence: evidence.map((q) => ({ messageId: q.messageId, span: q.span })),
+    optionLabels: Array.isArray(target.optionLabels) ? target.optionLabels : [],
+    criteria: Array.isArray(target.criteria) ? target.criteria : [],
+    ...(raw.operation === "participation_gap" ? { participantName: target.participantName } : {}),
+    status: "open",
+  };
+  const factorKey = definition[2];
+  const checkedFactors = {
+    [factorKey]: { status: "present", strength: 1, message_ids: ids, span: checkedTarget.evidence[0].span, evidence: checkedTarget.evidence },
+    cognitiveTargets: [checkedTarget],
+    evidenceRelations: [],
+  };
+  return { ...base, need: raw.need, role, operation: raw.operation, target: checkedTarget, downgradedReason: null, checkedFactors };
 }

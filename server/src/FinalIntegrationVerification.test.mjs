@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { FakeGame, FakeRound, FakeStage, FakeScope, makeFakePlayer } from "../test/participant_sim/fakes/fakeStore.mjs";
 import { getOfflineCallbacksHarness } from "../test/participant_sim/fakes/loadCallbacks.mjs";
 import { buildCanonicalMessage } from "./ExperimentPolicies.mjs";
-import { checkEvidence, FACTOR_KEYS } from "./EvidenceChecker.js";
+import { checkEvidence, checkNeedAssessment, FACTOR_KEYS } from "./EvidenceChecker.js";
 import { VALIDATOR_CRITERIA } from "./SemanticValidator.js";
 import { readAppendOnlyAttribute } from "./AppendOnlyAttribute.mjs";
 
@@ -84,6 +84,20 @@ function factors(overrides = {}) {
   };
 }
 
+// 2026-10-21: categorical need detector output used by the live path.
+function need(needName, operation, target, rationale = "audit") {
+  return { need: needName, operation, target, rationale };
+}
+const NO_NEED = { need: "NONE", operation: null, target: null, rationale: "No current need." };
+// City B preference (Alex, m0) with a reply by Jordan (m5): two distinct participants.
+const SCRUTINIZE_CITY_B = need("SCRUTINIZE", "unsupported_claim", {
+  label: "Preference for City B",
+  messageIds: ["m0", "m5"],
+  evidence: [{ messageId: "m0", span: "I prefer City B." }, { messageId: "m5", span: "Those are my reported figures." }],
+  optionLabels: ["City B"],
+  criteria: [],
+});
+
 function relation(messageId, overrides = {}) {
   return {
     messageId,
@@ -143,99 +157,48 @@ test("Assessor contract matches the runtime schema and simulator copy exactly", 
   const simulatorPrompt = fs.readFileSync(path.join(dirname, "../test/participant_sim/prompts/source/runtime/specialist/assessor.md"));
   assert.deepEqual(runtimePrompt, simulatorPrompt);
 
+  // 2026-10-21: categorical need detector contract.
   const schema = JSON.parse(fs.readFileSync(path.join(dirname, "prompts/source/runtime/specialist/assessor.schema.json"), "utf8"));
-  assert.deepEqual(Object.keys(schema.definitions.evidenceRelation.properties), RELATION_KEYS);
-  assert.deepEqual(schema.definitions.evidenceRelation.required, RELATION_KEYS);
-  assert.equal(schema.definitions.evidenceRelation.additionalProperties, false);
-  assert.deepEqual(Object.keys(schema.properties).filter((key) => FACTOR_KEYS.includes(key)), FACTOR_KEYS);
+  assert.deepEqual(schema.required, ["need", "operation", "target", "rationale"]);
+  assert.deepEqual(schema.properties.need.enum, ["ELICIT", "SCRUTINIZE", "INTEGRATE", "NONE"]);
+  assert.equal(schema.additionalProperties, false);
+  assert.equal(schema.definitions.evidenceQuote.additionalProperties, false);
 
-  const valid = factors({ evidenceRelations: [relation("m0"), relation("m1", { compared: true })] });
-  assert.equal(validateAgainstAssessorSchema(valid).ok, true, "separate singular messageId relations are accepted");
+  assert.equal(validateAgainstAssessorSchema(SCRUTINIZE_CITY_B).ok, true);
+  assert.equal(validateAgainstAssessorSchema(NO_NEED).ok, true);
+  assert.equal(validateAgainstAssessorSchema(factors()).ok, false, "legacy eight-factor output is rejected");
 
-  const alias = factors({ evidenceRelations: [{ ...relation("m0"), messageIds: ["m0"] }] });
-  delete alias.evidenceRelations[0].messageId;
-  assert.equal(validateAgainstAssessorSchema(alias).ok, false, "messageIds is rejected inside evidenceRelations");
-
-  const nestedRelations = factors({
-    breadth_deficiency: { ...absentFactor(), evidenceRelations: [] },
-  });
-  assert.equal(validateAgainstAssessorSchema(nestedRelations).ok, false, "evidenceRelations is rejected inside factor objects");
-
-  const emptyTarget = factors({
-    cognitiveTargets: [{
-      need: "unsupported_claim",
-      label: "Unsupported claim",
-      messageIds: [],
-      evidence: [],
-      optionLabels: [],
-      criteria: [],
-      status: "open",
-    }],
-  });
+  const emptyTarget = need("SCRUTINIZE", "unsupported_claim", { label: "x", messageIds: [], evidence: [], optionLabels: [], criteria: [] });
   assert.equal(validateAgainstAssessorSchema(emptyTarget).ok, false, "empty target evidence arrays are rejected");
 
-  for (const key of RELATION_KEYS.slice(1)) {
-    const incomplete = relation("m0");
-    delete incomplete[key];
-    assert.equal(validateAgainstAssessorSchema(factors({ evidenceRelations: [incomplete] })).ok, false, `${key} is required`);
-  }
+  const aliasQuote = need("SCRUTINIZE", "unsupported_claim", { ...SCRUTINIZE_CITY_B.target, evidence: [{ messageIds: ["m0"], span: "I prefer City B." }] });
+  assert.equal(validateAgainstAssessorSchema(aliasQuote).ok, false, "messageIds is rejected inside an evidence quotation");
 });
 
 test("passive two-criterion coverage cannot verify integration from two messages by one participant", () => {
   const prompt = fs.readFileSync(path.join(dirname, "prompts/source/runtime/specialist/assessor.md"), "utf8");
-  assert.match(prompt, /present requires both at least three qualifying messages and at least two distinct participants/);
-  assert.match(prompt, /Two messages from one participant are insufficient/);
-  assert.match(prompt, /Do not emit an integration-dependent cognitive target unless integration_deficiency is present/);
+  assert.match(prompt, /fragmented_evidence: related facts are spread across at least three messages from at least two participants/);
+  assert.match(prompt, /re-verifies every quotation, author count and participation claim/);
 
   const passiveChat = [
-    {
-      text: "The public transport table reports 9,000 visitors per hour for Eldoron, 8,000 for Cragnio, and 7,000 for Myloria. Because higher hourly capacity reduces arrival bottlenecks, Eldoron has the strongest capacity position, followed by Cragnio and then Myloria.",
-      sender: { id: "p1", name: "Red" },
-    },
-    {
-      text: "The public cost table reports 24,000 for Myloria, 28,000 for Cragnio, and 31,000 for Eldoron. Because lower total cost preserves more of the event budget, Myloria has the strongest cost position, followed by Cragnio and then Eldoron.",
-      sender: { id: "p1", name: "Red" },
-    },
-    {
-      text: "The public table contains transport-capacity and total-cost columns.",
-      sender: { id: "p1", name: "Red" },
-    },
+    { text: "Eldoron has the strongest capacity position.", sender: { id: "p1", name: "Red" } },
+    { text: "Myloria has the strongest cost position.", sender: { id: "p1", name: "Red" } },
+    { text: "The public table contains transport-capacity and total-cost columns.", sender: { id: "p1", name: "Red" } },
   ];
-  const raw = factors({
-    breadth_deficiency: {
-      status: "present",
-      strength: 0.8,
-      message_ids: ["m2"],
-      evidence: [{ messageId: "m2", span: passiveChat[2].text }],
-    },
-    integration_deficiency: {
-      status: "present",
-      strength: 0.8,
-      message_ids: ["m0", "m1"],
-      evidence: [
-        { messageId: "m0", span: "Eldoron has the strongest capacity position" },
-        { messageId: "m1", span: "Myloria has the strongest cost position" },
-      ],
-    },
-    cognitiveTargets: [{
-      need: "cross_option_evidence",
-      label: "Connect the capacity and cost rankings",
-      messageIds: ["m0", "m1"],
-      evidence: [
-        { messageId: "m0", span: "Eldoron has the strongest capacity position" },
-        { messageId: "m1", span: "Myloria has the strongest cost position" },
-      ],
-      optionLabels: ["Eldoron", "Myloria", "Cragnio"],
-      criteria: ["transport capacity", "total cost"],
-      status: "open",
-    }],
+  const raw = need("INTEGRATE", "cross_option_evidence", {
+    label: "Connect the capacity and cost rankings",
+    messageIds: ["m0", "m1"],
+    evidence: [
+      { messageId: "m0", span: "Eldoron has the strongest capacity position" },
+      { messageId: "m1", span: "Myloria has the strongest cost position" },
+    ],
+    optionLabels: ["Eldoron", "Myloria"],
+    criteria: ["transport capacity"],
   });
-
-  const checked = checkEvidence(raw, { chat: passiveChat });
-  assert.equal(checked.breadth_deficiency.status, "present");
-  assert.equal(checked.integration_deficiency.status, "uncertain");
-  assert.equal(checked.integration_deficiency.downgradedReason, "INSUFFICIENT_DISTRIBUTED_EVIDENCE");
-  assert.deepEqual(checked.cognitiveTargets, []);
+  const checked = checkNeedAssessment(raw, { chat: passiveChat, activeParticipantNames: ["Red", "Pink"] });
+  assert.equal(checked.need, "NONE");
+  assert.equal(checked.role, null);
+  assert.equal(checked.downgradedReason, "INSUFFICIENT_DISTINCT_PARTICIPANTS");
 });
 
 test("three qualifying messages across two participants can verify integration and its target", () => {
@@ -270,27 +233,24 @@ test("three qualifying messages across two participants can verify integration a
   assert.equal(checked.cognitiveTargets[0].need, "fragmented_evidence");
 });
 
-test("schema-valid evidence relations still require real public message IDs downstream", () => {
+test("schema-valid target quotations still require real public message IDs downstream", () => {
   const chat = world().game.get("chat_round_0");
-  const raw = factors({ evidenceRelations: [relation("m0"), relation("m999")] });
+  const raw = need("SCRUTINIZE", "unsupported_claim", {
+    ...SCRUTINIZE_CITY_B.target,
+    messageIds: ["m0", "m999"],
+    evidence: [{ messageId: "m0", span: "I prefer City B." }, { messageId: "m999", span: "fabricated" }],
+  });
   assert.equal(validateAgainstAssessorSchema(raw).ok, true, "JSON shape alone is schema-valid");
-  const checked = checkEvidence(raw, { chat });
-  assert.deepEqual(checked.evidenceRelations.map((entry) => entry.messageId), ["m0"]);
+  const checked = checkNeedAssessment(raw, { chat, activeParticipantNames: ["Alex", "Casey", "Jordan"] });
+  assert.equal(checked.need, "NONE");
+  assert.equal(checked.downgradedReason, "INVALID_EVIDENCE");
 });
 
 test("Adaptive valid intervention traverses Assessor, evidence checking, Controller, Generator, Validator, publication, and audit", async () => {
   const { handleChat } = await getOfflineCallbacksHarness();
   const w = world();
   const phases = [];
-  const assessor = factors({
-    justification_deficiency: {
-      status: "present",
-      strength: 0.8,
-      message_ids: ["m0"],
-      evidence: [{ messageId: "m0", span: "I prefer City B." }],
-    },
-    evidenceRelations: [relation("m0")],
-  });
+  const assessor = SCRUTINIZE_CITY_B;
 
   await withFetch(async (_url, options) => {
     const body = JSON.parse(options.body);
@@ -318,60 +278,71 @@ test("Adaptive valid intervention traverses Assessor, evidence checking, Control
   const audit = readAppendOnlyAttribute(w.game, "llmLog").at(-1);
   assert.equal(audit.gateDecision, "specialist");
   assert.equal(audit.selectedRole, "challenger");
-  assert.equal(audit.checkedDetectorFactors.justification_deficiency.status, "present");
+  assert.equal(audit.checkedDetectorFactors.need, "SCRUTINIZE");
+  assert.equal(audit.checkedDetectorFactors.operation, "unsupported_claim");
+  assert.equal(audit.checkedDetectorFactors.downgradedReason, null);
+  assert.deepEqual(audit.participationCounts, { Alex: 2, Casey: 2, Jordan: 2 });
   assert.equal(audit.validator.passed, true);
   assert.equal(audit.outcome, "PUBLISHED");
   assert.equal(audit.messageAdded, true);
   assert.equal(audit.publishedMessageId, published(w.game)[0].messageId);
 });
 
-test("Adaptive valid no-need result is a genuine abstention, not detector failure", async () => {
+// 2026-10-21: NONE no longer abstains; Adaptive publishes a Static-policy message.
+test("Adaptive NONE result publishes a Static-policy message, not an abstention or detector failure", async () => {
   const { handleChat } = await getOfflineCallbacksHarness();
   const w = world();
-  let requests = 0;
-  await withFetch(async () => {
-    requests += 1;
-    return providerResponse(factors());
+  const phases = [];
+  await withFetch(async (_url, options) => {
+    const system = JSON.parse(options.body).messages[0].content;
+    if (system.startsWith("# assessor.md")) { phases.push("assessor"); return providerResponse(NO_NEED); }
+    if (system.startsWith("# validator.md")) { phases.push("validator"); return providerResponse(validatorFlags()); }
+    phases.push("generator");
+    assert.match(system, /# static\.md/);
+    return providerResponse({ role: "STATIC", message: "What else from your notes should the group hear?", groundingMessageIds: [] });
   }, () => handleChat(undefined, { game: w.game }));
 
-  assert.equal(requests, 1);
-  assert.equal(published(w.game).length, 0);
+  assert.deepEqual(phases, ["assessor", "generator", "validator"]);
+  assert.equal(published(w.game).length, 1);
   const audit = readAppendOnlyAttribute(w.game, "llmLog").at(-1);
-  assert.equal(audit.gateDecision, "abstain");
-  assert.equal(audit.abstentionKind, "no_semantic_need");
+  assert.equal(audit.gateDecision, "static_policy");
+  assert.equal(audit.fallbackKind, "no_need");
+  assert.equal(audit.routingDecision, "ADAPTIVE_STATIC_POLICY");
+  assert.equal(audit.selectedRole, "STATIC");
   assert.equal(audit.detectorError, undefined);
-  assert.equal(audit.outcome, "SILENT");
+  assert.equal(audit.outcome, "PUBLISHED");
+  assert.equal(w.game.get("lastRole"), "STATIC");
+  assert.equal(w.game.get("messagesSinceLastPublish"), 0, "a Static-policy publication resets the shared opportunity gate");
 });
 
-test("messageIds inside evidenceRelations causes Assessor schema failure and fail-closed detector abstention", async () => {
+test("schema-invalid detector output never reaches a Specialist and falls back to the Static policy", async () => {
   const { handleChat } = await getOfflineCallbacksHarness();
   const w = world();
-  const invalid = factors({ evidenceRelations: [{ ...relation("m0"), messageIds: ["m0"] }] });
-  delete invalid.evidenceRelations[0].messageId;
-  let requests = 0;
-  await withFetch(async () => {
-    requests += 1;
-    return providerResponse(invalid);
+  const invalid = factors();   // legacy eight-factor shape is schema-invalid now
+  const phases = [];
+  await withFetch(async (_url, options) => {
+    const system = JSON.parse(options.body).messages[0].content;
+    if (system.startsWith("# assessor.md")) { phases.push("assessor"); return providerResponse(invalid); }
+    if (system.startsWith("# validator.md")) { phases.push("validator"); return providerResponse(validatorFlags()); }
+    phases.push("generator");
+    assert.match(system, /# static\.md/, "no Specialist prompt may be used after a detector failure");
+    return providerResponse({ role: "STATIC", message: "What else from your notes should the group hear?", groundingMessageIds: [] });
   }, () => handleChat(undefined, { game: w.game }));
 
-  assert.equal(requests, 1, "Generator and Validator must not run");
-  assert.equal(published(w.game).length, 0);
+  assert.deepEqual(phases, ["assessor", "generator", "validator"]);
+  assert.equal(published(w.game).length, 1);
   const audit = readAppendOnlyAttribute(w.game, "llmLog").at(-1);
   assert.match(audit.detectorError, /^ASSESSOR_SCHEMA_FAILURE:/);
-  assert.equal(audit.gateDecision, "abstain");
-  assert.equal(audit.abstentionKind, "detector_unavailable");
+  assert.equal(audit.gateDecision, "static_policy");
+  assert.equal(audit.fallbackKind, "detector_unavailable");
+  assert.equal(audit.selectedRole, "STATIC");
 });
 
 test("invalid Generator output cannot reach participants", async () => {
   const { handleChat } = await getOfflineCallbacksHarness();
   const w = world();
   let validatorCalled = false;
-  const assessor = factors({
-    justification_deficiency: {
-      status: "present", strength: 0.8, message_ids: ["m0"],
-      evidence: [{ messageId: "m0", span: "I prefer City B." }],
-    },
-  });
+  const assessor = SCRUTINIZE_CITY_B;
   await withFetch(async (_url, options) => {
     const system = JSON.parse(options.body).messages[0].content;
     if (system.startsWith("# assessor.md")) return providerResponse(assessor);
@@ -392,12 +363,7 @@ test("invalid Generator output cannot reach participants", async () => {
 test("schema-invalid Validator output cannot reach participants", async () => {
   const { handleChat } = await getOfflineCallbacksHarness();
   const w = world();
-  const assessor = factors({
-    justification_deficiency: {
-      status: "present", strength: 0.8, message_ids: ["m0"],
-      evidence: [{ messageId: "m0", span: "I prefer City B." }],
-    },
-  });
+  const assessor = SCRUTINIZE_CITY_B;
   await withFetch(async (_url, options) => {
     const system = JSON.parse(options.body).messages[0].content;
     if (system.startsWith("# assessor.md")) return providerResponse(assessor);

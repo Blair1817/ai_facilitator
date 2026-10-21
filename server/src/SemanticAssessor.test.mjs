@@ -22,19 +22,20 @@ function chat() {
   ];
 }
 
-// v2 design (Phase 4): 8 factors per architecture doc §2 节点 6.
+// 2026-10-21: categorical need detector output (replaces the 8-factor object).
 const VALID_FACTORS = {
-  breadth_deficiency: { status: "absent", strength: 0, message_ids: [], span: "" },
-  group_preference: { status: "present", strength: 0.7, message_ids: ["m0", "m1"], span: "Eldoron is best" },
-  justification_deficiency: { status: "absent", strength: 0, message_ids: [], span: "" },
-  integration_deficiency: { status: "absent", strength: 0, message_ids: [], span: "" },
-  unresolved_counterevidence: { status: "absent", strength: 0, message_ids: [], span: "" },
-  claim_evidence_linkage: { status: "absent", strength: 0, message_ids: [], span: "" },
-  self_correction: { status: "absent", strength: 0, message_ids: [], span: "" },
-  reasoning_uptake: { status: "absent", strength: 0, message_ids: [], span: "" },
-  // Delibra spec §3 Node 3, 2026-08-11
-  evidenceRelations: [],
+  need: "SCRUTINIZE",
+  operation: "unsupported_claim",
+  target: {
+    label: "Eldoron is best",
+    messageIds: ["m0", "m1"],
+    evidence: [{ messageId: "m0", span: "Eldoron is best" }, { messageId: "m1", span: "Eldoron is best" }],
+    optionLabels: [],
+    criteria: [],
+  },
+  rationale: "Two participants back Eldoron without stated reasons.",
 };
+const VALID_NONE = { need: "NONE", operation: null, target: null, rationale: "No current need." };
 
 // ── prompt bundle loading (real file on disk) ────────────────────────────────
 
@@ -47,83 +48,37 @@ test("getAssessorPromptBundle: loads assessor.md successfully, not blocked", () 
 
 // ── schema validation ────────────────────────────────────────────────────────
 
-test("validateAgainstAssessorSchema: accepts a well-formed 8-factor object", () => {
+test("validateAgainstAssessorSchema: accepts a well-formed categorical need and a NONE result", () => {
   assert.equal(validateAgainstAssessorSchema(VALID_FACTORS).ok, true);
+  assert.equal(validateAgainstAssessorSchema(VALID_NONE).ok, true);
 });
 
-test("validateAgainstAssessorSchema: rejects a missing factor key", () => {
-  const { self_correction, ...missing } = VALID_FACTORS;
+test("validateAgainstAssessorSchema: rejects a missing required field", () => {
+  const { rationale, ...missing } = VALID_FACTORS;
   assert.equal(validateAgainstAssessorSchema(missing).ok, false);
 });
 
-test("validateAgainstAssessorSchema: rejects an invalid status enum value", () => {
-  const bad = { ...VALID_FACTORS, breadth_deficiency: { ...VALID_FACTORS.breadth_deficiency, status: "definitely" } };
-  assert.equal(validateAgainstAssessorSchema(bad).ok, false);
+test("validateAgainstAssessorSchema: rejects an unknown need or operation", () => {
+  assert.equal(validateAgainstAssessorSchema({ ...VALID_FACTORS, need: "CHALLENGE" }).ok, false);
+  assert.equal(validateAgainstAssessorSchema({ ...VALID_FACTORS, operation: "vibes" }).ok, false);
 });
 
-test("validateAgainstAssessorSchema: rejects strength outside [0,1]", () => {
-  const bad = { ...VALID_FACTORS, group_preference: { ...VALID_FACTORS.group_preference, strength: 1.5 } };
-  assert.equal(validateAgainstAssessorSchema(bad).ok, false);
+test("validateAgainstAssessorSchema: rejects legacy eight-factor output", () => {
+  const legacy = { breadth_deficiency: { status: "absent", strength: 0, message_ids: [], span: "" } };
+  assert.equal(validateAgainstAssessorSchema(legacy).ok, false);
 });
 
-test("validateAgainstAssessorSchema: rejects an unexpected extra top-level key", () => {
-  const bad = { ...VALID_FACTORS, extra_factor: VALID_FACTORS.breadth_deficiency };
-  assert.equal(validateAgainstAssessorSchema(bad).ok, false);
+test("validateAgainstAssessorSchema: rejects an unexpected extra top-level or target key", () => {
+  assert.equal(validateAgainstAssessorSchema({ ...VALID_FACTORS, strength: 0.9 }).ok, false);
+  assert.equal(validateAgainstAssessorSchema({ ...VALID_FACTORS, target: { ...VALID_FACTORS.target, role: "challenger" } }).ok, false);
 });
 
-// ── 2026-08-13 mention-pilot regression cases ────────────────────────────────
-//
-// The 2026-08-13 16:05 mention-pilot exposed a regression in the Assessor
-// schema: the schema unconditionally required `message_ids` and `span` on
-// every factor, but the live LLM (`MiniMax-Text-01`) is observed to omit
-// them for `status: "absent"` and `status: "uncertain"` factors because the
-// field descriptions only say "absent 时必须为空数组 / 空字符串" -- they are
-// prose, not schema constraints. The LLM correctly interprets the prose as
-// "I don't need to fill them in when status is not present" and the schema
-// then rejects the response.
-//
-// The correct fix is to make `message_ids` and `span` required only when
-// `status === "present"`. Each test below pins one of the failure modes the
-// mention-pilot surfaced.
-
-test("validateAgainstAssessorSchema: accepts a factor with status='absent' and no message_ids / span (LLM omits them for non-present factors)", () => {
-  // This is the EXACT shape the live LLM emits for absent factors. The
-  // previous schema required message_ids and span on every factor and
-  // rejected this response with
-  // `must have required property 'message_ids' / 'span'`.
-  const llmLike = {
-    ...VALID_FACTORS,
-    unresolved_counterevidence: { status: "absent", strength: 0 },
-    self_correction: { status: "absent", strength: 0 },
-    reasoning_uptake: { status: "absent", strength: 0 },
-  };
-  assert.equal(validateAgainstAssessorSchema(llmLike).ok, true);
-});
-
-test("validateAgainstAssessorSchema: accepts a factor with status='uncertain' and no message_ids / span", () => {
-  const llmLike = {
-    ...VALID_FACTORS,
-    unresolved_counterevidence: { status: "uncertain", strength: 0 },
-    self_correction: { status: "uncertain", strength: 0 },
-    reasoning_uptake: { status: "uncertain", strength: 0 },
-  };
-  assert.equal(validateAgainstAssessorSchema(llmLike).ok, true);
-});
-
-test("validateAgainstAssessorSchema: still REQUIRES message_ids and span when status='present' (the LLM is not allowed to skip them on present factors)", () => {
-  // The schema must not over-relax: a present factor still needs the
-  // citation metadata. EvidenceChecker.js relies on message_ids/span
-  // being present for every present factor to do the citation check.
-  const presentWithoutEvidence = {
-    ...VALID_FACTORS,
-    group_preference: { status: "present", strength: 0.7 },  // no message_ids, no span
-  };
-  const result = validateAgainstAssessorSchema(presentWithoutEvidence);
+test("validateAgainstAssessorSchema: a non-null target REQUIRES at least one messageId and one quotation", () => {
+  const noEvidence = { ...VALID_FACTORS, target: { ...VALID_FACTORS.target, messageIds: [], evidence: [] } };
+  const result = validateAgainstAssessorSchema(noEvidence);
   assert.equal(result.ok, false);
-  // The error should mention the missing fields explicitly.
   const errStr = JSON.stringify(result.errors || []);
-  assert.ok(errStr.includes("message_ids") || errStr.includes("span"),
-    `Expected error to mention missing message_ids or span, got: ${errStr}`);
+  assert.ok(errStr.includes("messageIds") || errStr.includes("evidence"), `Expected error to mention messageIds/evidence, got: ${errStr}`);
 });
 
 // ── user context assembly ────────────────────────────────────────────────────
@@ -137,6 +92,17 @@ test("buildAssessorUserContext: sends all public context without a feature candi
   assert.match(userContent, /\[TASK_GENERAL_CONTEXT\]\npick a city/);
   assert.match(userContent, /\[m0\] \[Red\]: I think Eldoron is best/);
   assert.deepEqual(eligibleMessageIds, ["m0", "m1"]);
+});
+
+test("buildAssessorUserContext: includes code-computed participation counts and quiet participants", () => {
+  const { userContent } = buildAssessorUserContext({
+    chat: chat(),
+    taskGeneralContext: "pick a city",
+    participationCounts: { Red: 1, Pink: 1, Blue: 0 },
+    quietParticipants: ["Blue"],
+  });
+  assert.match(userContent, /\[PARTICIPATION_COUNTS\]\n\{"Red":1,"Pink":1,"Blue":0\}/);
+  assert.match(userContent, /\[QUIET_PARTICIPANTS\]\n\["Blue"\]/);
 });
 
 // ── end-to-end assessSemanticFactors() with an injected fake LLM ────────────

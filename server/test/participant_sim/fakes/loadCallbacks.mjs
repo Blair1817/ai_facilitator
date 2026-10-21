@@ -76,6 +76,9 @@ export async function getOfflineCallbacksHarness() {
       process.env.LLM_API_ENDPOINT = "http://127.0.0.1:65535";
       process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || "offline-test-key-unused";
       process.env.OPENAI_MODEL = process.env.OPENAI_MODEL || "offline-test-model";
+      // 2026-10-21: offline tests assert gating/bookkeeping, not timing; run
+      // Static without the matched-latency delay unless a test sets it.
+      process.env.STATIC_MATCHED_DELAY_MS = process.env.STATIC_MATCHED_DELAY_MS ?? "0";
       const mod = await buildAndImport("offline");
       return {
         handleChat: findAttributeListener(mod.Empirica, "game", "chat_round_0"),

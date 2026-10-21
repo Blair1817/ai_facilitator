@@ -25,16 +25,18 @@ function world(facilitation = "adaptive") {
   game.set("chat_round_0", lines.map((text, i) => buildCanonicalMessage({ messageId: `fixture-${i}`, groupId: game.id, participantId: players[i % 3].id, roundIndex: 0, stage: "Discussion", messageType: "human", speakerType: "human", timestamp: Date.now() + i, sequencePosition: i + 1, content: text, sender: { id: players[i % 3].id, name: players[i % 3].get("name") } })));
   return { game, round, stage };
 }
+// 2026-10-21: categorical need detector output.
 function factors(w, invalidComparison) {
-  const all = Object.fromEntries(FACTOR_KEYS.map(k => [k, { status: "absent", strength: 0, message_ids: [], evidence: [] }]));
   const chat = w.game.get("chat_round_0");
-  const indices = invalidComparison ? [1, 2, 3] : [0];
-  const evidence = indices.map(i => ({ messageId: `m${i}`, span: chat[i].text }));
-  const factor = invalidComparison ? "integration_deficiency" : "justification_deficiency";
-  all[factor] = { status: "present", strength: .95, message_ids: evidence.map(e => e.messageId), evidence };
-  all.evidenceRelations = [];
-  all.cognitiveTargets = [{ need: invalidComparison ? "cross_option_evidence" : "unsupported_claim", label: invalidComparison ? "City A transport" : "Alex's preference for City B", messageIds: invalidComparison ? ["m1"] : ["m0"], evidence: invalidComparison ? [evidence[0]] : evidence, optionLabels: invalidComparison ? ["City A"] : ["City B"], criteria: invalidComparison ? ["transport"] : [], status: "open" }];
-  return all;
+  const quote = (i) => ({ messageId: `m${i}`, span: chat[i].text });
+  if (invalidComparison) {
+    // Passes the evidence check (two authors, exact quotes) but cannot pass
+    // Specialist preflight: a cross-option comparison needs >= 2 options.
+    return { need: "INTEGRATE", operation: "cross_option_evidence", rationale: "audit",
+      target: { label: "City A transport", messageIds: ["m1", "m2"], evidence: [quote(1), quote(2)], optionLabels: ["City A"], criteria: ["transport"] } };
+  }
+  return { need: "SCRUTINIZE", operation: "unsupported_claim", rationale: "audit",
+    target: { label: "Alex's preference for City B", messageIds: ["m0", "m5"], evidence: [quote(0), quote(5)], optionLabels: ["City B"], criteria: [] } };
 }
 async function run(w, { invalidComparison = false, skipDuringValidation = false, rejectSpecialist = false, overlongFirstSpecialist = false } = {}) {
   const handleChat = await getOfflineHandleChat();
@@ -81,22 +83,26 @@ test("real callbacks execute v3.2 Assessor -> quoted target -> Challenger plan -
   assert.equal(w.round.get("cognitiveInterventionHistory").length, 1);
   assert.equal(r.log.at(-1).visibleWordCount, 10);
 });
-test("real callbacks send impossible comparison to Generalist before any Specialist Generator call", async () => {
+test("real callbacks send impossible comparison to the Static policy before any Specialist Generator call", async () => {
   const r = await run(world(), { invalidComparison: true });
   assert.equal(r.published.length, 1);
   assert.equal(r.requests.length, 3);
-  assert.match(r.requests[1].messages[0].content, /# generalist.md/);
+  assert.match(r.requests[1].messages[0].content, /# static.md/);
   assert.doesNotMatch(r.requests[1].messages[1].content, /\[PLAN_PREFLIGHT\]|\[TARGET\]/);
   assert.doesNotMatch(r.requests[2].messages[1].content, /\[INTERVENTION_PLAN\]/);
-  assert.equal(r.log.at(-1).fallbackRoute, "SPECIALIST_TO_GENERALIST");
+  assert.equal(r.log.at(-1).fallbackRoute, "SPECIALIST_TO_STATIC_POLICY");
 });
-test("real callbacks repair once then use control Generalist without Specialist plan/history leakage", async () => {
+// 2026-10-21: no Specialist Validator-feedback repair; one Static-policy fallback.
+test("real callbacks fall back once to the Static policy without a Specialist repair or plan/history leakage", async () => {
   const r = await run(world(), { rejectSpecialist: true });
   assert.equal(r.published.length, 1);
-  assert.equal(r.requests.length, 7);
-  assert.match(r.requests[4].messages[1].content, /re-audit all thirteen/);
-  assert.match(r.requests[5].messages[0].content, /# generalist.md/);
-  assert.doesNotMatch(r.requests[6].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
+  assert.equal(r.requests.length, 5, "assessor + Specialist + Validator + Static-policy + Validator");
+  assert.match(r.requests[1].messages[0].content, /# challenger.md/);
+  assert.match(r.requests[3].messages[0].content, /# static.md/);
+  assert.doesNotMatch(r.requests[3].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
+  assert.doesNotMatch(r.requests[4].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
+  assert.equal(r.log.at(-1).fallbackRoute, "SPECIALIST_TO_STATIC_POLICY");
+  assert.equal(r.log.at(-1).selectedRole, "STATIC");
 });
 test("test-mode stage skip during real Validator await prevents stale AI publication", async () => {
   const w = world();w.game.set("testControlsEnabled", true);w.game.set("treatment", { testMode: true });w.game.set("treatmentName", "test");
@@ -162,10 +168,10 @@ test("Specialist internal labels, excessive sections and out-of-plan IDs cannot 
 test("missing or forged Specialist preflight cannot reach an external Validator call", async () => {
   const { validateCandidate } = await import("./SemanticValidator.js");
   const { compilePlan } = await import("./PolicyCompiler.js");
-  const { checkEvidence } = await import("./EvidenceChecker.js");
+  const { checkNeedAssessment } = await import("./EvidenceChecker.js");
   const { preflightPlan } = await import("./PlanPreflight.mjs");
   const w = world();const chat = w.game.get("chat_round_0");
-  const plan = compilePlan("challenger", checkEvidence(factors(w, false), { chat }), { eligibleMessageIds: ["m0"] });
+  const plan = compilePlan("challenger", checkNeedAssessment(factors(w, false), { chat, activeParticipantNames: ["Alex", "Casey", "Jordan"] }).checkedFactors, { eligibleMessageIds: ["m0", "m5"] });
   const marker = preflightPlan(plan, { chat, taskGeneralContext: "City A City B" });
   for (const candidateMarker of [null, { ...marker, checks: { ...marker.checks, evidenceCoverageVerified: false } }, { ...marker, planId: "wrong" }]) {
     const result = await validateCandidate({ chat, candidate: { role: "EVIDENCE_CHALLENGER", message: "What supports B?", groundingMessageIds: ["m0"] }, selectedRole: "EVIDENCE_CHALLENGER", taskGeneralContext: "City A City B", interventionPlan: plan, planPreflight: candidateMarker, callLLM: () => assert.fail("No external call for invalid input") });
@@ -180,7 +186,7 @@ test("schemas resolve from the active versioned route, not stale root descriptio
   assert.equal(buildRuntimeGenerationSchema("GENERALIST", "PARTICIPANT_REQUEST").title, "Generator Output Schema");
 });
 
-test("word-limit repair and semantic repair share a two-attempt budget before Generalist", async () => {
+test("word-limit repair counts toward the Specialist budget before the Static-policy fallback", async () => {
   const r = await run(world(), { rejectSpecialist: true, overlongFirstSpecialist: true });
   assert.equal(r.requests.filter(r => r.messages[0].content.includes("# challenger.md")).length, 2);
   assert.equal(r.requests.length, 6);

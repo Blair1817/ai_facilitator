@@ -1,4 +1,4 @@
-import { GENERATION_ROLES, OPERATION_ROLE, isPublicParticipantMessage } from "./CognitiveOperations.mjs";
+import { GENERATION_ROLES, OPERATION_ROLE, isPublicParticipantMessage, countPublicMessagesByName, quietParticipants } from "./CognitiveOperations.mjs";
 import { withMessageIds } from "./prompts/DynamicContext.mjs";
 import { AUTOMATIC_MAX_WORDS, SYNTHESISER_MAX_WORDS } from "./prompts/PromptRuntime.mjs";
 
@@ -19,8 +19,12 @@ export function preflightPlan(plan, { chat = [], taskGeneralContext = "", active
   if (["EVIDENCE_CONSOLIDATION", "DISCREPANCY_REPRESENTATION", "CROSS_OPTION_COMPARISON"].includes(plan?.requiredReasoningAct)) enough &&= ids.length >= 2;
   if (plan?.requiredReasoningAct === "CROSS_OPTION_COMPARISON") enough &&= (target?.optionLabels?.length || 0) >= 2 && (target?.criteria?.length || 0) > 0;
   const participant = target?.participantName;
+  // 2026-10-21: a participation target must be a roster participant who is
+  // quiet under the deterministic QUIET_PARTICIPANT_RULE (a fully silent
+  // participant still qualifies, as before).
   const participationValid = plan?.requiredReasoningAct !== "PARTICIPATION_ELICITATION" ||
-    (contextScope === "complete_current_round" && activeParticipantNames.includes(participant) && !publicMessages.some(m => m.sender?.name === participant));
+    (contextScope === "complete_current_round" && activeParticipantNames.includes(participant)
+      && quietParticipants(countPublicMessagesByName(publicMessages, activeParticipantNames)).includes(participant));
   const targetVerified = !!target?.label && labels.every(label => typeof label === "string" && label.trim() && publicText.toLowerCase().includes(label.toLowerCase())) && participationValid;
   // Repetition uses delivered history only. Missing history never implies uptake.
   const repeated = interventionHistory.some(h => h.signature === plan?.signature ||

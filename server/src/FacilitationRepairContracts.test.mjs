@@ -33,25 +33,31 @@ test("Static and Generalist prompt files are both startup dependencies", () => {
   assert.match(requiredArray, /"generalist\.md"/);
 });
 
-test("persistent Specialist Validator rejection routes once to Adaptive Generalist", () => {
+// 2026-10-21: a rejected Specialist now falls back once to the Static policy
+// (the Adaptive default), with no Specialist Validator-feedback repair.
+test("Specialist Validator rejection routes once to the Static policy without a Specialist repair", () => {
   const specialistStart = callbacksSource.indexOf("// ── Specialist path:");
   const specialistBody = callbacksSource.slice(specialistStart);
+  const specialistCall = specialistBody.indexOf("runSharedGeneration(");
+  const noRepair = specialistBody.indexOf("{ allowValidatorRepair: false }", specialistCall);
   const rejectionCheck = specialistBody.indexOf('logEntry.outcome === "SILENT_VALIDATOR_REJECTED"');
-  const fallbackMarker = specialistBody.indexOf('logEntry.fallbackRoute = "SPECIALIST_TO_GENERALIST"');
-  const generalistBuild = specialistBody.search(/"adaptive",\s*\n\s*"generalist"/);
-  const fallbackCall = specialistBody.indexOf("runSharedGeneration(", generalistBuild);
+  const fallbackMarker = specialistBody.indexOf('logEntry.fallbackRoute = "SPECIALIST_TO_STATIC_POLICY"');
+  const staticBuild = specialistBody.search(/"static",\s*\n\s*null,\s*\n\s*null,/);
+  const fallbackCall = specialistBody.indexOf("runSharedGeneration(", staticBuild);
 
-  assert.ok(rejectionCheck >= 0, "fallback must be gated by two failed semantic validations");
+  assert.ok(specialistCall >= 0 && noRepair > specialistCall && noRepair < rejectionCheck, "the Specialist attempt must disable Validator-feedback repair");
+  assert.ok(rejectionCheck >= 0, "fallback must be gated by a failed semantic validation");
   assert.ok(fallbackMarker > rejectionCheck, "fallback route must be audit-logged");
-  assert.ok(generalistBuild > fallbackMarker, "fallback must build the Adaptive Generalist context");
-  assert.ok(fallbackCall > generalistBuild, "fallback context must use the shared generation/validation pipeline");
+  assert.ok(staticBuild > fallbackMarker, "fallback must build the Static-policy context");
+  assert.ok(fallbackCall > staticBuild, "fallback context must use the shared generation/validation pipeline");
+  assert.doesNotMatch(specialistBody.slice(0, specialistBody.indexOf("Empirica.on(")), /"adaptive",\s*\n\s*"generalist"/, "automatic Adaptive no longer uses the Generalist prompt");
 });
 
-test("successful Generalist fallback is recorded and published as GENERALIST", () => {
+test("successful Static-policy fallback is recorded and published as STATIC", () => {
   const specialistStart = callbacksSource.indexOf("// ── Specialist path:");
   const specialistBody = callbacksSource.slice(specialistStart);
-  assert.match(specialistBody, /publishedRole\s*=\s*"GENERALIST"/);
-  assert.match(specialistBody, /logEntry\.selectedRole\s*=\s*"GENERALIST"/);
+  assert.match(specialistBody, /publishedRole\s*=\s*"STATIC"/);
+  assert.match(specialistBody, /logEntry\.selectedRole\s*=\s*"STATIC"/);
   assert.match(specialistBody, /recordPublish\(game,\s*\{\s*role:\s*publishedRole/s);
   assert.match(specialistBody, /specialistFailure\s*=\s*\{/);
   assert.match(specialistBody, /fallbackPublished\s*=\s*result\.published/);

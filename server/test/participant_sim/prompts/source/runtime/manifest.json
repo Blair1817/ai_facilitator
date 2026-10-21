@@ -91,17 +91,18 @@
   "assessor": {
     "promptFile": "specialist/assessor.md",
     "schemaFile": "specialist/assessor.schema.json",
-    "status": "target_format_requires_checker_adapter"
+    "status": "categorical_need_detector_2026-10-21",
+    "note": "Live detector returns one of ELICIT/SCRUTINIZE/INTEGRATE/NONE; verified by EvidenceChecker.checkNeedAssessment(). Eight-factor format retained only for replay via EvidenceChecker.checkEvidence()."
   },
   "frozenControlScope": "Historical exact baseline and requested-Generalist route; Static/automatic Generalist use control_50 length-adapted policy.",
   "files": {
     "specialist/assessor.md": {
-      "sha256": "6dda6f3fb188de3112e8fa118f0f2ff574176540ebfa532d6546128ae9bda0a9",
-      "bytes": 10913
+      "sha256": "c65e8e0e447636c9c21b5f52caad098b22fb000fb6696c749318c5cdda85d2a2",
+      "bytes": 5398
     },
     "specialist/assessor.schema.json": {
-      "sha256": "1801bba0004ca29ed0fc58cdcf49958c3f1a48278dcd4a28c64103baf70865dc",
-      "bytes": 9654
+      "sha256": "205be29cc7a8f8c3f239798ccbd9ac9f02bda68b7a6d41240ccb4055022b83c8",
+      "bytes": 2123
     },
     "specialist/challenger.md": {
       "sha256": "1d6fd2883c2cc2b6c99ca6d3a5fe506239ab535dadc1a2a187290fd7aa6bbd38",

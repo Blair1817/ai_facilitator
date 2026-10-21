@@ -7,9 +7,11 @@
  * LLM judgment component" note.
  *
  * Single LLM call: given the public discussion context, ask the model to
- * score all eight semantic factors, with a verbatim-quote span as evidence.
- * These checked 0-1 strengths are the only detector scores used for role
- * classification; no hand-engineered feature pre-filter runs before it.
+ * choose ONE categorical need (ELICIT / SCRUTINIZE / INTEGRATE / NONE) with
+ * verbatim-quote evidence (2026-10-21 redesign; the earlier eight-factor
+ * 0-1 scoring is retained only in EvidenceChecker.checkEvidence() for
+ * replaying old logs). The returned object is still exposed as `factors`
+ * so log/persistence field names stay unchanged.
  * This module ONLY builds the request and
  * validates the shape of the response -- it does NOT verify that spans
  * actually occur in the transcript, does NOT decide roles, and does NOT
@@ -119,7 +121,7 @@ export function validateAgainstAssessorSchema(parsed) {
  * EvidenceChecker.js's later span/message_id checks are validated against
  * IDs that mean the same thing on both sides of the pipeline.
  */
-export function buildAssessorUserContext({ chat, taskGeneralContext, interventionHistory = [], activeParticipantNames = [], contextScope = "complete_current_round" }) {
+export function buildAssessorUserContext({ chat, taskGeneralContext, interventionHistory = [], activeParticipantNames = [], contextScope = "complete_current_round", participationCounts = null, quietParticipants = [] }) {
   const chatWithIds = withMessageIds(chat);
   const humanWithIds = chatWithIds.filter(isPublicParticipantMessage);
   const localWithIds = humanWithIds.slice(-6);
@@ -131,6 +133,10 @@ export function buildAssessorUserContext({ chat, taskGeneralContext, interventio
     ["[TASK_GENERAL_CONTEXT]", taskGeneralContext || "(not provided)"],
     ["[CONTEXT_SCOPE]", contextScope],
     ["[ACTIVE_PARTICIPANT_NAMES]", JSON.stringify(activeParticipantNames)],
+    // 2026-10-21: deterministic participation metadata computed by code
+    // (CognitiveOperations.countPublicMessagesByName / quietParticipants).
+    ["[PARTICIPATION_COUNTS]", JSON.stringify(participationCounts ?? {})],
+    ["[QUIET_PARTICIPANTS]", JSON.stringify(Array.isArray(quietParticipants) ? quietParticipants : [])],
     ["[INTERVENTION_HISTORY]", JSON.stringify(interventionHistory)],
     ["[CUMULATIVE_PUBLIC_CONTEXT]", cumulativePublicContext || "(no messages yet)"],
     ["[LOCAL_CONTEXT]", localContext || "(no messages yet)"],
@@ -158,7 +164,7 @@ export function buildAssessorUserContext({ chat, taskGeneralContext, interventio
  *     evaluateGate() see checkedFactors=null, which fails closed as an
  *     unavailable detector result.
  */
-export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM, interventionHistory, activeParticipantNames, contextScope }) {
+export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM, interventionHistory, activeParticipantNames, contextScope, participationCounts, quietParticipants }) {
   if (typeof callLLM !== "function") {
     throw new Error("assessSemanticFactors() requires a callLLM(messages) function to be injected -- it does not perform network calls itself.");
   }
@@ -168,7 +174,7 @@ export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM,
     return { success: false, code: "ASSESSOR_PROMPT_BLOCKED", error: promptResult.reason };
   }
 
-  const { userContent } = buildAssessorUserContext({ chat, taskGeneralContext, interventionHistory, activeParticipantNames, contextScope });
+  const { userContent } = buildAssessorUserContext({ chat, taskGeneralContext, interventionHistory, activeParticipantNames, contextScope, participationCounts, quietParticipants });
   const messages = [
     { role: "system", content: promptResult.content },
     { role: "user", content: userContent },

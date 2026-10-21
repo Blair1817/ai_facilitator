@@ -246,3 +246,58 @@ export function chooseRole(gateResult, { remainingTime, lastRole = null, synthes
   }
   throw new Error("chooseRole(): specialist decision had no eligible role");
 }
+
+/**
+ * Live Adaptive gate (2026-10-21 categorical redesign). Input is the output of
+ * EvidenceChecker.checkNeedAssessment() (or null when the detector call
+ * failed). Three outcomes:
+ *   - "abstain":       only the final time floor (same floor as Static's
+ *                      checkpoint rule) -- nothing is published.
+ *   - "static_policy": NONE, a need rejected by the evidence check, or an
+ *                      unavailable detector -- publish a Static-policy
+ *                      message so Adaptive speaks at every checkpoint where
+ *                      Static would.
+ *   - "specialist":    a verified need; its role is fixed by the need.
+ * No numeric thresholds, tie margins or discounts are involved. The returned
+ * shape stays compatible with chooseRole() and the existing log fields.
+ */
+export function evaluateNeedGate(checkedNeed, { remainingTime } = {}) {
+  const empty = { scores: {}, eligibleRoles: [], hardGatedRoles: [], perRole: {} };
+  if (remainingTime <= THRESHOLDS.gate.min_time_for_intervention_seconds * 1000) {
+    return {
+      decision: "abstain",
+      reason: `Insufficient time remaining (${remainingTime}ms <= ${THRESHOLDS.gate.min_time_for_intervention_seconds}s floor) for a meaningful intervention-response cycle`,
+      ...empty,
+      abstentionKind: "time_floor",
+    };
+  }
+  if (!checkedNeed) {
+    return {
+      decision: "static_policy",
+      reason: "Need detector output was unavailable or invalid; using the Static policy for this checkpoint",
+      ...empty,
+      fallbackKind: "detector_unavailable",
+    };
+  }
+  if (!checkedNeed.role) {
+    const rejected = Boolean(checkedNeed.downgradedReason);
+    return {
+      decision: "static_policy",
+      reason: rejected
+        ? `Detector need ${checkedNeed.rawNeed} rejected by evidence check (${checkedNeed.downgradedReason}); using the Static policy`
+        : "Detector reported no current need (NONE); using the Static policy",
+      ...empty,
+      fallbackKind: rejected ? "evidence_check_failed" : "no_need",
+    };
+  }
+  const role = checkedNeed.role;
+  return {
+    decision: "specialist",
+    reason: `Verified need ${checkedNeed.need}/${checkedNeed.operation} -> ${role}`,
+    scores: { [role]: 1 },
+    eligibleRoles: [role],
+    hardGatedRoles: [role],
+    perRole: {},
+    chosenRole: role,
+  };
+}
