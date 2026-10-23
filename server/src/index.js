@@ -14,6 +14,7 @@ import { Empirica } from "./callbacks";
 import { ExportService } from "./ExportService.mjs";
 import { createExportServer, listenExportServer, readExportServerConfig } from "./ExportServer.mjs";
 import { recordExportEvent } from "./ExportAudit.mjs";
+import { initialiseAdminContextWithRetry } from "./AdminContextStartup.mjs";
 import { runStartupSelfCheck } from "./prompts/promptLoader.js";
 
 const argv = minimist(process.argv.slice(2), { string: ["token"] });
@@ -51,13 +52,24 @@ if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "your-key-here
 }
 
 (async () => {
-  const ctx = await AdminContext.init(
-    argv["url"] || "http://localhost:3000/query",
-    argv["sessionTokenPath"],
-    "callbacks",
-    argv["token"],
-    {},
-    classicKinds
+  const adminUrl = argv["url"] || "http://localhost:3000/query";
+  const ctx = await initialiseAdminContextWithRetry(
+    () => AdminContext.init(
+      adminUrl,
+      argv["sessionTokenPath"],
+      "callbacks",
+      argv["token"],
+      {},
+      classicKinds,
+    ),
+    {
+      onRetry: ({ attempt, attempts, delayMs }) => {
+        console.warn(
+          `[startup] Tajriba is not accepting callback connections yet; ` +
+          `retrying in ${delayMs}ms (${attempt}/${attempts}).`,
+        );
+      },
+    },
   );
 
   ctx.register(ClassicLoader);
