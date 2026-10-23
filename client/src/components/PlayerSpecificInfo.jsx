@@ -41,7 +41,7 @@ function buildPersonalReport({ generalInfo, participantContent, playerName }) {
     mergedSections.push(`## ${heading}\n\n${body}`);
   }
 
-  const reportIntroduction = `${INFORMATION_DIFFERENCE_NOTICE}\n\n${REPORT_DISCUSSION_PERMISSION}\n\nBe sure to scroll to the bottom of the report to review all details.`;
+  const reportIntroduction = `**${INFORMATION_DIFFERENCE_NOTICE}**\n\n${REPORT_DISCUSSION_PERMISSION}\n\nBe sure to scroll to the bottom of the report to review all details.`;
 
   return `# General Information\n\n${withoutLeadingTitle(shared.introduction)}\n\n# Personal report delivered to ${playerName}:\n\n${reportIntroduction}\n\n${mergedSections.join("\n\n")}`;
 }

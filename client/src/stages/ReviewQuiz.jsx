@@ -29,19 +29,9 @@ export function ReviewQuiz({ onNext, deadline } = {}) {
   const [answers, setAnswers] = usePersistentDraft(answersDraftKey, {});
   const [incorrectQuestionIds, setIncorrectQuestionIds] = useState([]);
   const [instructionsOpen, setInstructionsOpen] = useState(false);
-  const [walkthroughSeen, setWalkthroughSeen] = usePersistentDraft(
-    draftKey({ playerId: player.id, roundId: round?.id, form: "reviewQuiz", field: "walkthroughSeen" }),
-    false
-  );
-  const walkthroughRef = useRef(null);
   const instructionsRef = useRef(null);
   const feedbackRef = useRef(null);
   const instructions = taskBackgroundOnly(round?.get("generalInfo"));
-  useEffect(() => {
-    if (!walkthroughSeen && walkthroughRef.current && !walkthroughRef.current.open) {
-      walkthroughRef.current.showModal();
-    }
-  }, [walkthroughSeen, quiz]);
   useEffect(() => {
     if (instructionsOpen && instructionsRef.current && !instructionsRef.current.open) {
       instructionsRef.current.showModal();
@@ -110,26 +100,6 @@ export function ReviewQuiz({ onNext, deadline } = {}) {
 
   return (
     <div className="h-full w-full overflow-y-auto bg-gray-50">
-      <dialog ref={walkthroughRef} aria-labelledby="walkthrough-title"
-        onCancel={() => setWalkthroughSeen(true)}
-        className="w-full max-w-lg rounded-lg p-6 shadow-lg backdrop:bg-black/40">
-        <h2 id="walkthrough-title" className="text-xl font-bold mb-4">Before you begin</h2>
-        <p className="text-sm text-gray-700 mb-6">
-          Read the task instructions carefully, then answer five questions about the task.
-          If an answer is incorrect, you can review the relevant instructions and try again.
-        </p>
-        <div className="flex flex-wrap justify-end gap-3">
-          <Button className="ml-0" handleClick={() => {
-            setWalkthroughSeen(true);
-            walkthroughRef.current.close();
-            setInstructionsOpen(true);
-          }}>Review instructions</Button>
-          <Button className="ml-0" handleClick={() => {
-            setWalkthroughSeen(true);
-            walkthroughRef.current.close();
-          }}>Start questions</Button>
-        </div>
-      </dialog>
       <dialog ref={instructionsRef} aria-labelledby="instructions-title"
         onClose={() => setInstructionsOpen(false)}
         className="w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-lg p-6 shadow-lg backdrop:bg-black/40">
