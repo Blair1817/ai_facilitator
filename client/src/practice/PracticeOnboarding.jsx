@@ -71,7 +71,7 @@ export function PracticeOnboarding() {
     return <div className="h-full w-full overflow-y-auto bg-gray-50 p-4 sm:p-6">
       <div className="mx-auto grid min-h-full w-full max-w-7xl gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)]">
         <div>
-          {reading && <Callout title="Your task information appears here.">Some information may be different from what other group members see.</Callout>}
+          {reading && <Callout title="Your task information appears here."><strong>Some information may be different from what other group members see.</strong></Callout>}
           <PlayerSpecificInfo className="h-[65vh] lg:h-[calc(100vh-10rem)]" />
         </div>
         <div className="min-w-0 self-start space-y-4">

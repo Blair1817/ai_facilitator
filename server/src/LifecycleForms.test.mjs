@@ -119,6 +119,8 @@ test("InitialDecision page allows 300 seconds, shows a countdown, and advances w
   assert.match(initialDecisionSource, /import \{ Timer \} from "\.\.\/components\/Timer"/);
   assert.match(initialDecisionSource, /Time remaining:/);
   assert.match(initialDecisionSource, /<Timer deadline=\{deadline\} \/>/);
+  assert.match(initialDecisionSource, /<strong className="block">Your task information appears here\.<\/strong>/);
+  assert.match(initialDecisionSource, /<strong>Some information may be different from what other group members see\.<\/strong>/);
   assert.doesNotMatch(initialDecisionSource, /setInterval|setTimeout/);
   assert.match(timerSource, /useStageTimer\(\)/);
   assert.match(timerSource, /timer\?\.remaining/);

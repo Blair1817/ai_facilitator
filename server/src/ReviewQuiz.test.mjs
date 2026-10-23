@@ -293,6 +293,34 @@ test("global intro keeps only one-time global steps and round screens use round 
   assert.match(personalFlowClientSource, /TaskInformation: Introduction, ReviewQuiz, InitialDecision/);
 });
 
+test("the four-part Task Instructions open before each formal Task Information page, not inside ReviewQuiz", () => {
+  const instructionText = [
+    "Task Instructions",
+    "1. Read the task information",
+    "Read the Task Information carefully. You will then complete a short Review Quiz to check your understanding of the task.",
+    "2. Make an initial decision",
+    "After the Review Quiz, choose the option you initially consider most suitable and rate your confidence from 0 to 100.",
+    "3. Discuss with your group",
+    "in a group of three for up to 15 minutes",
+    "4. Record the final decision",
+    "each group member will independently report the option they believe the group agreed on",
+    "If you do not personally agree, you will also provide your own preferred option and briefly explain your reasons on the same page.",
+  ];
+  for (const text of instructionText) assert.match(introductionSource, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(introductionSource, /form: "taskInstructions"/);
+  assert.match(introductionSource, /roundId: round\?\.id/);
+  assert.match(introductionSource, /taskInstructionsRef\.current\.showModal\(\)/);
+  assert.doesNotMatch(introductionSource, /taskIndex"\) === 0/);
+  assert.match(introductionSource, /Continue to Task Information/);
+  assert.equal((introductionSource.match(/<h2 className="text-lg font-semibold text-gray-900">/g) || []).length, 4);
+  assert.ok(
+    introductionSource.indexOf("</dialog>") < introductionSource.indexOf("<RenderMarkdown markdownText={taskBackground}"),
+    "Task Information must remain on the page outside the Task Instructions dialog",
+  );
+  assert.doesNotMatch(reviewQuizSource, /Task Instructions|taskInstructionsRef|taskInstructionsSeen|Before you begin|Start questions/);
+  assert.doesNotMatch(introductionSource, /Task Report|If all three group members report the same group choice|If the reported choices do not match|\bprivate\b/i);
+});
+
 test("active Overall Instructions disclose the optional 15-minute formal discussion before ReviewQuiz", () => {
   assert.match(overallInstructionsSource, /You will first complete a short Practice activity\./);
   assert.match(overallInstructionsSource, /discuss the options for up to 15 minutes/);
@@ -418,6 +446,7 @@ test("all proofread formal facts and the 9 plus 7 allocation match exactly", () 
 
 test("Practice and formal reports use the weak notice and merge facts without ownership labels", () => {
   assert.match(playerSpecificInfoSource, new RegExp(INFORMATION_DIFFERENCE_NOTICE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(playerSpecificInfoSource, /`\*\*\$\{INFORMATION_DIFFERENCE_NOTICE\}\*\*\\n\\n/);
   assert.match(playerSpecificInfoSource, /You may discuss the information in your report with your group\./);
   assert.match(playerSpecificInfoSource, /const combinedBody = \[section\.body, additionalFacts\]/);
   assert.match(playerSpecificInfoSource, /<RenderMarkdown markdownText=\{reportMarkdown\}/);

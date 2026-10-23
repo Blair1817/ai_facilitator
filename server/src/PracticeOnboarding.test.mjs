@@ -269,6 +269,7 @@ test("client preserves hidden-to-forced timer behaviour across refresh and shows
   assert.match(practiceClientSource, /resolveTimerVisibility\(\{/);
   assert.match(practiceClientSource, /forced && !forcedSent\.current && !player\.round\.get\("practiceTimerForced"\)/);
   assert.equal((practiceClientSource.match(/Time remaining:/g) || []).length, 1);
+  assert.match(practiceClientSource, /<strong>Some information may be different from what other group members see\.<\/strong>/);
   assert.match(reportSource, /Some information may be different from what other group members see\./);
 });
 test("Practice readiness control remains clear of the fixed bottom-left Empirica menu", () => {

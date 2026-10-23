@@ -44,7 +44,13 @@ export function InitialDecision({ onNext, deadline } = {}) {
   return (
     <div className="h-full w-full overflow-y-auto bg-gray-50 p-4 sm:p-6">
       <div className="mx-auto grid min-h-full w-full max-w-7xl gap-6 lg:grid-cols-[minmax(0,3fr)_minmax(20rem,2fr)]">
-        <PlayerSpecificInfo className="h-[55vh] lg:sticky lg:top-6 lg:h-[calc(100vh-3rem)]" />
+        <div className="min-w-0 lg:sticky lg:top-6 lg:flex lg:h-[calc(100vh-3rem)] lg:flex-col">
+          <aside className="mb-4 flex-none rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-950">
+            <strong className="block">Your task information appears here.</strong>
+            <strong>Some information may be different from what other group members see.</strong>
+          </aside>
+          <PlayerSpecificInfo className="h-[55vh] min-h-0 lg:h-auto lg:flex-1" />
+        </div>
         <form onSubmit={submit} className="block min-w-0 w-full self-start rounded-lg border border-gray-200 bg-white p-5 shadow-sm sm:p-6">
           <h1 className="text-2xl font-bold text-gray-900">Initial Decision</h1>
           <div className="mt-3 flex items-center gap-2 rounded-md bg-gray-100 px-3 py-2 text-gray-700" role="status">
