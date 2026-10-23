@@ -67,6 +67,32 @@ test("request policy still uses max_tokens for a legacy OpenAI model", () => {
   assert.equal("reasoning_effort" in payload, false);
 });
 
+test("strict audit schemas reach only the official OpenAI Chat Completions endpoint", () => {
+  const responseSchema = { name: "audit", schema: { type: "object", properties: { failed: { type: "boolean" } }, required: ["failed"], additionalProperties: false } };
+  const args = { model: "gpt-5.6-luna", messages: [], maxTokens: 500, responseSchema };
+  const payload = buildChatCompletionPayload({ ...args, endpoint: "https://api.openai.com/v1/chat/completions" });
+  assert.deepEqual(payload.response_format, { type: "json_schema", json_schema: { ...responseSchema, strict: true } });
+  assert.equal(payload.max_completion_tokens, 500);
+  for (const endpoint of [null, "https://api.minimax.chat/v1/chat/completions", "https://api.openai.com.example.org/v1/chat/completions", "https://api.openai.com/v1/responses"]) {
+    assert.equal("response_format" in buildChatCompletionPayload({ ...args, endpoint }), false);
+  }
+  assert.equal("response_format" in buildChatCompletionPayload({ ...args, responseSchema: null, endpoint: "https://api.openai.com/v1/chat/completions" }), false);
+});
+
+test("judgement reasoning is opt-in, provider scoped and includes a completion budget", () => {
+  const args = { model: "gpt-5.6-luna", messages: [], maxTokens: 1000, reasoningEffort: "low" };
+  const official = buildChatCompletionPayload({ ...args, endpoint: "https://api.openai.com/v1/chat/completions" });
+  assert.equal(official.reasoning_effort, "low");
+  assert.equal(official.max_completion_tokens, 4096);
+  const larger = buildChatCompletionPayload({ ...args, maxTokens: 6000, endpoint: "https://api.openai.com/v1/chat/completions" });
+  assert.equal(larger.max_completion_tokens, 6000);
+  const compatible = buildChatCompletionPayload({ ...args, model: "MiniMax-Text-01", endpoint: "https://api.minimax.chat/v1/chat/completions" });
+  assert.equal(compatible.max_tokens, 1000);
+  assert.equal("reasoning_effort" in compatible, false);
+  assert.equal(buildChatCompletionPayload({ ...args, endpoint: null }).reasoning_effort, "none");
+  assert.throws(() => buildChatCompletionPayload({ ...args, reasoningEffort: "unknown", endpoint: "https://api.openai.com/v1/chat/completions" }), /Unsupported/);
+});
+
 test("transport captures only the requested non-sensitive Chat Completions metadata", () => {
   const metadata = extractChatCompletionResponseMetadata({
     choices: [{ finish_reason: "length", message: { content: null } }],

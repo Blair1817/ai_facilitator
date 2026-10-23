@@ -13,7 +13,7 @@
       "generationSchema": "control_50/generation.schema.json",
       "validationSchema": "control_50/validation.schema.json",
       "planRequired": false,
-      "generatorSha256": "1113e9f40ba2c95a5667195787aa17d6c0d23c4848e46754b8c1f2516b570ac9",
+      "generatorSha256": "45b7cef7aebf380e7959ff6bf3880bf1cb3a4c58122cab23a0ae88afebccd3f5",
       "validatorSha256": "202517f48d1c60ecdd342d63e5d852d4fdb8716f52c72ca8008d57469db2aa5b",
       "maxWords": 50
     },
@@ -26,7 +26,7 @@
       "generationSchema": "control_50/generation.schema.json",
       "validationSchema": "control_50/validation.schema.json",
       "planRequired": false,
-      "generatorSha256": "451038067e32bdcd863aa1c28ac7d37a731669676934b778308413185f803cc4",
+      "generatorSha256": "6bb81ef8ad08c1d1d8eb6e5dd124cd60f2a8ed8c4c1cb4e76a0f10aa70f65ee0",
       "validatorSha256": "202517f48d1c60ecdd342d63e5d852d4fdb8716f52c72ca8008d57469db2aa5b",
       "maxWords": 50
     },
@@ -40,7 +40,7 @@
       "validationSchema": "frozen_control/validation.schema.json",
       "planRequired": false,
       "generatorSha256": "32d3ea5b399c2ff97c786b032e2b2c6badb6574b7d49b1b76285816272dc318c",
-      "validatorSha256": "017d5e326bb57c9be0dcbd3110fdf3c693b8caec0a6aeee26dc556cb6be2fccd"
+      "validatorSha256": "23e41b058f65693a92d54e89fa465325c20b4aa8f23503ddd186e5d7f36292ef"
     },
     "expander": {
       "generatorFiles": [
@@ -54,7 +54,7 @@
       "preflightSchema": "specialist/plan_preflight.schema.json",
       "planRequired": true,
       "generatorSha256": "54638e5d488bdf0638ecea1445748d387d7746b4add29cfe07686d4f7d035778",
-      "validatorSha256": "7b6ae36d0b45a51b0aba72ae29549105c07f49cd38fa745e1df8c7aa16258965",
+      "validatorSha256": "ae8c2c3a3704e84d3d23ad74bcb8b7ff05aca05f5bbbf93837e334fdbdaae6e0",
       "maxWords": 50
     },
     "challenger": {
@@ -69,7 +69,7 @@
       "preflightSchema": "specialist/plan_preflight.schema.json",
       "planRequired": true,
       "generatorSha256": "e621d055d80c371b3a61d1a0865daf342b2a08ae6fc23a5f43cef516d9882436",
-      "validatorSha256": "7b6ae36d0b45a51b0aba72ae29549105c07f49cd38fa745e1df8c7aa16258965",
+      "validatorSha256": "ae8c2c3a3704e84d3d23ad74bcb8b7ff05aca05f5bbbf93837e334fdbdaae6e0",
       "maxWords": 50
     },
     "synthesiser": {
@@ -83,8 +83,8 @@
       "validationSchema": "specialist/validation.schema.json",
       "preflightSchema": "specialist/plan_preflight.schema.json",
       "planRequired": true,
-      "generatorSha256": "95d9828e791f8c01c39ba83f134baa122dd240bdf593fdd0dc68667745c812b9",
-      "validatorSha256": "7b6ae36d0b45a51b0aba72ae29549105c07f49cd38fa745e1df8c7aa16258965",
+      "generatorSha256": "936ba3abff1edb477090118e1038cdef96c9ee3f34c962fb746a7aa2940e7ea8",
+      "validatorSha256": "ae8c2c3a3704e84d3d23ad74bcb8b7ff05aca05f5bbbf93837e334fdbdaae6e0",
       "maxWords": 55
     }
   },
@@ -97,8 +97,8 @@
   "frozenControlScope": "Historical exact baseline and requested-Generalist route; Static/automatic Generalist use control_50 length-adapted policy.",
   "files": {
     "specialist/assessor.md": {
-      "sha256": "a435daf3383e78b235d6ec73685101f11fb04c15a3d8561834803f92beb055c9",
-      "bytes": 46665
+      "sha256": "98f3bb91f2bceed7fbee41897546bd1f5e674a545b71d45242e9a5f145f97d2f",
+      "bytes": 48990
     },
     "specialist/assessor.schema.json": {
       "sha256": "311d630af3779885230fc0e270bcfd77c24bcc6c452eba1a50285a182ba7ef1d",
@@ -129,20 +129,20 @@
       "bytes": 5741
     },
     "specialist/synthesiser.md": {
-      "sha256": "140159a45003b5bd72ef8b0b7986666fa594f85729ddec5bad317e425e8696b3",
-      "bytes": 15494
+      "sha256": "9f7458b667b324bf1d2195c0ad6781b0f78368a7c698c879e3684e470e676052",
+      "bytes": 16893
     },
     "specialist/validation.schema.json": {
       "sha256": "547b93a6c1dedf5dd45629d7a60d3c6c6a39e7f304d0e6dbda210b4b97ca4843",
       "bytes": 3179
     },
     "specialist/validator.md": {
-      "sha256": "7b6ae36d0b45a51b0aba72ae29549105c07f49cd38fa745e1df8c7aa16258965",
-      "bytes": 14805
+      "sha256": "ae8c2c3a3704e84d3d23ad74bcb8b7ff05aca05f5bbbf93837e334fdbdaae6e0",
+      "bytes": 9756
     },
     "control_50/base.md": {
-      "sha256": "91ffc1b86c43048bfc4b4fae1b2f3a0e9e8c5ed5e2ab02f96b3df7febd6158fc",
-      "bytes": 11352
+      "sha256": "165f517c392361cb1f5765790fde3a0623663a07a04f8aa40673b15b6d46964e",
+      "bytes": 11768
     },
     "control_50/generalist.md": {
       "sha256": "418b58322e8c5953ff0113d1c379255a102837a0d62b5deb47df8d8bd3a88aee",
@@ -181,8 +181,8 @@
       "bytes": 4311
     },
     "frozen_control/requested_validator.md": {
-      "sha256": "017d5e326bb57c9be0dcbd3110fdf3c693b8caec0a6aeee26dc556cb6be2fccd",
-      "bytes": 12731
+      "sha256": "23e41b058f65693a92d54e89fa465325c20b4aa8f23503ddd186e5d7f36292ef",
+      "bytes": 15336
     },
     "frozen_control/static.md": {
       "sha256": "33f6f3fb08f6903cf4fc0d79430facc735ef123719429aecc33549858a6088ff",

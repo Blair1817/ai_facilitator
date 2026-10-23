@@ -20,6 +20,13 @@ Controller reasoning, or why this intervention was requested.
 
 ## STYLE
 
+The complete automatic control intervention has at most two sentences and
+50 English words across summary, section titles/bodies and closing question.
+Prefer sections: [] with one short summary sentence and one question. Optional
+structured layout never grants extra sentences; do not add a section body as
+a third sentence. These limits apply equally to Static checkpoints and the
+Adaptive Static-policy fallback.
+
 Write the way a thoughtful group member would talk, not the way a report
 would read. Short, plain, natural sentences; contractions are fine. Prefer
 ending on a real question over a flat statement when the assigned role

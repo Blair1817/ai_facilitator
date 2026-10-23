@@ -58,6 +58,38 @@ const CANDIDATE_PASSED = {
   length: false,
 };
 
+test("Validator requests the canonical strict schema without bypassing downstream schema checks", async () => {
+  let options;
+  const result = await validateCandidateRaw({
+    chat: chat(),
+    candidate: { role: "GENERALIST", message: "Which publicly shared points support the preference?", groundingMessageIds: [] },
+    selectedRole: "GENERALIST",
+    triggerType: "PARTICIPANT_REQUEST",
+    callLLM: async (_messages, requestOptions) => {
+      options = requestOptions;
+      // A provider or gateway ignoring response_format must still fail closed.
+      const wrong = { ...CANDIDATE_PASSED, requiredReasoningAct: false };
+      delete wrong.requiredReasoningActMissing;
+      return { success: true, rawText: JSON.stringify(wrong) };
+    },
+  });
+  const schema = options.responseSchema.schema;
+  assert.deepEqual(schema.required, [...VALIDATOR_CRITERIA]);
+  assert.deepEqual(Object.keys(schema.properties), [...VALIDATOR_CRITERIA]);
+  assert.equal(schema.additionalProperties, false);
+  assert.equal(result.success, false);
+  assert.equal(result.code, "VALIDATOR_SCHEMA_FAILURE");
+});
+
+test("Validator timing is runtime metadata and is omitted when unknown", () => {
+  const args = { chat: chat(), candidate: { role: "GENERALIST", message: "What points matter?", groundingMessageIds: [] }, selectedRole: "GENERALIST" };
+  assert.match(buildValidatorUserContext({ ...args, remainingTimeMs: 300000 }).userContent, /\[TIME_REMAINING_MS\]\n300000/);
+  assert.match(buildValidatorUserContext({ ...args, remainingTimeMs: 15000 }).userContent, /\[TIME_REMAINING_MS\]\n15000/);
+  for (const remainingTimeMs of [null, undefined, NaN, -1]) {
+    assert.doesNotMatch(buildValidatorUserContext({ ...args, remainingTimeMs }).userContent, /TIME_REMAINING_MS/);
+  }
+});
+
 test("parseValidatorResponse accepts one leading fenced JSON audit followed by provider explanation", () => {
   const raw = `\`\`\`json\n${JSON.stringify(CANDIDATE_PASSED)}\n\`\`\`\n\n### Explanation\nProvider-added prose`;
   const result = parseValidatorResponse(raw);

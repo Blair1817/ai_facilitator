@@ -1,0 +1,36 @@
+Full server tests
+✔ chooseRole uses the classified specialist (0.267ms)
+ℹ tests 762
+ℹ suites 0
+ℹ pass 762
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 90672.92575
+
+Assessor/need/prompt tests after the boundary update
+✔ strict parser: schema cap is now 1500 (regression: cap was 400, raised 2026-08-21) (0.08575ms)
+ℹ tests 139
+ℹ suites 0
+ℹ pass 139
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 90368.824125
+
+Validator/requested-reply tests after the safe-alternative update
+✔ integration: no real external LLM request is made by any test in this file (callLLM is always a local fake, never fetch) (0.046042ms)
+ℹ tests 80
+ℹ suites 0
+ℹ pass 80
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 235.79
+
+Server production bundle: esbuild API with package.json build parameters (local npm esbuild shim is broken).
+Built prompt integrity: true.
+Diff whitespace check: passed.

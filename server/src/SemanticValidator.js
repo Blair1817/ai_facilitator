@@ -303,6 +303,7 @@ export function buildValidatorUserContext({
   activeParticipantNames = [],
   contextScope = "complete_current_round",
   triggerType = null,
+  remainingTimeMs = null,
 }) {
   const chatWithIds = withMessageIds(chat);
   const humanWithIds = chatWithIds.filter(isPublicParticipantMessage);
@@ -318,6 +319,9 @@ export function buildValidatorUserContext({
     ["[CUMULATIVE_PUBLIC_CONTEXT]", cumulativePublicContext || "(no messages yet)"],
     ["[LOCAL_CONTEXT]", localContext || "(no messages yet)"],
   ];
+  if (Number.isFinite(remainingTimeMs) && remainingTimeMs >= 0) {
+    sections.push(["[TIME_REMAINING_MS]", String(remainingTimeMs)]);
+  }
 
   if (triggerType === "PARTICIPANT_REQUEST") {
     sections.push(["[TRIGGER_TYPE]", triggerType],
@@ -379,6 +383,7 @@ export async function validateCandidate({
   activeParticipantNames = [],
   contextScope = "complete_current_round",
   triggerType = null,
+  remainingTimeMs = null,
 }) {
   if (typeof callLLM !== "function") {
     throw new Error("validateCandidate() requires a callLLM(messages) function to be injected -- it does not perform network calls itself.");
@@ -402,14 +407,21 @@ export async function validateCandidate({
     selectedRole,
     taskGeneralContext,
     priorFailedCriteria,
-    priorCandidate, interventionPlan, planPreflight, interventionHistory, recentAiMessages, activeParticipantNames, contextScope, triggerType,
+    priorCandidate, interventionPlan, planPreflight, interventionHistory, recentAiMessages, activeParticipantNames, contextScope, triggerType, remainingTimeMs,
   });
   const messages = [
     { role: "system", content: promptResult.content },
     { role: "user", content: userContent },
   ];
 
-  const llmResponse = await callLLM(messages);
+  const { type, properties, required, additionalProperties } = loadValidatorSchema();
+  const llmResponse = await callLLM(messages, {
+    reasoningEffort: "low",
+    responseSchema: {
+      name: "facilitator_semantic_validation",
+      schema: { type, properties, required, additionalProperties },
+    },
+  });
   const responseMetadata = llmResponse.responseMetadata ?? null;
   if (!llmResponse.success) {
     return { success: false, code: "VALIDATOR_API_ERROR", error: llmResponse.error, responseMetadata };

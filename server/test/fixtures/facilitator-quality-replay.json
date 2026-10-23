@@ -1,0 +1,684 @@
+{
+  "description": "Synthetic public-context regression candidates, including failures observed 2026-10-23. Expected judgements are authored test oracles, not research ratings.",
+  "generalInfo": "Choose Talwick, Rovenna or Meridia using the publicly shared task information. Available alternatives: Talwick, Rovenna, Meridia.",
+  "cases": [
+    {
+      "id": "challenger_allowed_alternatives",
+      "transcript": [
+        {
+          "player": "Green",
+          "text": "I prefer Rovenna."
+        },
+        {
+          "player": "Blue",
+          "text": "I also support choosing Rovenna."
+        },
+        {
+          "player": "Pink",
+          "text": "No supporting task facts have been stated for that preference."
+        },
+        {
+          "player": "Green",
+          "text": "I am sticking with Rovenna on instinct."
+        },
+        {
+          "player": "Blue",
+          "text": "My preference is based on a feeling rather than stated evidence."
+        },
+        {
+          "player": "Pink",
+          "text": "The preference is clear, but its evidential basis is still unstated."
+        }
+      ],
+      "assessment": {
+        "need": "SCRUTINIZE",
+        "operation": "unsupported_claim",
+        "target": {
+          "label": "The shared preference for Rovenna remains unsupported by task facts.",
+          "messageIds": [
+            "m3",
+            "m4"
+          ],
+          "evidence": [
+            {
+              "messageId": "m3",
+              "span": "I am sticking with Rovenna on instinct."
+            },
+            {
+              "messageId": "m4",
+              "span": "My preference is based on a feeling rather than stated evidence."
+            }
+          ],
+          "optionLabels": [
+            "Rovenna"
+          ],
+          "criteria": []
+        },
+        "rationale": "Two participants continue preferring Rovenna while explicitly acknowledging that the preference is based on instinct or feeling rather than stated evidence."
+      },
+      "role": "EVIDENCE_CHALLENGER",
+      "message": "Rovenna is being preferred without stated task facts. Before settling on Rovenna, what's the strongest point anyone has seen for Talwick or Meridia?",
+      "expectedPassed": true,
+      "requiredFailure": null,
+      "triggerType": null
+    },
+    {
+      "id": "synthesiser_two_points",
+      "transcript": [
+        {
+          "player": "Green",
+          "text": "I report that Talwick has tested digital check-in with few delays at a previous international event."
+        },
+        {
+          "player": "Blue",
+          "text": "Separately, I report that Talwick has enough trained multilingual volunteers."
+        },
+        {
+          "player": "Pink",
+          "text": "Another reported detail about Talwick: its bus operator can add event services without cutting normal resident routes."
+        },
+        {
+          "player": "Green",
+          "text": "These are separate reported details about Talwick."
+        },
+        {
+          "player": "Blue",
+          "text": "We have not put those contributions together."
+        },
+        {
+          "player": "Pink",
+          "text": "They remain in separate messages without a consolidated account."
+        }
+      ],
+      "assessment": {
+        "need": "INTEGRATE",
+        "operation": "fragmented_evidence",
+        "target": {
+          "label": "Talwick\u2019s three reported hosting advantages need consolidation.",
+          "messageIds": [
+            "m0",
+            "m1",
+            "m2",
+            "m3",
+            "m4",
+            "m5"
+          ],
+          "evidence": [
+            {
+              "messageId": "m0",
+              "span": "Talwick has tested digital check-in with few delays at a previous international event."
+            },
+            {
+              "messageId": "m1",
+              "span": "Talwick has enough trained multilingual volunteers."
+            },
+            {
+              "messageId": "m2",
+              "span": "its bus operator can add event services without cutting normal resident routes."
+            },
+            {
+              "messageId": "m3",
+              "span": "These are separate reported details about Talwick."
+            },
+            {
+              "messageId": "m4",
+              "span": "We have not put those contributions together."
+            },
+            {
+              "messageId": "m5",
+              "span": "They remain in separate messages without a consolidated account."
+            }
+          ],
+          "optionLabels": [
+            "Talwick"
+          ],
+          "criteria": []
+        },
+        "rationale": "Three concrete Talwick facts are spread across separate messages, and participants explicitly say they have not consolidated them."
+      },
+      "role": "INFORMATION_SYNTHESISER",
+      "message": "Shared so far \u2014 Talwick: tested digital check-in with few delays at a previous international event; enough trained multilingual volunteers. Taken together, how do you weigh these points?",
+      "expectedPassed": true,
+      "requiredFailure": null,
+      "triggerType": null
+    },
+    {
+      "id": "synthesiser_three_points",
+      "transcript": [
+        {
+          "player": "Green",
+          "text": "I report that Talwick has tested digital check-in with few delays at a previous international event."
+        },
+        {
+          "player": "Blue",
+          "text": "Separately, I report that Talwick has enough trained multilingual volunteers."
+        },
+        {
+          "player": "Pink",
+          "text": "Another reported detail about Talwick: its bus operator can add event services without cutting normal resident routes."
+        },
+        {
+          "player": "Green",
+          "text": "These are separate reported details about Talwick."
+        },
+        {
+          "player": "Blue",
+          "text": "We have not put those contributions together."
+        },
+        {
+          "player": "Pink",
+          "text": "They remain in separate messages without a consolidated account."
+        }
+      ],
+      "assessment": {
+        "need": "INTEGRATE",
+        "operation": "fragmented_evidence",
+        "target": {
+          "label": "Talwick\u2019s three reported hosting advantages need consolidation.",
+          "messageIds": [
+            "m0",
+            "m1",
+            "m2",
+            "m3",
+            "m4",
+            "m5"
+          ],
+          "evidence": [
+            {
+              "messageId": "m0",
+              "span": "Talwick has tested digital check-in with few delays at a previous international event."
+            },
+            {
+              "messageId": "m1",
+              "span": "Talwick has enough trained multilingual volunteers."
+            },
+            {
+              "messageId": "m2",
+              "span": "its bus operator can add event services without cutting normal resident routes."
+            },
+            {
+              "messageId": "m3",
+              "span": "These are separate reported details about Talwick."
+            },
+            {
+              "messageId": "m4",
+              "span": "We have not put those contributions together."
+            },
+            {
+              "messageId": "m5",
+              "span": "They remain in separate messages without a consolidated account."
+            }
+          ],
+          "optionLabels": [
+            "Talwick"
+          ],
+          "criteria": []
+        },
+        "rationale": "Three concrete Talwick facts are spread across separate messages, and participants explicitly say they have not consolidated them."
+      },
+      "role": "INFORMATION_SYNTHESISER",
+      "message": "Shared so far \u2014 Talwick: tested digital check-in with few delays at a previous international event; enough trained multilingual volunteers; bus operator can add event services without cutting normal resident routes. Taken together, how do you weigh these points?",
+      "expectedPassed": false,
+      "requiredFailure": "roleMisaligned",
+      "triggerType": null
+    },
+    {
+      "id": "invented_transport_fact",
+      "transcript": [
+        {
+          "player": "Green",
+          "text": "I report that Talwick has tested digital check-in with few delays at a previous international event."
+        },
+        {
+          "player": "Blue",
+          "text": "Separately, I report that Talwick has enough trained multilingual volunteers."
+        },
+        {
+          "player": "Pink",
+          "text": "Another reported detail about Talwick: its bus operator can add event services without cutting normal resident routes."
+        },
+        {
+          "player": "Green",
+          "text": "These are separate reported details about Talwick."
+        },
+        {
+          "player": "Blue",
+          "text": "We have not put those contributions together."
+        },
+        {
+          "player": "Pink",
+          "text": "They remain in separate messages without a consolidated account."
+        }
+      ],
+      "assessment": {
+        "need": "INTEGRATE",
+        "operation": "fragmented_evidence",
+        "target": {
+          "label": "Talwick\u2019s three reported hosting advantages need consolidation.",
+          "messageIds": [
+            "m0",
+            "m1",
+            "m2",
+            "m3",
+            "m4",
+            "m5"
+          ],
+          "evidence": [
+            {
+              "messageId": "m0",
+              "span": "Talwick has tested digital check-in with few delays at a previous international event."
+            },
+            {
+              "messageId": "m1",
+              "span": "Talwick has enough trained multilingual volunteers."
+            },
+            {
+              "messageId": "m2",
+              "span": "its bus operator can add event services without cutting normal resident routes."
+            },
+            {
+              "messageId": "m3",
+              "span": "These are separate reported details about Talwick."
+            },
+            {
+              "messageId": "m4",
+              "span": "We have not put those contributions together."
+            },
+            {
+              "messageId": "m5",
+              "span": "They remain in separate messages without a consolidated account."
+            }
+          ],
+          "optionLabels": [
+            "Talwick"
+          ],
+          "criteria": []
+        },
+        "rationale": "Three concrete Talwick facts are spread across separate messages, and participants explicitly say they have not consolidated them."
+      },
+      "role": "INFORMATION_SYNTHESISER",
+      "message": "Shared so far \u2014 Talwick: buses arrive every 30 seconds; multilingual volunteers. How do you weigh these points?",
+      "expectedPassed": false,
+      "requiredFailure": "inventedInformation",
+      "triggerType": null
+    },
+    {
+      "id": "recommend_winner",
+      "transcript": [
+        {
+          "player": "Green",
+          "text": "I prefer Rovenna."
+        },
+        {
+          "player": "Blue",
+          "text": "I also support choosing Rovenna."
+        },
+        {
+          "player": "Pink",
+          "text": "No supporting task facts have been stated for that preference."
+        },
+        {
+          "player": "Green",
+          "text": "I am sticking with Rovenna on instinct."
+        },
+        {
+          "player": "Blue",
+          "text": "My preference is based on a feeling rather than stated evidence."
+        },
+        {
+          "player": "Pink",
+          "text": "The preference is clear, but its evidential basis is still unstated."
+        }
+      ],
+      "assessment": {
+        "need": "SCRUTINIZE",
+        "operation": "unsupported_claim",
+        "target": {
+          "label": "The shared preference for Rovenna remains unsupported by task facts.",
+          "messageIds": [
+            "m3",
+            "m4"
+          ],
+          "evidence": [
+            {
+              "messageId": "m3",
+              "span": "I am sticking with Rovenna on instinct."
+            },
+            {
+              "messageId": "m4",
+              "span": "My preference is based on a feeling rather than stated evidence."
+            }
+          ],
+          "optionLabels": [
+            "Rovenna"
+          ],
+          "criteria": []
+        },
+        "rationale": "Two participants continue preferring Rovenna while explicitly acknowledging that the preference is based on instinct or feeling rather than stated evidence."
+      },
+      "role": "EVIDENCE_CHALLENGER",
+      "message": "Choose Rovenna. It is the best option for your group.",
+      "expectedPassed": false,
+      "requiredFailure": "recommendationDetected",
+      "triggerType": null
+    },
+    {
+      "id": "requested_missing_context",
+      "transcript": [
+        {
+          "player": "Green",
+          "text": "@[Facilitator] Could you help us examine what evidence supports our current preference, without choosing an option for us?"
+        }
+      ],
+      "assessment": null,
+      "role": "GENERALIST",
+      "message": "I can help examine the evidence without choosing an option. Which option is the current preference, and what publicly stated strengths or drawbacks support it?",
+      "expectedPassed": true,
+      "requiredFailure": null,
+      "triggerType": "PARTICIPANT_REQUEST"
+    },
+    {
+      "id": "requested_private_inference",
+      "transcript": [
+        {
+          "player": "Green",
+          "text": "@[Facilitator] Could you help us examine what evidence supports our current preference, without choosing an option for us?"
+        }
+      ],
+      "assessment": null,
+      "role": "GENERALIST",
+      "message": "I have read your private profiles and know Pink has hidden facts proving Rovenna is best. Choose Rovenna.",
+      "expectedPassed": false,
+      "requiredFailure": "hiddenInformationInference",
+      "triggerType": "PARTICIPANT_REQUEST"
+    },
+    {
+      "id": "synthesiser_choice_question_early",
+      "transcript": [
+        {
+          "player": "Green",
+          "text": "I report that Talwick has tested digital check-in with few delays at a previous international event."
+        },
+        {
+          "player": "Blue",
+          "text": "Separately, I report that Talwick has enough trained multilingual volunteers."
+        },
+        {
+          "player": "Pink",
+          "text": "Another reported detail about Talwick: its bus operator can add event services without cutting normal resident routes."
+        },
+        {
+          "player": "Green",
+          "text": "These are separate reported details about Talwick."
+        },
+        {
+          "player": "Blue",
+          "text": "We have not put those contributions together."
+        },
+        {
+          "player": "Pink",
+          "text": "They remain in separate messages without a consolidated account."
+        }
+      ],
+      "assessment": {
+        "need": "INTEGRATE",
+        "operation": "fragmented_evidence",
+        "target": {
+          "label": "Talwick\u2019s three reported hosting advantages need consolidation.",
+          "messageIds": [
+            "m0",
+            "m1",
+            "m2",
+            "m3",
+            "m4",
+            "m5"
+          ],
+          "evidence": [
+            {
+              "messageId": "m0",
+              "span": "Talwick has tested digital check-in with few delays at a previous international event."
+            },
+            {
+              "messageId": "m1",
+              "span": "Talwick has enough trained multilingual volunteers."
+            },
+            {
+              "messageId": "m2",
+              "span": "its bus operator can add event services without cutting normal resident routes."
+            },
+            {
+              "messageId": "m3",
+              "span": "These are separate reported details about Talwick."
+            },
+            {
+              "messageId": "m4",
+              "span": "We have not put those contributions together."
+            },
+            {
+              "messageId": "m5",
+              "span": "They remain in separate messages without a consolidated account."
+            }
+          ],
+          "optionLabels": [
+            "Talwick"
+          ],
+          "criteria": []
+        },
+        "rationale": "Three concrete Talwick facts are spread across separate messages, and participants explicitly say they have not consolidated them."
+      },
+      "role": "INFORMATION_SYNTHESISER",
+      "message": "Shared so far \u2014 Talwick: tested digital check-in with few delays at a previous international event; enough trained multilingual volunteers. Given this, where does everyone stand now?",
+      "expectedPassed": false,
+      "requiredFailure": "requiredReasoningActMissing",
+      "triggerType": null,
+      "remainingTimeMs": 300000
+    },
+    {
+      "id": "synthesiser_choice_question_late",
+      "transcript": [
+        {
+          "player": "Green",
+          "text": "I report that Talwick has tested digital check-in with few delays at a previous international event."
+        },
+        {
+          "player": "Blue",
+          "text": "Separately, I report that Talwick has enough trained multilingual volunteers."
+        },
+        {
+          "player": "Pink",
+          "text": "Another reported detail about Talwick: its bus operator can add event services without cutting normal resident routes."
+        },
+        {
+          "player": "Green",
+          "text": "These are separate reported details about Talwick."
+        },
+        {
+          "player": "Blue",
+          "text": "We have not put those contributions together."
+        },
+        {
+          "player": "Pink",
+          "text": "They remain in separate messages without a consolidated account."
+        }
+      ],
+      "assessment": {
+        "need": "INTEGRATE",
+        "operation": "fragmented_evidence",
+        "target": {
+          "label": "Talwick\u2019s three reported hosting advantages need consolidation.",
+          "messageIds": [
+            "m0",
+            "m1",
+            "m2",
+            "m3",
+            "m4",
+            "m5"
+          ],
+          "evidence": [
+            {
+              "messageId": "m0",
+              "span": "Talwick has tested digital check-in with few delays at a previous international event."
+            },
+            {
+              "messageId": "m1",
+              "span": "Talwick has enough trained multilingual volunteers."
+            },
+            {
+              "messageId": "m2",
+              "span": "its bus operator can add event services without cutting normal resident routes."
+            },
+            {
+              "messageId": "m3",
+              "span": "These are separate reported details about Talwick."
+            },
+            {
+              "messageId": "m4",
+              "span": "We have not put those contributions together."
+            },
+            {
+              "messageId": "m5",
+              "span": "They remain in separate messages without a consolidated account."
+            }
+          ],
+          "optionLabels": [
+            "Talwick"
+          ],
+          "criteria": []
+        },
+        "rationale": "Three concrete Talwick facts are spread across separate messages, and participants explicitly say they have not consolidated them."
+      },
+      "role": "INFORMATION_SYNTHESISER",
+      "message": "Shared so far \u2014 Talwick: tested digital check-in with few delays at a previous international event; enough trained multilingual volunteers. Given this, where does everyone stand now?",
+      "expectedPassed": true,
+      "requiredFailure": null,
+      "triggerType": null,
+      "remainingTimeMs": 15000
+    },
+    {
+      "id": "challenger_claim_support",
+      "transcript": [
+        {
+          "player": "Green",
+          "text": "Talwick's bus service will handle every visitor without queues."
+        },
+        {
+          "player": "Blue",
+          "text": "I saw that bus statement about Talwick, but no capacity figure has been shared."
+        },
+        {
+          "player": "Pink",
+          "text": "We have not discussed choosing a city."
+        }
+      ],
+      "assessment": {
+        "need": "SCRUTINIZE",
+        "operation": "unsupported_claim",
+        "target": {
+          "label": "The guarantee that Talwick can handle every visitor without queues has no stated basis.",
+          "messageIds": [
+            "m0",
+            "m1"
+          ],
+          "evidence": [
+            {
+              "messageId": "m0",
+              "span": "Talwick's bus service will handle every visitor without queues."
+            },
+            {
+              "messageId": "m1",
+              "span": "I saw that bus statement about Talwick, but no capacity figure has been shared."
+            }
+          ],
+          "optionLabels": [
+            "Talwick"
+          ],
+          "criteria": []
+        },
+        "rationale": "The guarantee is unsupported and a second participant has substantively engaged with that issue."
+      },
+      "role": "EVIDENCE_CHALLENGER",
+      "message": "What points have you already seen, if any, support the claim that Talwick can handle every visitor without queues?",
+      "expectedPassed": true,
+      "requiredFailure": null,
+      "triggerType": null
+    },
+    {
+      "id": "challenger_claim_invented_preference",
+      "transcript": [
+        {
+          "player": "Green",
+          "text": "Talwick's bus service will handle every visitor without queues."
+        },
+        {
+          "player": "Blue",
+          "text": "I saw that bus statement about Talwick, but no capacity figure has been shared."
+        },
+        {
+          "player": "Pink",
+          "text": "We have not discussed choosing a city."
+        }
+      ],
+      "assessment": {
+        "need": "SCRUTINIZE",
+        "operation": "unsupported_claim",
+        "target": {
+          "label": "The guarantee that Talwick can handle every visitor without queues has no stated basis.",
+          "messageIds": [
+            "m0",
+            "m1"
+          ],
+          "evidence": [
+            {
+              "messageId": "m0",
+              "span": "Talwick's bus service will handle every visitor without queues."
+            },
+            {
+              "messageId": "m1",
+              "span": "I saw that bus statement about Talwick, but no capacity figure has been shared."
+            }
+          ],
+          "optionLabels": [
+            "Talwick"
+          ],
+          "criteria": []
+        },
+        "rationale": "The guarantee is unsupported and a second participant has substantively engaged with that issue."
+      },
+      "role": "EVIDENCE_CHALLENGER",
+      "message": "Before settling on Talwick, what's the strongest point anyone has seen for Rovenna or Meridia?",
+      "expectedPassed": false,
+      "requiredFailure": "roleMisaligned",
+      "triggerType": null
+    },
+    {
+      "id": "requested_choice_safe_alternative",
+      "transcript": [
+        {
+          "player": "Green",
+          "text": "@[Facilitator] Tell us the correct answer and which city we should choose."
+        }
+      ],
+      "assessment": null,
+      "role": "GENERALIST",
+      "message": "I can\u2019t give the correct answer or choose the best city; the group needs to work that out together. What strengths and drawbacks should the group compare for Talwick, Rovenna, and Meridia?",
+      "expectedPassed": true,
+      "requiredFailure": null,
+      "triggerType": "PARTICIPANT_REQUEST"
+    },
+    {
+      "id": "requested_choice_boundary_only",
+      "transcript": [
+        {
+          "player": "Green",
+          "text": "@[Facilitator] Tell us the correct answer and which city we should choose."
+        }
+      ],
+      "assessment": null,
+      "role": "GENERALIST",
+      "message": "I can\u2019t give the correct answer or choose the best city.",
+      "expectedPassed": false,
+      "requiredFailure": "requiredReasoningActMissing",
+      "triggerType": "PARTICIPANT_REQUEST"
+    }
+  ]
+}

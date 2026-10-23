@@ -19,7 +19,9 @@ import {
   extractChatCompletionResponseMetadata,
   resolveLLMRequestTimeoutMs,
   withLLMRequestTimeout,
+  isOfficialOpenAIChatEndpoint,
 } from "./LLMTransport.mjs";
+import { buildSynthesisPointContract, decodeSynthesisPoints } from "./SynthesisPointContract.mjs";
 import { assessSemanticFactors } from "./SemanticAssessor.js";
 import { checkNeedAssessment } from "./EvidenceChecker.js";
 import { compilePlan } from "./PolicyCompiler.js";
@@ -205,22 +207,17 @@ const AUTOMATIC_PIPELINE_GROUP = "AUTOMATIC_INTERVENTION";
 
 // ── LLM API call ──────────────────────────────────────────────────────────────
 
-async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens) {
+async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens, options = {}) {
   const data = buildChatCompletionPayload({
     model: openaiModel,
     maxTokens,
     messages,
-    // Note: `response_format: { type: "json_object" }` is intentionally
-    // NOT sent. The live endpoint (api.minimax.chat, Phase 6 pilot) does
-    // not support it -- it returns 400 "unknown response_format type
-    // 'json_object'". The platform's `MiniMax-Text-01` model produces
-    // well-formed JSON on its own when the prompt explicitly asks for
-    // it (every base.md / validator.md / assessor.md in this repo
-    // includes an OUTPUT CONTRACT section that does so), and the
-    // strict JSON parser (`server/src/prompts/GeneratorContract.mjs`'s
-    // `parseGeneratorOutputStrict` and SemanticValidator's
-    // `strictParseJsonObject`) tolerates nothing else. If a future
-    // platform supports json_object output, re-enable here.
+    endpoint: llmAPIEndpoint,
+    responseSchema: options.responseSchema,
+    reasoningEffort: options.reasoningEffort,
+    // Strict audit schemas and reasoning overrides are provider-scoped in
+    // LLMTransport. MiniMax's unsupported response_format remains omitted;
+    // every provider response still passes the existing local parsers.
   });
   try {
     return await withLLMRequestTimeout(async (signal) => {
@@ -240,7 +237,15 @@ async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens) {
         console.error("LLM endpoint HTTP error:", { status: completion.status, error: errorPayload?.error || errorPayload });
         return { success: false, error: errorPayload?.error?.message || completion.statusText };
       }
-      const responseMetadata = extractChatCompletionResponseMetadata(responseBody);
+      const responseMetadata = {
+        ...extractChatCompletionResponseMetadata(responseBody),
+        requestPolicy: {
+          reasoningEffort: data.reasoning_effort ?? null,
+          responseFormat: data.response_format?.type ?? null,
+          responseSchemaName: data.response_format?.json_schema?.name ?? null,
+          maxCompletionTokens: data.max_completion_tokens ?? data.max_tokens,
+        },
+      };
       const text = responseBody?.choices?.[0]?.message?.content;
       if (typeof text !== "string" || text.length === 0) {
         console.error("LLM response missing message content", {
@@ -269,8 +274,8 @@ async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens) {
 
 // The transport above stores no conversation and adds no context. Formal
 // callers provide messages from their own locked context builders.
-async function getLLMResponse(messages, maxTokens = llmMaxOutputTokens) {
-  return requestChatCompletion(messages, maxTokens);
+async function getLLMResponse(messages, maxTokens = llmMaxOutputTokens, options = {}) {
+  return requestChatCompletion(messages, maxTokens, options);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -416,6 +421,7 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
     recentAiMessageTexts: dynamicContext.recentAiMessageTexts,
     allowedGroundingIds: dynamicContext.allowedGroundingIds,
     activeParticipantNames: dynamicContext.activeParticipantNames,
+    remainingTimeMs: remainingTime,
   };
 }
 
@@ -481,8 +487,13 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   //   {discarded: true}                       round/stage changed
   //   {silent: true, reason, logField?}       any failure
   async function attemptGeneration(userContentOverride = null) {
+    const pointContract = built.metadata.generationRole === "INFORMATION_SYNTHESISER"
+      && ["EVIDENCE_CONSOLIDATION", "CROSS_OPTION_COMPARISON"].includes(built.interventionPlan?.requiredReasoningAct)
+      && isOfficialOpenAIChatEndpoint(llmAPIEndpoint)
+      ? buildSynthesisPointContract(built.interventionPlan.target.optionLabels, built.allowedGroundingIds)
+      : null;
     const messages = [
-      { role: "system", content: built.systemPrompt },
+      { role: "system", content: built.systemPrompt + (pointContract?.instruction || "") },
       { role: "user",   content: userContentOverride ?? built.userContent },
     ];
     logEntry.requestMade = true;
@@ -490,7 +501,11 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
 
     generatorAttempts += 1;
     const generatorStartedAt = Date.now();
-    const llmResponse = await getLLMResponse(messages);
+    const generationOptions = isSpecialistRole(built.metadata.generationRole)
+        ? { reasoningEffort: built.metadata.generationRole === "INFORMATION_SYNTHESISER" ? "medium" : "low" }
+        : {};
+    if (pointContract) generationOptions.responseSchema = pointContract.responseSchema;
+    const llmResponse = await getLLMResponse(messages, llmMaxOutputTokens, generationOptions);
     logEntry.generatorLatenciesMs = [
       ...(logEntry.generatorLatenciesMs || []),
       Date.now() - generatorStartedAt,
@@ -519,6 +534,15 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     if (!parseResult.ok) {
       logEntry.failureStage = "parse";
       return { silent: true, reason: `Invalid Generator output: ${parseResult.error}` };
+    }
+
+    if (pointContract) {
+      const decoded = decodeSynthesisPoints(parseResult.parsed, pointContract);
+      if (!decoded.ok) {
+        logEntry.failureStage = "schema";
+        return { silent: true, reason: decoded.error, logField: { schemaErrors: decoded.errors } };
+      }
+      parseResult.parsed = decoded.parsed;
     }
 
     const schemaResult = validateAgainstGenerationSchema(parseResult.parsed, built.metadata.generationRole, built.metadata.triggerType);
@@ -631,13 +655,14 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       candidate,
       selectedRole: built.metadata.generationRole,
       taskGeneralContext: built.taskGeneralContext,
-      callLLM: getLLMResponse,
+      callLLM: (messages, options) => getLLMResponse(messages, llmMaxOutputTokens, options),
       priorFailedCriteria,
       priorCandidate,
       interventionPlan: built.interventionPlan, planPreflight: built.planPreflight,
       interventionHistory: built.interventionHistory, recentAiMessages: built.recentAiMessageTexts,
       activeParticipantNames: built.activeParticipantNames, contextScope: built.contextScope,
       triggerType: built.metadata.triggerType,
+      remainingTimeMs: built.remainingTimeMs,
     });
     logEntry.validatorLatenciesMs = [
       ...(logEntry.validatorLatenciesMs || []),
@@ -2113,7 +2138,7 @@ async function handleChat(env, { game }) {
       generalInfo: currentRound?.get("generalInfo"),
       decisionOptions: currentRound?.get("decisionOptions"),
     }),
-    callLLM: messages => getLLMResponse(messages, Math.max(Number(llmMaxOutputTokens) || 1000, 4096)),
+    callLLM: messages => getLLMResponse(messages, Math.max(Number(llmMaxOutputTokens) || 1000, 4096), { reasoningEffort: "low" }),
   });
   if (assessorResult.responseMetadata) {
     logEntry.detectorResponseMetadata = assessorResult.responseMetadata;
