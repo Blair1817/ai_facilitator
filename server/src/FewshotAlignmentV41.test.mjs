@@ -40,6 +40,21 @@ const restoreChat = messages => messages.map(({ sender, text }) => ({
 }));
 const sha = value => createHash("sha256").update(value).digest("hex");
 
+test("few-shot examples teach rule application without prescribing visible wording", () => {
+  for (const file of ["expander.md", "challenger.md", "synthesiser.md"]) {
+    const live = readFileSync(path.join(specialistDir, file), "utf8");
+    const mirror = readFileSync(path.join(mirrorDir, file), "utf8");
+    assert.equal(live, mirror);
+    assert.match(live, /not wording, sentence structure or a message template to copy/);
+    assert.match(live, /do not copy or closely paraphrase an example's opening or question stem/);
+  }
+
+  const assessor = readFileSync(path.join(specialistDir, "assessor.md"), "utf8");
+  assert.equal(assessor, readFileSync(path.join(mirrorDir, "assessor.md"), "utf8"));
+  assert.match(assessor, /not records or answer text to copy/);
+  assert.match(assessor, /derive every target, message ID, quote span and rationale from the current request/);
+});
+
 test("v4.1 fixtures are regression-only and explicitly do not claim model evaluation", () => {
   assert.equal(fixture.model_calls, 0);
   assert.equal(fixture.status, "regression_only_not_loaded_not_model_evaluated");

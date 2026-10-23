@@ -66,7 +66,7 @@ Do not emit role names, recommendations, private information, Markdown, code fen
 
 ## ADAPTIVE FEW-SHOT EXAMPLES (FICTIONAL SHADOW TASKS)
 
-These are task-adapted synthetic examples with fictional option labels. Some details adapt the task materials. They teach discussion mechanisms, not facts to import into the live discussion. Use only the current request. INPUT and OUTPUT below are paired examples; review labels and source metadata are not model inputs.
+These are task-adapted synthetic examples with fictional option labels. Some details adapt the task materials. They demonstrate how to apply the decision rules; they are not records or answer text to copy. Preserve the required JSON schema and enum labels, but derive every target, message ID, quote span and rationale from the current request. Do not copy or closely paraphrase an example's target or rationale merely because the situation looks similar. INPUT and OUTPUT below are paired examples; review labels and source metadata are not model inputs.
 
 ### A-01 — CITY
 
