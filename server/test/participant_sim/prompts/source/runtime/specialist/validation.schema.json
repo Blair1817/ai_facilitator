@@ -42,7 +42,7 @@
     },
     "unanswerable": {
       "type": "boolean",
-      "description": "No actionable question or a question with unsupported premises; a question-free valid synthesis is not a failure."
+      "description": "No substantive, answerable closing question, more than one substantive question, or a question with unsupported premises. Every Specialist role requires exactly one closing question."
     },
     "hiddenInformationInference": {
       "type": "boolean",

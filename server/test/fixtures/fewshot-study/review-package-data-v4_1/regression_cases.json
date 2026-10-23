@@ -1,0 +1,725 @@
+{
+  "schema_version": 1,
+  "revision": "v4.1",
+  "status": "regression_only_not_loaded_not_model_evaluated",
+  "model_calls": 0,
+  "source_assessor_relative_path": "../review-package-data-v4/assessor_fewshot_v4.jsonl",
+  "scope": "R1 exact unsupported claim support and R2 authoritative option ordering; deterministic fixture/rule checks only.",
+  "generator_regressions": [
+    {
+      "example_id": "G-11",
+      "assessor_case_id": "A-14",
+      "status": "regression_only_authored_expected_output_not_model_evaluated",
+      "load_in_branch_prompt": false,
+      "input_origin": "Actual EvidenceChecker, compilePlan, preflightPlan and buildDynamicUserContext applied to the unchanged v4 public fixture; no API.",
+      "source_assessor_sha256": "06083a6cca843a7bd6468161d86db6438aeab35129fcc01da911111e355bba8e",
+      "checkpoint_descriptor": "Offline regression fixture; not an observed runtime checkpoint or timing record.",
+      "intervention_plan": {
+        "planId": "challenger:EVIDENCE_AUDIT:m2-m3",
+        "role": "challenger",
+        "generationRole": "EVIDENCE_CHALLENGER",
+        "target": {
+          "kind": "claim",
+          "label": "Alex's claim that Cedar's event app guarantees perfect attendance has no stated support; Casey has substantively discussed Cedar on another aspect.",
+          "messageIds": [
+            "m2",
+            "m3"
+          ],
+          "optionLabels": [
+            "Cedar"
+          ],
+          "criteria": [],
+          "status": "open"
+        },
+        "requiredReasoningAct": "EVIDENCE_AUDIT",
+        "answerableQuestionTemplate": "Ask exactly one question: for a public option preference, ask for the strongest point anyone has already seen for the other established options; for an unsupported claim without a choice preference, ask what points participants have already seen, if any, support that specific claim. Do not infer a preference or ask for proof of an ordinary reported task fact.",
+        "evidenceIds": [
+          "m2",
+          "m3"
+        ],
+        "evidence": [
+          {
+            "messageId": "m2",
+            "span": "Cedar has three outdoor courtyards for meeting areas."
+          },
+          {
+            "messageId": "m3",
+            "span": "Cedar's event app will guarantee perfect attendance."
+          }
+        ],
+        "expectedUptake": "Participants examine the target reasoning",
+        "historyStatus": "history_unavailable",
+        "signature": "[\"EVIDENCE_AUDIT\",[\"m2\",\"m3\"],\"Alex's claim that Cedar's event app guarantees perfect attendance has no stated support; Casey has substantively discussed Cedar on another aspect.\"]",
+        "intensity": "medium",
+        "maxWords": 50,
+        "maxSentences": 3,
+        "gap": "Alex's claim that Cedar's event app guarantees perfect attendance has no stated support; Casey has substantively discussed Cedar on another aspect.",
+        "prohibitions": [
+          "MUST_NOT_RECOMMEND_OR_RANK_OPTION",
+          "MUST_NOT_REVEAL_PRIVATE_PROFILE_INFORMATION",
+          "MUST_NOT_CLAIM_TO_KNOW_CORRECT_ANSWER",
+          "MUST_NOT_EXCEED_THREE_SENTENCES"
+        ]
+      },
+      "runtime_inputs": {
+        "CHECKPOINT": "Offline regression fixture; not an observed runtime checkpoint or timing record.",
+        "SELECTED_ROLE": "EVIDENCE_CHALLENGER",
+        "TASK_GENERAL_CONTEXT": "Your group will choose one university campus to host an interdisciplinary student innovation summit. All three candidates meet the essential requirements for facilities, public safety, finance and legal compliance. None of the listed drawbacks would rule out an option as a host. Treat each strength and drawback as equally important, then choose the best host overall. Use only the facts provided, without outside knowledge or assumptions. Available alternatives: Arden, Briar, Cedar.",
+        "RELEVANT_DISCUSSION_STATE": "Alex's claim that Cedar's event app guarantees perfect attendance has no stated support; Casey has substantively discussed Cedar on another aspect.",
+        "TARGET": {
+          "kind": "claim",
+          "label": "Alex's claim that Cedar's event app guarantees perfect attendance has no stated support; Casey has substantively discussed Cedar on another aspect.",
+          "messageIds": [
+            "m2",
+            "m3"
+          ],
+          "optionLabels": [
+            "Cedar"
+          ],
+          "criteria": [],
+          "status": "open"
+        },
+        "REQUIRED_REASONING_ACT": "EVIDENCE_AUDIT",
+        "ANSWERABLE_QUESTION_TEMPLATE": "Ask exactly one question: for a public option preference, ask for the strongest point anyone has already seen for the other established options; for an unsupported claim without a choice preference, ask what points participants have already seen, if any, support that specific claim. Do not infer a preference or ask for proof of an ordinary reported task fact.",
+        "ALLOWED_GROUNDING_MESSAGE_IDS": [
+          "m2",
+          "m3"
+        ],
+        "ACTIVE_PARTICIPANT_NAMES": [
+          "Alex",
+          "Blair",
+          "Casey"
+        ],
+        "PLAN_PREFLIGHT": {
+          "planId": "challenger:EVIDENCE_AUDIT:m2-m3",
+          "status": "passed",
+          "checks": {
+            "roleOperationMatch": true,
+            "publicTargetVerified": true,
+            "evidenceCoverageVerified": true,
+            "scopePolicySatisfied": true,
+            "repetitionPolicySatisfied": true
+          },
+          "contextScope": "complete_current_round",
+          "historyStatus": "history_unavailable",
+          "failureReasons": []
+        },
+        "INTERVENTION_HISTORY": [],
+        "CONTEXT_SCOPE": "complete_current_round",
+        "CUMULATIVE_PUBLIC_CONTEXT": [
+          {
+            "messageId": "m0",
+            "sender": "Alex",
+            "text": "Arden has covered walkways connecting the main halls."
+          },
+          {
+            "messageId": "m1",
+            "sender": "Blair",
+            "text": "Briar's central library has breakout rooms."
+          },
+          {
+            "messageId": "m2",
+            "sender": "Casey",
+            "text": "Cedar has three outdoor courtyards for meeting areas."
+          },
+          {
+            "messageId": "m3",
+            "sender": "Alex",
+            "text": "Cedar's event app will guarantee perfect attendance."
+          }
+        ],
+        "LOCAL_CONTEXT": [
+          {
+            "messageId": "m0",
+            "sender": "Alex",
+            "text": "Arden has covered walkways connecting the main halls."
+          },
+          {
+            "messageId": "m1",
+            "sender": "Blair",
+            "text": "Briar's central library has breakout rooms."
+          },
+          {
+            "messageId": "m2",
+            "sender": "Casey",
+            "text": "Cedar has three outdoor courtyards for meeting areas."
+          },
+          {
+            "messageId": "m3",
+            "sender": "Alex",
+            "text": "Cedar's event app will guarantee perfect attendance."
+          }
+        ],
+        "RECENT_AI_MESSAGES": []
+      },
+      "runtime_user_content": "[CHECKPOINT]\nOffline regression fixture; not an observed runtime checkpoint or timing record.\n\n[SELECTED_ROLE]\nEVIDENCE_CHALLENGER\n\n[TASK_GENERAL_CONTEXT]\nYour group will choose one university campus to host an interdisciplinary student innovation summit. All three candidates meet the essential requirements for facilities, public safety, finance and legal compliance. None of the listed drawbacks would rule out an option as a host. Treat each strength and drawback as equally important, then choose the best host overall. Use only the facts provided, without outside knowledge or assumptions. Available alternatives: Arden, Briar, Cedar.\n\n[RELEVANT_DISCUSSION_STATE]\nAlex's claim that Cedar's event app guarantees perfect attendance has no stated support; Casey has substantively discussed Cedar on another aspect.\n\n[TARGET]\n{\"kind\":\"claim\",\"label\":\"Alex's claim that Cedar's event app guarantees perfect attendance has no stated support; Casey has substantively discussed Cedar on another aspect.\",\"messageIds\":[\"m2\",\"m3\"],\"optionLabels\":[\"Cedar\"],\"criteria\":[],\"status\":\"open\"}\n\n[REQUIRED_REASONING_ACT]\nEVIDENCE_AUDIT\n\n[ANSWERABLE_QUESTION_TEMPLATE]\nAsk exactly one question: for a public option preference, ask for the strongest point anyone has already seen for the other established options; for an unsupported claim without a choice preference, ask what points participants have already seen, if any, support that specific claim. Do not infer a preference or ask for proof of an ordinary reported task fact.\n\n[ALLOWED_GROUNDING_MESSAGE_IDS]\nm2, m3\n\n[ACTIVE_PARTICIPANT_NAMES]\nAlex, Blair, Casey\n\n[PLAN_PREFLIGHT]\n{\"planId\":\"challenger:EVIDENCE_AUDIT:m2-m3\",\"status\":\"passed\",\"checks\":{\"roleOperationMatch\":true,\"publicTargetVerified\":true,\"evidenceCoverageVerified\":true,\"scopePolicySatisfied\":true,\"repetitionPolicySatisfied\":true},\"contextScope\":\"complete_current_round\",\"historyStatus\":\"history_unavailable\",\"failureReasons\":[]}\n\n[INTERVENTION_HISTORY]\n[]\n\n[CONTEXT_SCOPE]\ncomplete_current_round\n\n[CUMULATIVE_PUBLIC_CONTEXT]\n[m0] [Alex]: Arden has covered walkways connecting the main halls.\n[m1] [Blair]: Briar's central library has breakout rooms.\n[m2] [Casey]: Cedar has three outdoor courtyards for meeting areas.\n[m3] [Alex]: Cedar's event app will guarantee perfect attendance.\n\n[LOCAL_CONTEXT]\n[m0] [Alex]: Arden has covered walkways connecting the main halls.\n[m1] [Blair]: Briar's central library has breakout rooms.\n[m2] [Casey]: Cedar has three outdoor courtyards for meeting areas.\n[m3] [Alex]: Cedar's event app will guarantee perfect attendance.\n\n[RECENT_AI_MESSAGES]\n(none yet)",
+      "expected_generator_output": {
+        "role": "EVIDENCE_CHALLENGER",
+        "message": {
+          "summary": "Alex says Cedar's event app will guarantee perfect attendance.",
+          "sections": [],
+          "question": "What have we read, if anything, that supports that guarantee?"
+        },
+        "groundingMessageIds": [
+          "m3"
+        ]
+      },
+      "support_map": [
+        {
+          "messageId": "m3",
+          "span": "Cedar's event app will guarantee perfect attendance."
+        }
+      ],
+      "semantic_expectations": [
+        "Examine this specific unsupported guarantee, not an ordinary reported task fact.",
+        "Attribute the guarantee without endorsing it; do not infer an option preference.",
+        "Ask one substantive support question; do not substitute or append an alternatives question.",
+        "A-14 second-speaker courtyard information establishes engagement, not endorsement."
+      ],
+      "not_proven": [
+        "No actual model response was generated.",
+        "Structural validation does not establish semantic correctness, helpfulness or deployed behavior."
+      ]
+    },
+    {
+      "example_id": "G-12",
+      "assessor_case_id": "A-17",
+      "status": "regression_only_authored_expected_output_not_model_evaluated",
+      "load_in_branch_prompt": false,
+      "input_origin": "Actual EvidenceChecker, compilePlan, preflightPlan and buildDynamicUserContext applied to the unchanged v4 public fixture; no API.",
+      "source_assessor_sha256": "b189cca8d659ab6bfacfd046c577f33f234d5efe2e852c2af0aa0fd692fe360d",
+      "checkpoint_descriptor": "Offline regression fixture; not an observed runtime checkpoint or timing record.",
+      "intervention_plan": {
+        "planId": "challenger:EVIDENCE_AUDIT:m3-m4",
+        "role": "challenger",
+        "generationRole": "EVIDENCE_CHALLENGER",
+        "target": {
+          "kind": "claim",
+          "label": "The shared claim that Briar guarantees every presentation starts on time lacks support.",
+          "messageIds": [
+            "m3",
+            "m4"
+          ],
+          "optionLabels": [
+            "Briar"
+          ],
+          "criteria": [],
+          "status": "open"
+        },
+        "requiredReasoningAct": "EVIDENCE_AUDIT",
+        "answerableQuestionTemplate": "Ask exactly one question: for a public option preference, ask for the strongest point anyone has already seen for the other established options; for an unsupported claim without a choice preference, ask what points participants have already seen, if any, support that specific claim. Do not infer a preference or ask for proof of an ordinary reported task fact.",
+        "evidenceIds": [
+          "m3",
+          "m4"
+        ],
+        "evidence": [
+          {
+            "messageId": "m3",
+            "span": "Briar will guarantee that every presentation starts on time."
+          },
+          {
+            "messageId": "m4",
+            "span": "I agree that Briar will guarantee that."
+          }
+        ],
+        "expectedUptake": "Participants examine the target reasoning",
+        "historyStatus": "history_unavailable",
+        "signature": "[\"EVIDENCE_AUDIT\",[\"m3\",\"m4\"],\"The shared claim that Briar guarantees every presentation starts on time lacks support.\"]",
+        "intensity": "medium",
+        "maxWords": 50,
+        "maxSentences": 3,
+        "gap": "The shared claim that Briar guarantees every presentation starts on time lacks support.",
+        "prohibitions": [
+          "MUST_NOT_RECOMMEND_OR_RANK_OPTION",
+          "MUST_NOT_REVEAL_PRIVATE_PROFILE_INFORMATION",
+          "MUST_NOT_CLAIM_TO_KNOW_CORRECT_ANSWER",
+          "MUST_NOT_EXCEED_THREE_SENTENCES"
+        ]
+      },
+      "runtime_inputs": {
+        "CHECKPOINT": "Offline regression fixture; not an observed runtime checkpoint or timing record.",
+        "SELECTED_ROLE": "EVIDENCE_CHALLENGER",
+        "TASK_GENERAL_CONTEXT": "Your group will choose one university campus to host an interdisciplinary student innovation summit. All three candidates meet the essential requirements for facilities, public safety, finance and legal compliance. None of the listed drawbacks would rule out an option as a host. Treat each strength and drawback as equally important, then choose the best host overall. Use only the facts provided, without outside knowledge or assumptions. Available alternatives: Arden, Briar, Cedar.",
+        "RELEVANT_DISCUSSION_STATE": "The shared claim that Briar guarantees every presentation starts on time lacks support.",
+        "TARGET": {
+          "kind": "claim",
+          "label": "The shared claim that Briar guarantees every presentation starts on time lacks support.",
+          "messageIds": [
+            "m3",
+            "m4"
+          ],
+          "optionLabels": [
+            "Briar"
+          ],
+          "criteria": [],
+          "status": "open"
+        },
+        "REQUIRED_REASONING_ACT": "EVIDENCE_AUDIT",
+        "ANSWERABLE_QUESTION_TEMPLATE": "Ask exactly one question: for a public option preference, ask for the strongest point anyone has already seen for the other established options; for an unsupported claim without a choice preference, ask what points participants have already seen, if any, support that specific claim. Do not infer a preference or ask for proof of an ordinary reported task fact.",
+        "ALLOWED_GROUNDING_MESSAGE_IDS": [
+          "m3",
+          "m4"
+        ],
+        "ACTIVE_PARTICIPANT_NAMES": [
+          "Alex",
+          "Blair",
+          "Casey"
+        ],
+        "PLAN_PREFLIGHT": {
+          "planId": "challenger:EVIDENCE_AUDIT:m3-m4",
+          "status": "passed",
+          "checks": {
+            "roleOperationMatch": true,
+            "publicTargetVerified": true,
+            "evidenceCoverageVerified": true,
+            "scopePolicySatisfied": true,
+            "repetitionPolicySatisfied": true
+          },
+          "contextScope": "complete_current_round",
+          "historyStatus": "history_unavailable",
+          "failureReasons": []
+        },
+        "INTERVENTION_HISTORY": [],
+        "CONTEXT_SCOPE": "complete_current_round",
+        "CUMULATIVE_PUBLIC_CONTEXT": [
+          {
+            "messageId": "m0",
+            "sender": "Blair",
+            "text": "Briar's central library has breakout rooms."
+          },
+          {
+            "messageId": "m1",
+            "sender": "Alex",
+            "text": "Cedar feels like it could work well."
+          },
+          {
+            "messageId": "m2",
+            "sender": "Casey",
+            "text": "What specific things have we read about Cedar, good or bad?"
+          },
+          {
+            "messageId": "m3",
+            "sender": "Alex",
+            "text": "Briar will guarantee that every presentation starts on time."
+          },
+          {
+            "messageId": "m4",
+            "sender": "Blair",
+            "text": "I agree that Briar will guarantee that."
+          }
+        ],
+        "LOCAL_CONTEXT": [
+          {
+            "messageId": "m0",
+            "sender": "Blair",
+            "text": "Briar's central library has breakout rooms."
+          },
+          {
+            "messageId": "m1",
+            "sender": "Alex",
+            "text": "Cedar feels like it could work well."
+          },
+          {
+            "messageId": "m2",
+            "sender": "Casey",
+            "text": "What specific things have we read about Cedar, good or bad?"
+          },
+          {
+            "messageId": "m3",
+            "sender": "Alex",
+            "text": "Briar will guarantee that every presentation starts on time."
+          },
+          {
+            "messageId": "m4",
+            "sender": "Blair",
+            "text": "I agree that Briar will guarantee that."
+          }
+        ],
+        "RECENT_AI_MESSAGES": []
+      },
+      "runtime_user_content": "[CHECKPOINT]\nOffline regression fixture; not an observed runtime checkpoint or timing record.\n\n[SELECTED_ROLE]\nEVIDENCE_CHALLENGER\n\n[TASK_GENERAL_CONTEXT]\nYour group will choose one university campus to host an interdisciplinary student innovation summit. All three candidates meet the essential requirements for facilities, public safety, finance and legal compliance. None of the listed drawbacks would rule out an option as a host. Treat each strength and drawback as equally important, then choose the best host overall. Use only the facts provided, without outside knowledge or assumptions. Available alternatives: Arden, Briar, Cedar.\n\n[RELEVANT_DISCUSSION_STATE]\nThe shared claim that Briar guarantees every presentation starts on time lacks support.\n\n[TARGET]\n{\"kind\":\"claim\",\"label\":\"The shared claim that Briar guarantees every presentation starts on time lacks support.\",\"messageIds\":[\"m3\",\"m4\"],\"optionLabels\":[\"Briar\"],\"criteria\":[],\"status\":\"open\"}\n\n[REQUIRED_REASONING_ACT]\nEVIDENCE_AUDIT\n\n[ANSWERABLE_QUESTION_TEMPLATE]\nAsk exactly one question: for a public option preference, ask for the strongest point anyone has already seen for the other established options; for an unsupported claim without a choice preference, ask what points participants have already seen, if any, support that specific claim. Do not infer a preference or ask for proof of an ordinary reported task fact.\n\n[ALLOWED_GROUNDING_MESSAGE_IDS]\nm3, m4\n\n[ACTIVE_PARTICIPANT_NAMES]\nAlex, Blair, Casey\n\n[PLAN_PREFLIGHT]\n{\"planId\":\"challenger:EVIDENCE_AUDIT:m3-m4\",\"status\":\"passed\",\"checks\":{\"roleOperationMatch\":true,\"publicTargetVerified\":true,\"evidenceCoverageVerified\":true,\"scopePolicySatisfied\":true,\"repetitionPolicySatisfied\":true},\"contextScope\":\"complete_current_round\",\"historyStatus\":\"history_unavailable\",\"failureReasons\":[]}\n\n[INTERVENTION_HISTORY]\n[]\n\n[CONTEXT_SCOPE]\ncomplete_current_round\n\n[CUMULATIVE_PUBLIC_CONTEXT]\n[m0] [Blair]: Briar's central library has breakout rooms.\n[m1] [Alex]: Cedar feels like it could work well.\n[m2] [Casey]: What specific things have we read about Cedar, good or bad?\n[m3] [Alex]: Briar will guarantee that every presentation starts on time.\n[m4] [Blair]: I agree that Briar will guarantee that.\n\n[LOCAL_CONTEXT]\n[m0] [Blair]: Briar's central library has breakout rooms.\n[m1] [Alex]: Cedar feels like it could work well.\n[m2] [Casey]: What specific things have we read about Cedar, good or bad?\n[m3] [Alex]: Briar will guarantee that every presentation starts on time.\n[m4] [Blair]: I agree that Briar will guarantee that.\n\n[RECENT_AI_MESSAGES]\n(none yet)",
+      "expected_generator_output": {
+        "role": "EVIDENCE_CHALLENGER",
+        "message": {
+          "summary": "Alex and Blair say Briar will guarantee that every presentation starts on time.",
+          "sections": [],
+          "question": "What have we read, if anything, that supports that guarantee?"
+        },
+        "groundingMessageIds": [
+          "m3",
+          "m4"
+        ]
+      },
+      "support_map": [
+        {
+          "messageId": "m3",
+          "span": "Briar will guarantee that every presentation starts on time."
+        },
+        {
+          "messageId": "m4",
+          "span": "I agree that Briar will guarantee that."
+        }
+      ],
+      "semantic_expectations": [
+        "Examine this specific unsupported guarantee, not an ordinary reported task fact.",
+        "Attribute the guarantee without endorsing it; do not infer an option preference.",
+        "Ask one substantive support question; do not substitute or append an alternatives question.",
+        "A-17: only Alex and Blair endorse the Briar guarantee; do not infer a choice preference or whole-group agreement. The current participant request about Cedar handles a different target and does not cover the Briar guarantee."
+      ],
+      "not_proven": [
+        "No actual model response was generated.",
+        "Structural validation does not establish semantic correctness, helpfulness or deployed behavior."
+      ]
+    }
+  ],
+  "ordering_regressions": [
+    {
+      "case_id": "O-RAW-A",
+      "input_origin": "Direct raw HPTConfig through buildStaticSharedTaskOverview; adversarial boundary, not a claim this bypasses normal round initialization in deployment.",
+      "actual_task_version": "A",
+      "task_general_context": "Your group will choose a city to host the International Youth Games. The three options are Talwick, Rovenna and Meridia.\n\nThe International Youth Sports Council holds the Games every four years. All three cities meet the essential requirements for venues, public safety, finance and legal compliance.\n\n**How to decide**\n\nNone of the listed drawbacks would rule out an option as a host. Treat each strength and drawback as equally important, then choose the best host overall.\n\nUse only the facts provided, without outside knowledge or assumptions.\n\nAvailable alternatives: Talwick, Rovenna, Meridia.",
+      "available_labels": [
+        "Talwick",
+        "Rovenna",
+        "Meridia"
+      ],
+      "explicit_public_option_order": [
+        "Talwick",
+        "Rovenna",
+        "Meridia"
+      ],
+      "selected_target_options": [
+        "Meridia",
+        "Talwick"
+      ],
+      "allowed_grounding_message_ids": [
+        "m0",
+        "m2"
+      ],
+      "cumulative_public_context": [
+        {
+          "messageId": "m0",
+          "sender": "Alex",
+          "text": "I have shared a task point about Meridia.",
+          "option": "Meridia"
+        },
+        {
+          "messageId": "m1",
+          "sender": "Blair",
+          "text": "I have shared a task point about Rovenna.",
+          "option": "Rovenna"
+        },
+        {
+          "messageId": "m2",
+          "sender": "Alex",
+          "text": "I have shared a task point about Talwick.",
+          "option": "Talwick"
+        }
+      ],
+      "expected_order_source": "machine_available_alternatives",
+      "expected_option_order": [
+        "Talwick",
+        "Meridia"
+      ]
+    },
+    {
+      "case_id": "O-RAW-B",
+      "input_origin": "Direct raw HPTConfig through buildStaticSharedTaskOverview; adversarial boundary, not a claim this bypasses normal round initialization in deployment.",
+      "actual_task_version": "B",
+      "task_general_context": "Your group will choose a university campus to host the Global Innovation Summit. The three options are Halden University, Fenwick University and Norvale University.\n\nThe International Innovation Council holds the Summit every four years. All three campuses meet the essential requirements for facilities, public safety, finance and legal compliance.\n\n**How to decide**\n\nNone of the listed drawbacks would rule out an option as a host. Treat each strength and drawback as equally important, then choose the best host overall.\n\nUse only the facts provided, without outside knowledge or assumptions.\n\nAvailable alternatives: Norvale University, Halden University, Fenwick University.",
+      "available_labels": [
+        "Norvale University",
+        "Halden University",
+        "Fenwick University"
+      ],
+      "explicit_public_option_order": [
+        "Halden University",
+        "Fenwick University",
+        "Norvale University"
+      ],
+      "selected_target_options": [
+        "Fenwick University",
+        "Norvale University"
+      ],
+      "allowed_grounding_message_ids": [
+        "m0",
+        "m2"
+      ],
+      "cumulative_public_context": [
+        {
+          "messageId": "m0",
+          "sender": "Alex",
+          "text": "I have shared a task point about Fenwick University.",
+          "option": "Fenwick University"
+        },
+        {
+          "messageId": "m1",
+          "sender": "Blair",
+          "text": "I have shared a task point about Halden University.",
+          "option": "Halden University"
+        },
+        {
+          "messageId": "m2",
+          "sender": "Alex",
+          "text": "I have shared a task point about Norvale University.",
+          "option": "Norvale University"
+        }
+      ],
+      "expected_order_source": "machine_available_alternatives",
+      "expected_option_order": [
+        "Norvale University",
+        "Fenwick University"
+      ]
+    },
+    {
+      "case_id": "O-PUBLIC-ABSENT",
+      "input_origin": "Synthetic ordering-only oracle, not a generated intervention.",
+      "task_general_context": "Choose a campus. Public option order: Cedar, Arden, Briar.",
+      "available_labels": [
+        "Arden",
+        "Briar",
+        "Cedar"
+      ],
+      "explicit_public_option_order": [
+        "Cedar",
+        "Arden",
+        "Briar"
+      ],
+      "selected_target_options": [
+        "Arden",
+        "Cedar"
+      ],
+      "allowed_grounding_message_ids": [
+        "m1",
+        "m2"
+      ],
+      "cumulative_public_context": [
+        {
+          "messageId": "m0",
+          "sender": "Alex",
+          "text": "Briar has library meeting rooms.",
+          "option": "Briar"
+        },
+        {
+          "messageId": "m1",
+          "sender": "Blair",
+          "text": "Arden has covered walkways.",
+          "option": "Arden"
+        },
+        {
+          "messageId": "m2",
+          "sender": "Casey",
+          "text": "Cedar has outdoor meeting spaces.",
+          "option": "Cedar"
+        }
+      ],
+      "expected_order_source": "explicit_public_task_list",
+      "expected_option_order": [
+        "Cedar",
+        "Arden"
+      ]
+    },
+    {
+      "case_id": "O-PUBLIC-EMPTY",
+      "input_origin": "Synthetic ordering-only oracle, not a generated intervention.",
+      "task_general_context": "Choose a campus. Public option order: Cedar, Arden, Briar.\nAvailable alternatives:",
+      "available_labels": [
+        "Arden",
+        "Briar",
+        "Cedar"
+      ],
+      "explicit_public_option_order": [
+        "Cedar",
+        "Arden",
+        "Briar"
+      ],
+      "selected_target_options": [
+        "Arden",
+        "Cedar"
+      ],
+      "allowed_grounding_message_ids": [
+        "m1",
+        "m2"
+      ],
+      "cumulative_public_context": [
+        {
+          "messageId": "m0",
+          "sender": "Alex",
+          "text": "Briar has library meeting rooms.",
+          "option": "Briar"
+        },
+        {
+          "messageId": "m1",
+          "sender": "Blair",
+          "text": "Arden has covered walkways.",
+          "option": "Arden"
+        },
+        {
+          "messageId": "m2",
+          "sender": "Casey",
+          "text": "Cedar has outdoor meeting spaces.",
+          "option": "Cedar"
+        }
+      ],
+      "expected_order_source": "explicit_public_task_list",
+      "expected_option_order": [
+        "Cedar",
+        "Arden"
+      ]
+    },
+    {
+      "case_id": "O-PUBLIC-NOT-PROVIDED",
+      "input_origin": "Synthetic ordering-only oracle, not a generated intervention.",
+      "task_general_context": "Choose a campus. Public option order: Cedar, Arden, Briar.\nAvailable alternatives: not provided.",
+      "available_labels": [
+        "Arden",
+        "Briar",
+        "Cedar"
+      ],
+      "explicit_public_option_order": [
+        "Cedar",
+        "Arden",
+        "Briar"
+      ],
+      "selected_target_options": [
+        "Arden",
+        "Cedar"
+      ],
+      "allowed_grounding_message_ids": [
+        "m1",
+        "m2"
+      ],
+      "cumulative_public_context": [
+        {
+          "messageId": "m0",
+          "sender": "Alex",
+          "text": "Briar has library meeting rooms.",
+          "option": "Briar"
+        },
+        {
+          "messageId": "m1",
+          "sender": "Blair",
+          "text": "Arden has covered walkways.",
+          "option": "Arden"
+        },
+        {
+          "messageId": "m2",
+          "sender": "Casey",
+          "text": "Cedar has outdoor meeting spaces.",
+          "option": "Cedar"
+        }
+      ],
+      "expected_order_source": "explicit_public_task_list",
+      "expected_option_order": [
+        "Cedar",
+        "Arden"
+      ]
+    },
+    {
+      "case_id": "O-DISCUSSION-FALLBACK",
+      "input_origin": "Synthetic ordering-only oracle, not a generated intervention.",
+      "task_general_context": "Choose a campus. No public option list is supplied.",
+      "available_labels": [
+        "Arden",
+        "Briar",
+        "Cedar"
+      ],
+      "explicit_public_option_order": [],
+      "selected_target_options": [
+        "Arden",
+        "Briar"
+      ],
+      "allowed_grounding_message_ids": [
+        "m0",
+        "m1"
+      ],
+      "cumulative_public_context": [
+        {
+          "messageId": "m0",
+          "sender": "Alex",
+          "text": "Briar has library meeting rooms.",
+          "option": "Briar"
+        },
+        {
+          "messageId": "m1",
+          "sender": "Blair",
+          "text": "Arden has covered walkways.",
+          "option": "Arden"
+        },
+        {
+          "messageId": "m2",
+          "sender": "Casey",
+          "text": "Cedar has outdoor meeting spaces.",
+          "option": "Cedar"
+        }
+      ],
+      "expected_order_source": "first_public_appearance",
+      "expected_option_order": [
+        "Briar",
+        "Arden"
+      ]
+    },
+    {
+      "case_id": "O-TARGET-AND-GROUNDING-SUBSET",
+      "input_origin": "Synthetic ordering-only oracle: an option in the task list and discussion is not licensed without both target membership and allowed relevant public evidence.",
+      "task_general_context": "Choose a campus. Available alternatives: Cedar, Briar, Arden.",
+      "available_labels": [
+        "Arden",
+        "Briar",
+        "Cedar"
+      ],
+      "explicit_public_option_order": [],
+      "selected_target_options": [
+        "Arden",
+        "Briar"
+      ],
+      "allowed_grounding_message_ids": [
+        "m1",
+        "m2"
+      ],
+      "cumulative_public_context": [
+        {
+          "messageId": "m0",
+          "sender": "Alex",
+          "text": "Briar has library meeting rooms.",
+          "option": "Briar"
+        },
+        {
+          "messageId": "m1",
+          "sender": "Blair",
+          "text": "Arden has covered walkways.",
+          "option": "Arden"
+        },
+        {
+          "messageId": "m2",
+          "sender": "Casey",
+          "text": "Cedar has outdoor meeting spaces.",
+          "option": "Cedar"
+        }
+      ],
+      "expected_order_source": "machine_available_alternatives",
+      "expected_option_order": [
+        "Arden"
+      ]
+    }
+  ],
+  "semantic_review_controls": [
+    {
+      "case_id": "C-ORDINARY-REPORTED-FACT",
+      "public_message": {
+        "messageId": "m0",
+        "sender": "Casey",
+        "text": "My notes say Cedar has three outdoor courtyards for meeting areas."
+      },
+      "disallowed_question": "What proof is there that Cedar has three outdoor courtyards?",
+      "expected_review_reason": "Ordinary reported task facts are already available task information; do not demand source, verification or proof.",
+      "evaluation_status": "Authored negative control and prompt-contract assertion only; no semantic model evaluation performed."
+    }
+  ],
+  "limitations": [
+    "Expected outputs are authored, not responses sampled from a model.",
+    "Ordering oracle in the regression test is test-only and does not implement or verify actual model ordering.",
+    "Raw-config ordering cases are adversarial inputs; normal round initialization is checked separately for both tasks and all six permutations.",
+    "G-11 and G-12 must not be inserted into branch prompt examples automatically."
+  ]
+}

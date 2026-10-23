@@ -20,7 +20,7 @@
             "evidence": { "type": "array", "items": { "$ref": "#/definitions/evidenceQuote" }, "minItems": 1 },
             "optionLabels": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
             "criteria": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
-            "participantName": { "type": "string", "minLength": 1 }
+            "participantName": { "type": "string", "minLength": 1, "description": "Mandatory only when operation is participation_gap; must exactly match a code-supplied quiet participant." }
           },
           "required": ["label", "messageIds", "evidence", "optionLabels", "criteria"],
           "additionalProperties": false

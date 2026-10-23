@@ -65,7 +65,7 @@ function validateCandidate(candidate) {
   return runDeterministicValidation(candidate, {
     ...VALIDATION_CONTEXT,
     selectedRole: candidate.role,
-    maxSections: candidate.role === FACILITATOR_ROLES.INFORMATION_SYNTHESISER ? 2 : 0,
+    maxSections: 0,
   });
 }
 

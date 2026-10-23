@@ -73,6 +73,26 @@ test("validateAgainstAssessorSchema: rejects an unexpected extra top-level or ta
   assert.equal(validateAgainstAssessorSchema({ ...VALID_FACTORS, target: { ...VALID_FACTORS.target, role: "challenger" } }).ok, false);
 });
 
+test("validateAgainstAssessorSchema: enforces participantName exactly for participation_gap", () => {
+  const participation = {
+    ...VALID_FACTORS,
+    need: "ELICIT",
+    operation: "participation_gap",
+    target: { ...VALID_FACTORS.target, participantName: "Blue" },
+  };
+  assert.equal(validateAgainstAssessorSchema(participation).ok, true);
+  const { participantName: _omitted, ...missingNameTarget } = participation.target;
+  const missing = validateAgainstAssessorSchema({ ...participation, target: missingNameTarget });
+  assert.equal(missing.ok, false);
+  assert.match(JSON.stringify(missing.errors), /must include participantName/);
+  const unexpected = validateAgainstAssessorSchema({
+    ...VALID_FACTORS,
+    target: { ...VALID_FACTORS.target, participantName: "Blue" },
+  });
+  assert.equal(unexpected.ok, false);
+  assert.match(JSON.stringify(unexpected.errors), /allowed only when operation is participation_gap/);
+});
+
 test("validateAgainstAssessorSchema: a non-null target REQUIRES at least one messageId and one quotation", () => {
   const noEvidence = { ...VALID_FACTORS, target: { ...VALID_FACTORS.target, messageIds: [], evidence: [] } };
   const result = validateAgainstAssessorSchema(noEvidence);
