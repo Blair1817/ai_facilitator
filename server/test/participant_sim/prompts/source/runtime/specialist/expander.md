@@ -31,7 +31,7 @@ If a specific observation cannot be grounded, drop it and keep the option-level 
 
 ## ADAPTIVE FEW-SHOT EXAMPLES (FICTIONAL SHADOW TASKS)
 
-These are task-adapted synthetic examples with fictional option labels. Some details adapt the task materials. They teach discussion mechanisms, not facts to import into the live discussion. Use only the current request. INPUT and OUTPUT below are paired examples; review labels and source metadata are not model inputs.
+These are task-adapted synthetic examples with fictional option labels. Some details adapt the task materials. They demonstrate the operation and its safeguards, not wording, sentence structure or a message template to copy. Preserve the required JSON schema, but write a fresh, natural visible intervention for the current discussion; do not copy or closely paraphrase an example's opening or question stem. Use only the current request. INPUT and OUTPUT below are paired examples; review labels and source metadata are not model inputs.
 
 ### G-01 — CITY
 
