@@ -1,0 +1,8 @@
+{
+  "callbacks.js": "1199dfc1ab238d6ccf4935e1ea6d410ec1a534bd91c9976d654624d6ee56786c",
+  "LLMTransport.mjs": "6afe5bef21b5dc51d233d0276952d389867d4111cb9b350db03fada95aa280c4",
+  "SemanticValidator.js": "b0acdb4d7a39d37b0ceb7700736fd081007d2dc7a26ed1a718c9538f22b4e9d7",
+  "SemanticAssessor.js": "1c5dc04a4cc13008417a899cf6b32b3aba2b2caf5508f5b048af31eaa06f9685",
+  "SynthesisPointContract.mjs": "b3736683c5f738cd0f621a326ab913bac9ebbe1354c628ff0f9e7fdafe88a2ee",
+  "server/test/fixtures/facilitator-quality-replay.json": "8b8c31694b91ad5f483e11b02ef4413d734db3a793cdcf08f1a78f2e5a572b14"
+}

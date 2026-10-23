@@ -48,6 +48,13 @@ function isOpenAIGpt56Model(model) {
   return typeof model === "string" && /^gpt-5\.6(?:$|[.\-])/i.test(model.trim());
 }
 
+export function isOfficialOpenAIChatEndpoint(endpoint) {
+  try {
+    const url = new URL(endpoint);
+    return url.origin === "https://api.openai.com" && url.pathname === "/v1/chat/completions";
+  } catch { return false; }
+}
+
 /**
  * MiniMax M2 models spend completion tokens on hidden/returned reasoning before
  * producing the final answer. The legacy max_tokens caps used for Text-01 can
@@ -62,26 +69,49 @@ export function buildChatCompletionPayload({
   messages,
   maxTokens,
   reasoningCompletionFloor = MINIMAX_REASONING_COMPLETION_FLOOR,
+  endpoint = null,
+  responseSchema = null,
+  reasoningEffort = null,
 }) {
   const parsedMax = Number.parseInt(maxTokens, 10);
   const safeMax = Number.isFinite(parsedMax) && parsedMax > 0 ? parsedMax : 1000;
+  let payload;
   if (isMiniMaxReasoningModel(model)) {
-    return {
+    payload = {
       model,
       messages,
       reasoning_split: true,
       max_completion_tokens: Math.max(safeMax, reasoningCompletionFloor),
     };
-  }
-  if (isOpenAIGpt56Model(model)) {
-    return {
+  } else if (isOpenAIGpt56Model(model)) {
+    payload = {
       model,
       messages,
       reasoning_effort: "none",
       max_completion_tokens: safeMax,
     };
+  } else {
+    payload = { model, messages, max_tokens: safeMax };
   }
-  return { model, messages, max_tokens: safeMax };
+  // Opt in only for the official API. Compatible gateways (including the
+  // study's MiniMax deployment) do not necessarily support strict schemas.
+  if (endpoint && (responseSchema || reasoningEffort)) {
+    if (isOfficialOpenAIChatEndpoint(endpoint)) {
+      if (responseSchema) {
+        payload.response_format = {
+          type: "json_schema",
+          json_schema: { name: responseSchema.name, schema: responseSchema.schema, strict: true },
+        };
+      }
+      if (isOpenAIGpt56Model(model) && reasoningEffort) {
+        if (!["none", "low", "medium", "high", "xhigh", "max"].includes(reasoningEffort)) throw new Error("Unsupported GPT-5.6 reasoning effort");
+        payload.reasoning_effort = reasoningEffort;
+        // Completion budgets include hidden reasoning, not only visible JSON.
+        if (reasoningEffort !== "none") payload.max_completion_tokens = Math.max(safeMax, 4096);
+      }
+    }
+  }
+  return payload;
 }
 
 function finiteNumberOrNull(value) {
