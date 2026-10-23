@@ -74,7 +74,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          find server/src -name '*.test.mjs' -print0 | sort -z | xargs -0 node --test --test-reporter=dot
+          find server/src -name '*.test.mjs' -print0 | sort -z | xargs -0 node --test --test-reporter=spec
           npm --prefix server run build
           npm --prefix client run build
 

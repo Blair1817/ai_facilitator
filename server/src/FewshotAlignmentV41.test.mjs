@@ -10,8 +10,7 @@ import { fileURLToPath } from "node:url";
 // No production sorting helper is introduced: the ordering oracle below lives
 // only in this test and deliberately cannot certify a generated scoreboard.
 const sourceDir = path.dirname(fileURLToPath(import.meta.url));
-const workspace = path.resolve(sourceDir, "../../..");
-const dataDir = path.join(workspace, "fewshot-study/review-package-data-v4_1");
+const dataDir = path.join(sourceDir, "../test/fixtures/fewshot-study/review-package-data-v4_1");
 const fixture = JSON.parse(readFileSync(path.join(dataDir, "regression_cases.json"), "utf8"));
 const originals = readFileSync(path.resolve(dataDir, fixture.source_assessor_relative_path), "utf8")
   .trim().split(/\r?\n/u).map(JSON.parse);
