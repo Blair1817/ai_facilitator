@@ -17,13 +17,13 @@ export const OPERATION_QUESTIONS = Object.freeze({
   COVERAGE_GAP_ELICITATION: "What further task information can participants contribute about this publicly established topic?",
   CONCRETE_EVIDENCE_ELICITATION: "What concrete task facts can participants share about this public topic?",
   PARTICIPATION_ELICITATION: "Is there relevant task information you would like to share?",
-  EVIDENCE_AUDIT: "Which task facts support this public claim?",
+  EVIDENCE_AUDIT: "Ask exactly one question: for a public option preference, ask for the strongest point anyone has already seen for the other established options; for an unsupported claim without a choice preference, ask what points participants have already seen, if any, support that specific claim. Do not infer a preference or ask for proof of an ordinary reported task fact.",
   ASSUMPTION_CLARIFICATION: "What would need to hold for this public reasoning step to follow?",
   COUNTEREVIDENCE_EXAMINATION: "How does this publicly reported concern affect the reasoning behind the claim?",
   CLAIM_EVIDENCE_LINKAGE: "How does this public fact support the stated conclusion?",
-  EVIDENCE_CONSOLIDATION: "Provide a grounded organisation of the cited contributions; a question is optional.",
-  CROSS_OPTION_COMPARISON: "Represent the reported information under the established criteria, preserving source units and scope.",
-  DISCREPANCY_REPRESENTATION: "Represent each public report with its source and scope, without resolving the difference.",
+  EVIDENCE_CONSOLIDATION: "Provide a grounded organisation of the cited contributions, then ask one answerable weighing question.",
+  CROSS_OPTION_COMPARISON: "Represent the reported information under the established criteria, preserving source units and scope, then ask one weighing question.",
+  DISCREPANCY_REPRESENTATION: "Represent each public report with its source and scope without resolving the difference, then ask one clarification question.",
 });
 export function isPublicParticipantMessage(message) {
   return message?.sender?.id !== "ai" && message?.sender?.id !== "system"

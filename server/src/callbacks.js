@@ -545,7 +545,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       // -- that role needs more room to ground a substantive answer.
       maxWords: built.metadata.triggerType === "PARTICIPANT_REQUEST" ? null : built.metadata.maxWords ?? AUTOMATIC_MAX_WORDS,
       maxSentences: built.metadata.triggerType === "PARTICIPANT_REQUEST" ? null : isSpecialistRole(built.metadata.generationRole) ? 3 : 2,
-      maxSections: isSpecialistRole(built.metadata.generationRole) ? built.metadata.generationRole === "INFORMATION_SYNTHESISER" ? 2 : 0 : null,
+      maxSections: isSpecialistRole(built.metadata.generationRole) ? 0 : null,
       enforcePlanGrounding: isSpecialistRole(built.metadata.generationRole),
       forbidInternalDisclosure: isSpecialistRole(built.metadata.generationRole),
       // 2026-08-13: pipe the per-checkpoint participant roster into

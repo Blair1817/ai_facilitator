@@ -189,6 +189,17 @@ test("generation schema: rejects an empty message", () => {
   assert.equal(result.ok, false);
 });
 
+test("Specialist structured schema requires one non-empty closing question", () => {
+  const candidate = {
+    role: "INFORMATION_SYNTHESISER",
+    message: { summary: "Shared so far — Option A: point one; Option B: point two.", sections: [], question: "" },
+    groundingMessageIds: [],
+  };
+  assert.equal(validateAgainstGenerationSchema(candidate, "INFORMATION_SYNTHESISER").ok, false);
+  candidate.message.question = "Side by side, does anything change how you weigh them?";
+  assert.equal(validateAgainstGenerationSchema(candidate, "INFORMATION_SYNTHESISER").ok, true);
+});
+
 test("generation schema: rejects a role that differs from SELECTED_ROLE, via the per-request const", () => {
   const result = validateAgainstGenerationSchema({ ...VALID_CANDIDATE, role: "EVIDENCE_CHALLENGER" }, "INFORMATION_EXPANDER");
   assert.equal(result.ok, false);
@@ -360,7 +371,7 @@ test("Synthesiser schema, role and flattened structured output cannot bypass gro
     message: {
       summary: Array.from({ length: 54 }, (_, index) => `word${index + 1}`).join(" "),
       sections: [{ title: "Criterion", body: "extra words" }],
-      question: "",
+      question: "What should the group weigh next?",
     },
     groundingMessageIds: ["m0"],
   };

@@ -112,6 +112,37 @@ export function validateAgainstAssessorSchema(parsed) {
   if (!valid) {
     return { ok: false, code: "ASSESSOR_SCHEMA_FAILURE", errors: validateFn.errors };
   }
+  // JSON Schema validates the object shape, but this operation-dependent
+  // invariant is kept in code. The live provider currently receives only the
+  // prompt (not a Structured Outputs schema), and conditional JSON Schema
+  // keywords would not improve generation reliability. Enforce the authored
+  // contract here so a participation target can never silently lose its name.
+  const hasParticipantName = Boolean(
+    parsed?.target
+    && Object.prototype.hasOwnProperty.call(parsed.target, "participantName"),
+  );
+  if (parsed?.operation === "participation_gap" && !hasParticipantName) {
+    return {
+      ok: false,
+      code: "ASSESSOR_SCHEMA_FAILURE",
+      errors: [{
+        instancePath: "/target",
+        keyword: "operationContract",
+        message: "must include participantName when operation is participation_gap",
+      }],
+    };
+  }
+  if (parsed?.operation !== "participation_gap" && hasParticipantName) {
+    return {
+      ok: false,
+      code: "ASSESSOR_SCHEMA_FAILURE",
+      errors: [{
+        instancePath: "/target/participantName",
+        keyword: "operationContract",
+        message: "is allowed only when operation is participation_gap",
+      }],
+    };
+  }
   return { ok: true };
 }
 
