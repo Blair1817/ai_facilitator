@@ -36,8 +36,9 @@
  *
  * Auth:
  *
- *   Every request requires HTTP Basic Authentication configured with
+ *   Research requests require HTTP Basic Authentication configured with
  *   server-side credentials. Proxy identity headers are not trusted.
+ *   GET <basePath>/healthz returns only process health without authentication.
  *
  * Redaction:
  *
@@ -58,6 +59,7 @@ import http from "node:http";
 
 import { describeFinalDecisionOutcome, ExportService, ExportNotFoundError } from "./ExportService.mjs";
 import { recordExportEvent } from "./ExportAudit.mjs";
+import { connectExportAdmin } from "./ExportConnection.mjs";
 
 const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 25;
@@ -80,6 +82,12 @@ export function createExportServer({
 
   return http.createServer(async (req, res) => {
     try {
+      // No research data or credentials are exposed. Azure must probe the
+      // callbacks process, rather than merely the still-running Caddy socket.
+      if (req.method === "GET" && req.url === `${normalizedBasePath}/healthz`) {
+        await sendJson(res, 200, { status: "ok" });
+        return;
+      }
       const requester = authenticateBasic(req, { authUsername, authPassword });
       if (!requester) {
         await sendUnauthorized(res);
@@ -758,13 +766,10 @@ export function createDefaultExportServer({
   if (!srtoken) throw new Error("createDefaultExportServer: srtoken is required");
   if (!auditFile) throw new Error("createDefaultExportServer: auditFile is required");
   return (async () => {
-    const { Tajriba } = await import("@empirica/tajriba");
-    const taj = await Tajriba.createAndAwait(url);
-    taj.useHTTP = true;
-    const sessionToken = await taj.registerService(clientName, srtoken);
-    const admin = await taj.sessionAdmin(sessionToken);
+    const sdk = await import("@empirica/tajriba");
+    const admin = await connectExportAdmin({ url, srtoken, clientName, sdk });
     const service = new ExportService({
-      admin: { scopes: async (args) => admin.scopes(args), stop: () => taj.stop() },
+      admin: { scopes: async (args) => admin.scopes(args), stop: () => admin.stop() },
       auditFile,
       defaultRedact,
     });

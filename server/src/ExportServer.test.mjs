@@ -207,6 +207,22 @@ async function makeRunningServer(options = {}) {
   return { ...handle, auditFile, tmpDir };
 }
 
+test("callbacks health is public and minimal while research endpoints remain authenticated", async () => {
+  const srv = await makeRunningServer({ basePath: "/exports" });
+  try {
+    const health = await fetchText(srv.base + "/exports/healthz", {}, { authenticate: false });
+    assert.equal(health.status, 200);
+    assert.deepEqual(JSON.parse(health.body), { status: "ok" });
+    for (const route of ["/exports/", "/exports/batches", "/exports/games/GAME1"]) {
+      const response = await fetchText(srv.base + route, {}, { authenticate: false });
+      assert.equal(response.status, 401);
+    }
+    assert.equal(fs.existsSync(srv.auditFile), false, "health checks do not create research audit records");
+  } finally {
+    await srv.close();
+  }
+});
+
 test("GET / renders a list page with batches, games, and download links", async () => {
   const srv = await makeRunningServer();
   try {

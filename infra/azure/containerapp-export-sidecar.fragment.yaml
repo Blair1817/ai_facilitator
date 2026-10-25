@@ -1,6 +1,6 @@
 # Merge this fragment into an export of the CURRENT Container App YAML.
 # It intentionally contains no secret values and is not a standalone deployment.
-# Keep every existing main-container env var, volume mount, probe, scale rule,
+# Keep every existing main-container env var, volume mount, scale rule,
 # registry setting, and secret while applying these additions/replacements.
 
 properties:
@@ -15,6 +15,30 @@ properties:
       # Merge these settings into the existing Empirica container. Do not
       # replace its existing environment or secret-volume configuration.
       - name: empirica
+        # These replace TCP probes of Caddy: a running gateway must not mask
+        # a dead callbacks process. Requires the callbacks health endpoint.
+        probes:
+          - type: Startup
+            httpGet:
+              path: /exports/healthz
+              port: 8080
+            initialDelaySeconds: 1
+            periodSeconds: 2
+            failureThreshold: 120
+          - type: Readiness
+            httpGet:
+              path: /exports/healthz
+              port: 8080
+            initialDelaySeconds: 1
+            periodSeconds: 5
+            failureThreshold: 12
+          - type: Liveness
+            httpGet:
+              path: /exports/healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
         env:
           - name: EXPORT_BASE_PATH
             value: /exports

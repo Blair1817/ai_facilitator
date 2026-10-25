@@ -9,7 +9,8 @@ import { info, setLogLevel } from "@empirica/core/console";
 import fs from "node:fs";
 import minimist from "minimist";
 import process from "process";
-import { Tajriba } from "@empirica/tajriba";
+import { Tajriba, TajribaAdmin } from "@empirica/tajriba";
+import { connectExportAdmin } from "./ExportConnection.mjs";
 import { Empirica } from "./callbacks";
 import { ExportService } from "./ExportService.mjs";
 import { createExportServer, listenExportServer, readExportServerConfig } from "./ExportServer.mjs";
@@ -104,14 +105,13 @@ if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "your-key-here
         srtoken = m[1];
       }
 
-      const taj = await Tajriba.createAndAwait(exportConfig.tajribaUrl);
-      taj.useHTTP = true;
-      const sessionToken = await taj.registerService("export-server", srtoken);
-      const admin = await taj.sessionAdmin(sessionToken);
+      const admin = await connectExportAdmin({
+        url: exportConfig.tajribaUrl, srtoken, sdk: { Tajriba, TajribaAdmin },
+      });
       const exportService = new ExportService({
         admin: {
           scopes: async (args) => admin.scopes(args),
-          stop: () => taj.stop(),
+          stop: () => admin.stop(),
         },
         auditFile: exportConfig.auditFile,
       });
