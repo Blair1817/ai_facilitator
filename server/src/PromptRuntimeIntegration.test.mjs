@@ -38,7 +38,7 @@ function factors(w, invalidComparison) {
   return { need: "SCRUTINIZE", operation: "unsupported_claim", rationale: "audit",
     target: { label: "Alex's preference for City B", messageIds: ["m0", "m5"], evidence: [quote(0), quote(5)], optionLabels: ["City B"], criteria: [] } };
 }
-async function run(w, { invalidComparison = false, skipDuringValidation = false, rejectSpecialist = false, overlongFirstSpecialist = false } = {}) {
+async function run(w, { invalidComparison = false, skipDuringValidation = false, rejectSpecialist = false, overlongFirstSpecialist = false, assessment = null, output = null } = {}) {
   const handleChat = await getOfflineHandleChat();
   const priorFetch = globalThis.fetch;
   const originalSetTimeout = globalThis.setTimeout;
@@ -50,7 +50,7 @@ async function run(w, { invalidComparison = false, skipDuringValidation = false,
   globalThis.fetch = async (_url, options) => {
     const body = JSON.parse(options.body);requests.push(body);
     const system = body.messages[0].content;let data;
-    if (system.startsWith("# assessor.md")) data = factors(w, invalidComparison);
+    if (system.startsWith("# assessor.md")) data = assessment ?? factors(w, invalidComparison);
     else if (system.startsWith("# validator.md")) {
       data = Object.fromEntries(VALIDATOR_CRITERIA.map(k => [k, false]));
       if (rejectSpecialist && body.messages[1].content.includes("[INTERVENTION_PLAN]")) data.requiredReasoningActMissing = true;
@@ -60,9 +60,10 @@ async function run(w, { invalidComparison = false, skipDuringValidation = false,
         assert.equal(skip.status, "accepted");
       }
     } else {
-      const role = system.includes("# challenger.md") ? "EVIDENCE_CHALLENGER" : system.includes("# generalist.md") ? "GENERALIST" : "STATIC";
+      const role = system.includes("# synthesiser.md") ? "INFORMATION_SYNTHESISER" : system.includes("# challenger.md") ? "EVIDENCE_CHALLENGER" : system.includes("# generalist.md") ? "GENERALIST" : "STATIC";
       data = { role, message: role === "EVIDENCE_CHALLENGER" ? "Which task facts support the stated preference for City B?" : "What public information would help the group move forward?", groundingMessageIds: role === "EVIDENCE_CHALLENGER" ? ["m0"] : [] };
       if (overlongFirstSpecialist && role === "EVIDENCE_CHALLENGER" && requests.filter(r => r.messages[0].content.includes("# challenger.md")).length === 1) data.message = Array(51).fill("word").join(" ");
+      if (output) data = output;
     }
     return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(data) }, finish_reason: "stop" }], usage: { total_tokens: 10 } }), { headers: { "content-type": "application/json" } });
   };
@@ -90,17 +91,19 @@ test("real callbacks send impossible comparison to the Static policy before any 
   assert.match(r.requests[1].messages[0].content, /# static.md/);
   assert.doesNotMatch(r.requests[1].messages[1].content, /\[PLAN_PREFLIGHT\]|\[TARGET\]/);
   assert.doesNotMatch(r.requests[2].messages[1].content, /\[INTERVENTION_PLAN\]/);
-  assert.equal(r.log.at(-1).fallbackRoute, "SPECIALIST_TO_STATIC_POLICY");
+  assert.equal(r.log.at(-1).fallbackKind, "evidence_check_failed");
+  assert.equal(r.log.at(-1).integrationObservation.qualified, false);
 });
-// 2026-10-21: no Specialist Validator-feedback repair; one Static-policy fallback.
-test("real callbacks fall back once to the Static policy without a Specialist repair or plan/history leakage", async () => {
+// Bounded non-repetition Specialist repair, then the existing Static policy.
+test("real callbacks repair the same Specialist plan once then use Static without plan/history leakage", async () => {
   const r = await run(world(), { rejectSpecialist: true });
   assert.equal(r.published.length, 1);
-  assert.equal(r.requests.length, 5, "assessor + Specialist + Validator + Static-policy + Validator");
+  assert.equal(r.requests.length, 7, "assessor + Specialist/Validator + one repair/Validator + Static/Validator");
   assert.match(r.requests[1].messages[0].content, /# challenger.md/);
-  assert.match(r.requests[3].messages[0].content, /# static.md/);
-  assert.doesNotMatch(r.requests[3].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
-  assert.doesNotMatch(r.requests[4].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
+  assert.match(r.requests[3].messages[0].content, /# challenger.md/);
+  assert.match(r.requests[5].messages[0].content, /# static.md/);
+  assert.doesNotMatch(r.requests[5].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
+  assert.doesNotMatch(r.requests[6].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
   assert.equal(r.log.at(-1).fallbackRoute, "SPECIALIST_TO_STATIC_POLICY");
   assert.equal(r.log.at(-1).selectedRole, "STATIC");
 });
@@ -158,11 +161,33 @@ test("automatic vs participant-requested Generalist have separate validator and 
     assert.equal(result.passed, count <= 55);
   }
 });
-test("Specialist internal labels, excessive sections and out-of-plan IDs cannot pass mechanical publication checks", () => {
+test("Specialist internal labels and out-of-plan IDs cannot pass mechanical publication checks", () => {
   const role = "EVIDENCE_CHALLENGER";
   const bad = runDeterministicValidation({ role, message: "I chose EVIDENCE_AUDIT for your group.", groundingMessageIds: ["m1"] }, { selectedRole: role, eligibleMessageIds: ["m0", "m1"], allowedGroundingIds: ["m0"], enforcePlanGrounding: true, forbidInternalDisclosure: true });
   assert.ok(bad.failedCriteria.includes("INTERNAL_FACILITATION_DISCLOSURE"));
   assert.ok(bad.failedCriteria.includes("GROUNDING_ID_OUTSIDE_PLAN_EVIDENCE"));
+});
+
+test("real callbacks publish a numbered multi-section synthesis with more than three sentences", async () => {
+  const w = world();
+  const chat = w.game.get("chat_round_0");
+  const assessment = { need: "INTEGRATE", operation: "cross_option_evidence", rationale: "Public transport figures remain uncombined.", target: {
+    label: "Compare City A and City B transport", messageIds: ["m1", "m2"],
+    evidence: [1, 2].map(i => ({ messageId: `m${i}`, span: chat[i].text })),
+    optionLabels: ["City A", "City B"], criteria: ["transport"],
+  } };
+  const output = { role: "INFORMATION_SYNTHESISER", message: {
+    summary: "Here are the reported figures.",
+    sections: [{ title: "1. City A", body: "Transport is 12 minutes." }, { title: "2. City B", body: "Transport is 18 minutes." }],
+    question: "How do you weigh those reported travel times?",
+  }, groundingMessageIds: ["m1", "m2"] };
+  const r = await run(w, { assessment, output });
+  assert.equal(r.published.length, 1);
+  assert.equal(r.requests.length, 3);
+  assert.match(r.published[0].content, /1\. City A\n\nTransport is 12 minutes\./);
+  assert.match(r.published[0].content, /2\. City B\n\nTransport is 18 minutes\./);
+  assert.deepEqual(r.published[0].presentation, output.message);
+  assert.equal(r.log.at(-1).visibleWordCount, r.published[0].content.trim().split(/\s+/).length);
 });
 
 test("missing or forged Specialist preflight cannot reach an external Validator call", async () => {

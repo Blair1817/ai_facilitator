@@ -54,7 +54,7 @@
     },
     "length": {
       "type": "boolean",
-      "description": "Violation of the shared automatic 50-word ceiling, applicable Specialist sentence/section rules, or obstructively overloaded wording; all visible content counts."
+      "description": "True only when complete visible text exceeds the runtime word ceiling: 55 English words for Synthesiser and 50 for Expander/Challenger. Count headings and list numbers. No other length or layout limit."
     }
   },
   "required": [

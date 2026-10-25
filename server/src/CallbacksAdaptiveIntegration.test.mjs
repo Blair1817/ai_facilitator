@@ -142,7 +142,7 @@ test("every in-flight lifecycle mutation is awaited and committed through the se
     ...handleChatBody.matchAll(/(^|\n)\s*(await\s+)?finalizeAuditLog\(game, logEntry\);/g),
   ];
   // 2026-10-21: +1 terminal path for the Static matched-delay stale discard.
-  assert.equal(finalizations.length, 10, "all ten terminal callback paths, including automatic-overlap suppression and the Static matched-delay stale discard, must remain covered");
+  assert.equal(finalizations.length, 7, "Adaptive paths share one finally commit; all other terminal paths retain awaited commits");
   assert.ok(
     finalizations.every((match) => match[2] === "await "),
     "no terminal callback path may release its lifecycle commit without awaiting it",
@@ -177,22 +177,14 @@ test("routing: Static reaches generation before and without every Adaptive asses
   assert.doesNotMatch(staticBlock, /selectedRole|candidateRoles|gateDecision|ABSTAIN|\bWAIT\b|\bINTERVENE\b/);
 });
 
-test("routing: Adaptive ABSTAIN returns before prompt construction and Generator invocation", () => {
-  const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
-  const gateIndex = handleChatBody.indexOf("const gateResult = evaluateNeedGate(");
-  const abstainStart = handleChatBody.indexOf('if (gateResult.decision === "abstain")', gateIndex);
-  // 2026-10-21: the non-Specialist route is now the Static policy.
-  const generalistStart = handleChatBody.indexOf('if (gateResult.decision === "static_policy")', abstainStart);
-  const roleSelectionIndex = handleChatBody.indexOf("const chosenRole = chooseRole(", abstainStart);
-  const abstainBlock = handleChatBody.slice(abstainStart, generalistStart);
-
-  assert.ok(gateIndex !== -1 && abstainStart !== -1 && generalistStart !== -1 && roleSelectionIndex !== -1);
-  assert.match(abstainBlock, /gateResult\.reason/);
-  assert.match(abstainBlock, /finalizeAuditLog\(game, logEntry\)/);
-  assert.match(abstainBlock, /return;/);
-  assert.doesNotMatch(abstainBlock, /buildGeneratorContext|runSharedGeneration|chooseRole|compilePlan/);
-  assert.doesNotMatch(abstainBlock, /whileFacilitatorPublishesVisibleResponse|setVisibleResponsePending/);
-  assert.ok(abstainStart < generalistStart && generalistStart < roleSelectionIndex);
+test("routing: Adaptive summary deferral precedes generation and Static fallback", async () => {
+  const { runAdaptiveSelection, createAdaptiveBudget } = await import("./AdaptiveRecovery.mjs");
+  const log = {}, budget = createAdaptiveBudget({ deadline: () => Date.now() + 200000, isCurrent: () => true, log });
+  const never = () => { throw new Error("Deferral must not generate or use Static"); };
+  const result = await runAdaptiveSelection({ initial: { defer: { reason: "participant_summary_in_progress" } },
+    assess: never, generate: never, fallback: never, budget, log });
+  assert.equal(result.published, false);
+  assert.equal(log.reason, "participant_summary_in_progress");
 });
 
 test("typing visibility is separate from audit activity and every evaluation/generation phase remains hidden", () => {
@@ -260,7 +252,7 @@ test("failed generation, Validator rejection, repair/fallback failure, and stale
 test("Static, Adaptive, and participant-requested replies share publication-only typing", () => {
   const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
   assert.match(handleChatBody, /if \(facilitation === "static"\)[\s\S]*?runSharedGeneration\(/);
-  assert.match(handleChatBody, /if \(gateResult\.decision === "static_policy"\)[\s\S]*?runSharedGeneration\(/);
+  assert.match(handleChatBody, /async function fallback\(\)[\s\S]*?runSharedGeneration\(/);
   assert.match(handleChatBody, /if \(isMentionCheckpoint\)[\s\S]*?runSharedGeneration\([\s\S]*?postParticipantRequestFallback\(/);
 
   const fallbackStart = callbacksSource.indexOf("function postParticipantRequestFallback");
@@ -269,7 +261,7 @@ test("Static, Adaptive, and participant-requested replies share publication-only
   assert.match(fallbackBody, /whileFacilitatorPublishesVisibleResponse\([\s\S]*?appendCanonicalMessage\(/);
 });
 
-test("routing: Static and Adaptive share one automatic pacing policy with no cap or Adaptive bypass", () => {
+test("routing: ordinary message opportunities retain the shared checkpoint manager without an attempt cap", () => {
   const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
   const checkpointIndex = handleChatBody.indexOf("shouldEvaluateCheckpoint({");
   const staticIndex = handleChatBody.indexOf('if (facilitation === "static")');
@@ -584,7 +576,7 @@ test("routing regression: LLM detector classification thresholds are explicit", 
   assert.deepEqual(THRESHOLDS, {
     expander: { threshold: 0.30 },
     challenger: { threshold: 0.5 },
-    synthesiser: { threshold: 0.5, forced_trigger_seconds: 20 },
+    synthesiser: { threshold: 0.5 },
     gate: { min_time_for_intervention_seconds: 10, margin: 0.20 },
   });
 });

@@ -162,8 +162,7 @@ const MARKDOWN_STRIP_PATTERNS = [
   // Anchored at line start so a hyphen in the middle of a sentence is
   // not stripped.
   [/(^|\n)[ \t]{0,3}[-*+][ \t]+/g, "$1"],
-  // Numbered list markers at line start: `1. `, `12. `, etc.
-  [/(^|\n)[ \t]{0,3}\d+\.[ \t]+/g, "$1"],
+  // Numbered lists are supported participant-visible text; preserve markers.
   // Inline code backticks: `` `word` `` → `word`. Single-line to avoid
   // eating a fence that the parser might have missed.
   [/`([^`\n]+)`/g, "$1"],
@@ -216,6 +215,14 @@ export function validateAgainstGenerationSchema(parsed, selectedRole, triggerTyp
   if (!valid) {
     return { ok: false, code: "GENERATION_SCHEMA_FAILURE", errors: validateFn.errors };
   }
+  // The requested-Generalist route retains its frozen character ceiling.
+  // Automatic routes have no character/section ceiling; their runtime word
+  // limit applies to the entire normalized message instead.
+  const maxLength = schema.properties?.message?.maxLength;
+  if (typeof maxLength === "number" && typeof parsed.message === "object"
+    && isFacilitatorPresentation(parsed.message) && presentationToText(parsed.message).length > maxLength) {
+    return { ok: false, code: "GENERATION_SCHEMA_FAILURE", errors: [{ instancePath: "/message", keyword: "maxLength", message: "flattened message exceeds requested-route character ceiling" }] };
+  }
   return { ok: true };
 }
 
@@ -223,7 +230,7 @@ export function validateAgainstGenerationSchema(parsed, selectedRole, triggerTyp
 // ("no markdown formatting, no lists, no headers"): fenced code blocks,
 // ATX headers, bullet/numbered list markers at line start, and bold/italic
 // emphasis markers.
-const MARKDOWN_PATTERN = /```|(^|\n)[ \t]{0,3}#{1,6}[ \t]|(^|\n)[ \t]{0,3}[-*+][ \t]|(^|\n)[ \t]{0,3}\d+\.[ \t]|\*\*[^*]+\*\*|__[^_]+__/;
+const MARKDOWN_PATTERN = /```|(^|\n)[ \t]{0,3}#{1,6}[ \t]|(^|\n)[ \t]{0,3}[-*+][ \t]|\*\*[^*]+\*\*|__[^_]+__/;
 
 // 2026-08-13: capture every `@[…]` mention token in a candidate
 // `message`. Used by runDeterministicValidation to enforce the
@@ -303,8 +310,6 @@ export function runDeterministicValidation(
     // (default), so every existing call site and test is unaffected
     // unless it opts in.
     maxWords = null,
-    maxSentences = null,
-    maxSections = null,
     enforcePlanGrounding = false,
     forbidInternalDisclosure = false,
   } = {}
@@ -319,17 +324,7 @@ export function runDeterministicValidation(
   }
 
   if (typeof message === "string") {
-    const schema = loadGenerationSchema();
-    const maxLength = schema.properties?.message?.maxLength;
-    if (typeof maxLength === "number" && message.length > maxLength) {
-      failedCriteria.push("MESSAGE_TOO_LONG");
-    }
-    if (typeof maxSentences === "number") {
-      const count = [...new Intl.Segmenter("en", { granularity: "sentence" }).segment(message)].filter(s => s.segment.trim()).length;
-      if (count > maxSentences) failedCriteria.push("MESSAGE_EXCEEDS_SENTENCE_LIMIT");
-    }
     if (forbidInternalDisclosure && ["INFORMATION_EXPANDER", "EVIDENCE_CHALLENGER", "INFORMATION_SYNTHESISER", "breadth_deficiency", "justification_deficiency", "integration_deficiency", "PLAN_PREFLIGHT", ...Object.keys(OPERATION_ROLE)].some(label => message.includes(label))) failedCriteria.push("INTERNAL_FACILITATION_DISCLOSURE");
-    if (typeof maxSections === "number" && (parsed.presentation?.sections?.length || 0) > maxSections) failedCriteria.push("MESSAGE_EXCEEDS_SECTION_LIMIT");
     if (MARKDOWN_PATTERN.test(message)) {
       failedCriteria.push("MARKDOWN_DETECTED");
     }

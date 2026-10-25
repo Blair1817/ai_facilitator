@@ -1,0 +1,649 @@
+[
+  {
+    "id": "C-01",
+    "purpose": "Qualified integration outranks ordinary unsupported preference during fixed priority.",
+    "input": {
+      "TASK_GENERAL_CONTEXT": "Choose Norvale, Halden or Fenwick using only publicly shared task facts.",
+      "ACTIVE_PARTICIPANT_NAMES": [
+        "Alex",
+        "Blair",
+        "Casey"
+      ],
+      "SCHEDULING": {
+        "remainingTimeMs": 120000,
+        "triggerSource": "time_120",
+        "fixedIntegrationPriority": true,
+        "evaluateEarlyCloseout": true
+      },
+      "SEMANTIC_REFERENCES": [],
+      "EXCLUDED_SEMANTIC_TARGETS": [],
+      "CUMULATIVE_PUBLIC_CONTEXT": [
+        {
+          "messageId": "m0",
+          "sender": "Alex",
+          "text": "Norvale has indoor signs."
+        },
+        {
+          "messageId": "m1",
+          "sender": "Blair",
+          "text": "Norvale has displays across the courtyard."
+        },
+        {
+          "messageId": "m2",
+          "sender": "Alex",
+          "text": "Norvale app cannot send reminders."
+        },
+        {
+          "messageId": "m3",
+          "sender": "Blair",
+          "text": "I favour Norvale."
+        },
+        {
+          "messageId": "m4",
+          "sender": "Casey",
+          "text": "Norvale is my preference too."
+        }
+      ]
+    },
+    "output": {
+      "need": "INTEGRATE",
+      "operation": "fragmented_evidence",
+      "target": {
+        "label": "Three public Norvale points remain unconnected.",
+        "messageIds": [
+          "m0",
+          "m1",
+          "m2"
+        ],
+        "evidence": [
+          {
+            "messageId": "m0",
+            "span": "Norvale has indoor signs."
+          },
+          {
+            "messageId": "m1",
+            "span": "Norvale has displays across the courtyard."
+          },
+          {
+            "messageId": "m2",
+            "span": "Norvale app cannot send reminders."
+          }
+        ],
+        "optionLabels": [
+          "Norvale"
+        ],
+        "criteria": []
+      },
+      "rationale": "Three concrete public facts from two authors remain unorganised.",
+      "closeout": {
+        "proposal": null,
+        "participants": [
+          {
+            "participantName": "Alex",
+            "reviewedThroughMessageId": "m2",
+            "stance": "uncommitted",
+            "optionLabel": null,
+            "evidence": []
+          },
+          {
+            "participantName": "Blair",
+            "reviewedThroughMessageId": "m3",
+            "stance": "uncommitted",
+            "optionLabel": null,
+            "evidence": []
+          },
+          {
+            "participantName": "Casey",
+            "reviewedThroughMessageId": "m4",
+            "stance": "uncommitted",
+            "optionLabel": null,
+            "evidence": []
+          }
+        ]
+      },
+      "integrationCandidate": {
+        "need": "INTEGRATE",
+        "operation": "fragmented_evidence",
+        "target": {
+          "label": "Three public Norvale points remain unconnected.",
+          "messageIds": [
+            "m0",
+            "m1",
+            "m2"
+          ],
+          "evidence": [
+            {
+              "messageId": "m0",
+              "span": "Norvale has indoor signs."
+            },
+            {
+              "messageId": "m1",
+              "span": "Norvale has displays across the courtyard."
+            },
+            {
+              "messageId": "m2",
+              "span": "Norvale app cannot send reminders."
+            }
+          ],
+          "optionLabels": [
+            "Norvale"
+          ],
+          "criteria": []
+        },
+        "rationale": "Three concrete public facts from two authors remain unorganised."
+      },
+      "integrationStatus": "qualified"
+    }
+  },
+  {
+    "id": "C-02",
+    "purpose": "Two ready participants plus silent third; sufficient integration material, no unanimity claim.",
+    "input": {
+      "TASK_GENERAL_CONTEXT": "Choose Norvale, Halden or Fenwick using only publicly shared task facts.",
+      "ACTIVE_PARTICIPANT_NAMES": [
+        "Alex",
+        "Blair",
+        "Casey"
+      ],
+      "SCHEDULING": {
+        "remainingTimeMs": 400000,
+        "triggerSource": "early_closeout_probe",
+        "fixedIntegrationPriority": false,
+        "evaluateEarlyCloseout": true
+      },
+      "SEMANTIC_REFERENCES": [],
+      "EXCLUDED_SEMANTIC_TARGETS": [],
+      "CUMULATIVE_PUBLIC_CONTEXT": [
+        {
+          "messageId": "m0",
+          "sender": "Alex",
+          "text": "Norvale has indoor signs."
+        },
+        {
+          "messageId": "m1",
+          "sender": "Blair",
+          "text": "Norvale has displays across the courtyard."
+        },
+        {
+          "messageId": "m2",
+          "sender": "Alex",
+          "text": "Norvale app cannot send reminders."
+        },
+        {
+          "messageId": "m3",
+          "sender": "Alex",
+          "text": "Choose Norvale, ready to submit."
+        },
+        {
+          "messageId": "m4",
+          "sender": "Blair",
+          "text": "Agreed, we can submit."
+        }
+      ]
+    },
+    "output": {
+      "need": "INTEGRATE",
+      "operation": "fragmented_evidence",
+      "target": {
+        "label": "Three public Norvale points remain unconnected.",
+        "messageIds": [
+          "m0",
+          "m1",
+          "m2"
+        ],
+        "evidence": [
+          {
+            "messageId": "m0",
+            "span": "Norvale has indoor signs."
+          },
+          {
+            "messageId": "m1",
+            "span": "Norvale has displays across the courtyard."
+          },
+          {
+            "messageId": "m2",
+            "span": "Norvale app cannot send reminders."
+          }
+        ],
+        "optionLabels": [
+          "Norvale"
+        ],
+        "criteria": []
+      },
+      "rationale": "Three concrete public facts from two authors remain unorganised.",
+      "closeout": {
+        "proposal": {
+          "active": true,
+          "optionLabel": "Norvale",
+          "evidence": [
+            {
+              "messageId": "m3",
+              "span": "Choose Norvale, ready to submit."
+            }
+          ]
+        },
+        "participants": [
+          {
+            "participantName": "Alex",
+            "reviewedThroughMessageId": "m3",
+            "stance": "ready",
+            "optionLabel": "Norvale",
+            "evidence": [
+              {
+                "messageId": "m3",
+                "span": "Choose Norvale, ready to submit."
+              }
+            ]
+          },
+          {
+            "participantName": "Blair",
+            "reviewedThroughMessageId": "m4",
+            "stance": "ready",
+            "optionLabel": "Norvale",
+            "evidence": [
+              {
+                "messageId": "m4",
+                "span": "Agreed, we can submit."
+              }
+            ]
+          },
+          {
+            "participantName": "Casey",
+            "reviewedThroughMessageId": null,
+            "stance": "uncommitted",
+            "optionLabel": null,
+            "evidence": []
+          }
+        ]
+      },
+      "integrationCandidate": {
+        "need": "INTEGRATE",
+        "operation": "fragmented_evidence",
+        "target": {
+          "label": "Three public Norvale points remain unconnected.",
+          "messageIds": [
+            "m0",
+            "m1",
+            "m2"
+          ],
+          "evidence": [
+            {
+              "messageId": "m0",
+              "span": "Norvale has indoor signs."
+            },
+            {
+              "messageId": "m1",
+              "span": "Norvale has displays across the courtyard."
+            },
+            {
+              "messageId": "m2",
+              "span": "Norvale app cannot send reminders."
+            }
+          ],
+          "optionLabels": [
+            "Norvale"
+          ],
+          "criteria": []
+        },
+        "rationale": "Three concrete public facts from two authors remain unorganised."
+      },
+      "integrationStatus": "qualified"
+    }
+  },
+  {
+    "id": "C-03",
+    "purpose": "Third-person objection revokes early priority and explicit summary pauses automatic intervention.",
+    "input": {
+      "TASK_GENERAL_CONTEXT": "Choose Norvale, Halden or Fenwick using only publicly shared task facts.",
+      "ACTIVE_PARTICIPANT_NAMES": [
+        "Alex",
+        "Blair",
+        "Casey"
+      ],
+      "SCHEDULING": {
+        "remainingTimeMs": 350000,
+        "triggerSource": "early_closeout_probe",
+        "fixedIntegrationPriority": false,
+        "evaluateEarlyCloseout": true
+      },
+      "SEMANTIC_REFERENCES": [],
+      "EXCLUDED_SEMANTIC_TARGETS": [],
+      "CUMULATIVE_PUBLIC_CONTEXT": [
+        {
+          "messageId": "m0",
+          "sender": "Alex",
+          "text": "Norvale has indoor signs."
+        },
+        {
+          "messageId": "m1",
+          "sender": "Blair",
+          "text": "Norvale has displays across the courtyard."
+        },
+        {
+          "messageId": "m2",
+          "sender": "Alex",
+          "text": "Norvale app cannot send reminders."
+        },
+        {
+          "messageId": "m3",
+          "sender": "Alex",
+          "text": "Choose Norvale, ready to submit."
+        },
+        {
+          "messageId": "m4",
+          "sender": "Blair",
+          "text": "Agreed, we can submit."
+        },
+        {
+          "messageId": "m5",
+          "sender": "Casey",
+          "text": "Wait, I want to keep discussing. Let me put the points together now."
+        }
+      ]
+    },
+    "output": {
+      "need": "NONE",
+      "operation": null,
+      "target": null,
+      "rationale": "Casey requests continued discussion and explicitly starts organising the points.",
+      "closeout": {
+        "proposal": {
+          "active": true,
+          "optionLabel": "Norvale",
+          "evidence": [
+            {
+              "messageId": "m3",
+              "span": "Choose Norvale, ready to submit."
+            }
+          ]
+        },
+        "participants": [
+          {
+            "participantName": "Alex",
+            "reviewedThroughMessageId": "m3",
+            "stance": "ready",
+            "optionLabel": "Norvale",
+            "evidence": [
+              {
+                "messageId": "m3",
+                "span": "Choose Norvale, ready to submit."
+              }
+            ]
+          },
+          {
+            "participantName": "Blair",
+            "reviewedThroughMessageId": "m4",
+            "stance": "ready",
+            "optionLabel": "Norvale",
+            "evidence": [
+              {
+                "messageId": "m4",
+                "span": "Agreed, we can submit."
+              }
+            ]
+          },
+          {
+            "participantName": "Casey",
+            "reviewedThroughMessageId": "m5",
+            "stance": "continue",
+            "optionLabel": null,
+            "evidence": [
+              {
+                "messageId": "m5",
+                "span": "Wait, I want to keep discussing. Let me put the points together now."
+              }
+            ]
+          }
+        ]
+      },
+      "integrationCandidate": null,
+      "integrationStatus": "participant_summary_in_progress",
+      "defer": {
+        "reason": "participant_summary_in_progress",
+        "evidence": [
+          {
+            "messageId": "m5",
+            "span": "Wait, I want to keep discussing. Let me put the points together now."
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "C-04",
+    "purpose": "Repeated semantic target with new IDs, no alternative: NONE enters existing Static fallback.",
+    "input": {
+      "TASK_GENERAL_CONTEXT": "Choose Norvale, Halden or Fenwick using only publicly shared task facts.",
+      "ACTIVE_PARTICIPANT_NAMES": [
+        "Alex",
+        "Blair",
+        "Casey"
+      ],
+      "SCHEDULING": {
+        "remainingTimeMs": 190000,
+        "triggerSource": "message",
+        "fixedIntegrationPriority": false,
+        "evaluateEarlyCloseout": true
+      },
+      "SEMANTIC_REFERENCES": [
+        {
+          "id": "excluded:0",
+          "semanticKey": "Fenwick poster accessibility",
+          "target": {
+            "label": "How corridor poster placement affects Fenwick",
+            "messageIds": [
+              "old1",
+              "old2"
+            ],
+            "optionLabels": [
+              "Fenwick"
+            ]
+          },
+          "reason": "validator_repetition"
+        }
+      ],
+      "EXCLUDED_SEMANTIC_TARGETS": [
+        {
+          "id": "excluded:0",
+          "semanticKey": "Fenwick poster accessibility",
+          "target": {
+            "label": "How corridor poster placement affects Fenwick",
+            "messageIds": [
+              "old1",
+              "old2"
+            ],
+            "optionLabels": [
+              "Fenwick"
+            ]
+          },
+          "reason": "validator_repetition"
+        }
+      ],
+      "CUMULATIVE_PUBLIC_CONTEXT": [
+        {
+          "messageId": "m0",
+          "sender": "Alex",
+          "text": "Fenwick posters hang in busy corridors."
+        },
+        {
+          "messageId": "m1",
+          "sender": "Blair",
+          "text": "Yes, those Fenwick posters are in busy corridors."
+        }
+      ]
+    },
+    "output": {
+      "need": "NONE",
+      "operation": null,
+      "target": null,
+      "rationale": "The same poster issue has no new material evidence; no other supported need is present.",
+      "closeout": {
+        "proposal": null,
+        "participants": [
+          {
+            "participantName": "Alex",
+            "reviewedThroughMessageId": "m0",
+            "stance": "uncommitted",
+            "optionLabel": null,
+            "evidence": []
+          },
+          {
+            "participantName": "Blair",
+            "reviewedThroughMessageId": "m1",
+            "stance": "uncommitted",
+            "optionLabel": null,
+            "evidence": []
+          },
+          {
+            "participantName": "Casey",
+            "reviewedThroughMessageId": null,
+            "stance": "uncommitted",
+            "optionLabel": null,
+            "evidence": []
+          }
+        ]
+      },
+      "integrationCandidate": null,
+      "integrationStatus": "no_open_integration"
+    }
+  },
+  {
+    "id": "C-05",
+    "purpose": "A different issue on the same option remains selectable after excluding posters.",
+    "input": {
+      "TASK_GENERAL_CONTEXT": "Choose Norvale, Halden or Fenwick using only publicly shared task facts.",
+      "ACTIVE_PARTICIPANT_NAMES": [
+        "Alex",
+        "Blair",
+        "Casey"
+      ],
+      "SCHEDULING": {
+        "remainingTimeMs": 190000,
+        "triggerSource": "message",
+        "fixedIntegrationPriority": false,
+        "evaluateEarlyCloseout": true
+      },
+      "SEMANTIC_REFERENCES": [
+        {
+          "id": "excluded:0",
+          "semanticKey": "Fenwick poster accessibility",
+          "target": {
+            "label": "How corridor poster placement affects Fenwick",
+            "messageIds": [
+              "old1",
+              "old2"
+            ],
+            "optionLabels": [
+              "Fenwick"
+            ]
+          },
+          "reason": "validator_repetition"
+        }
+      ],
+      "EXCLUDED_SEMANTIC_TARGETS": [
+        {
+          "id": "excluded:0",
+          "semanticKey": "Fenwick poster accessibility",
+          "target": {
+            "label": "How corridor poster placement affects Fenwick",
+            "messageIds": [
+              "old1",
+              "old2"
+            ],
+            "optionLabels": [
+              "Fenwick"
+            ]
+          },
+          "reason": "validator_repetition"
+        }
+      ],
+      "CUMULATIVE_PUBLIC_CONTEXT": [
+        {
+          "messageId": "m0",
+          "sender": "Alex",
+          "text": "Fenwick posters hang in busy corridors."
+        },
+        {
+          "messageId": "m1",
+          "sender": "Blair",
+          "text": "Yes, those Fenwick posters are in busy corridors."
+        },
+        {
+          "messageId": "m2",
+          "sender": "Alex",
+          "text": "Fenwick shuttle runs once per hour, so every visitor will arrive on time."
+        },
+        {
+          "messageId": "m3",
+          "sender": "Blair",
+          "text": "The Fenwick shuttle stops at the main gate."
+        }
+      ]
+    },
+    "output": {
+      "need": "SCRUTINIZE",
+      "operation": "unclear_assumption",
+      "target": {
+        "label": "Whether an hourly Fenwick shuttle ensures every visitor arrives on time.",
+        "messageIds": [
+          "m2",
+          "m3"
+        ],
+        "evidence": [
+          {
+            "messageId": "m2",
+            "span": "Fenwick shuttle runs once per hour, so every visitor will arrive on time."
+          },
+          {
+            "messageId": "m3",
+            "span": "The Fenwick shuttle stops at the main gate."
+          }
+        ],
+        "optionLabels": [
+          "Fenwick"
+        ],
+        "criteria": []
+      },
+      "rationale": "Two participants discuss Fenwick transport; the arrival guarantee depends on an unstated timing condition.",
+      "semanticReview": {
+        "key": "Fenwick hourly shuttle arrival guarantee",
+        "matches": [
+          {
+            "id": "excluded:0",
+            "relation": "different",
+            "responseEvidence": [],
+            "newEvidence": []
+          }
+        ]
+      },
+      "closeout": {
+        "proposal": null,
+        "participants": [
+          {
+            "participantName": "Alex",
+            "reviewedThroughMessageId": "m2",
+            "stance": "uncommitted",
+            "optionLabel": null,
+            "evidence": []
+          },
+          {
+            "participantName": "Blair",
+            "reviewedThroughMessageId": "m3",
+            "stance": "uncommitted",
+            "optionLabel": null,
+            "evidence": []
+          },
+          {
+            "participantName": "Casey",
+            "reviewedThroughMessageId": null,
+            "stance": "uncommitted",
+            "optionLabel": null,
+            "evidence": []
+          }
+        ]
+      },
+      "integrationCandidate": null,
+      "integrationStatus": "no_open_integration"
+    }
+  }
+]

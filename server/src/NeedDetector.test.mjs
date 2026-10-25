@@ -61,6 +61,36 @@ test("quiet rule: silent or < half the others' mean once others average >= 2; no
 // ── evidence check (N1-N4) ──────────────────────────────────────────────────
 
 const check = (raw, chat = CHAT) => checkNeedAssessment(raw, { chat, activeParticipantNames: ROSTER });
+const summaryPause = (chat) => ({
+  need: "NONE", operation: null, target: null, rationale: "A participant is summarising now.",
+  defer: { reason: "participant_summary_in_progress", evidence: [quote(chat, chat.length - 1)] },
+});
+
+test("summary deferral requires NONE and exact public participant evidence", () => {
+  const chat = [...CHAT, msg("Alex", "Let me summarise these points now; I am still putting them together.")];
+  const raw = summaryPause(chat);
+  assert.equal(validateAgainstAssessorSchema(raw).ok, true);
+  const checked = check(raw, chat);
+  assert.deepEqual(checked.defer, raw.defer);
+  const variants = [
+    { ...raw, defer: { ...raw.defer, evidence: [] } },
+    { ...raw, defer: { ...raw.defer, evidence: [{ messageId: "m7", span: "Invented summary announcement" }] } },
+    { ...raw, defer: { ...raw.defer, evidence: [{ messageId: "missing", span: chat[7].text }] } },
+    { ...raw, defer: { ...raw.defer, reason: "anything_else" } },
+    { ...raw, need: "INTEGRATE" },
+    { ...raw, target: target(chat, [0, 1, 2]) },
+  ];
+  for (const invalid of variants) {
+    const result = check(invalid, chat);
+    assert.ok(result.downgradedReason);
+    assert.equal(result.defer, undefined);
+    assert.equal(evaluateNeedGate(result, { remainingTime: 60_000 }).decision, "static_policy");
+  }
+  assert.equal(validateAgainstAssessorSchema({ ...raw, need: "INTEGRATE" }).ok, false);
+  assert.equal(validateAgainstAssessorSchema({ ...raw, defer: { ...raw.defer, evidence: [] } }).ok, false);
+  const aiChat = [...CHAT, { text: chat[7].text, sender: { id: "ai", name: "Facilitator" }, messageType: "facilitator" }];
+  assert.equal(check(raw, aiChat).downgradedReason, "INVALID_DEFERRAL_EVIDENCE");
+});
 
 test("N1: NONE passes through without a downgrade; unknown need or mismatched operation downgrade to NONE", () => {
   const none = check({ need: "NONE", operation: null, target: null, rationale: "" });
@@ -232,6 +262,32 @@ async function runCheckpoint(w, detector, generatorFor, { onFetch } = {}) {
 
 const STATIC_REPLY = { role: "STATIC", message: "What else from your notes should the group hear?", groundingMessageIds: [] };
 
+test("end-to-end: participant summary waits without any generator, validator or publication", async () => {
+  const chat = [...CHAT, msg("Alex", "Let me bring these points together now; I am still writing the summary.")];
+  const w = world("adaptive", chat);
+  const r = await runCheckpoint(w, summaryPause(chat), () => { throw new Error("Must wait for the participant"); });
+  assert.deepEqual(r.calls, ["detector"]);
+  assert.equal(r.published.length, 0);
+  assert.equal(r.audit.gateDecision, "abstain");
+  assert.equal(r.audit.abstentionKind, "participant_summary_in_progress");
+  assert.deepEqual(r.audit.checkedDetectorFactors.defer, summaryPause(chat).defer);
+  assert.equal(r.audit.fallbackKind, undefined);
+});
+
+test("end-to-end: a finished summary does not leave a sticky pause at the next checkpoint", async () => {
+  const chat = [...CHAT, msg("Alex", "Let me summarise now.")];
+  const w = world("adaptive", chat);
+  await runCheckpoint(w, summaryPause(chat), () => { throw new Error("Must wait"); });
+  const completed = "Summary complete: City A transport is 12 minutes and cost is 25000; City B transport is 18 minutes and cost is 32000.";
+  w.game.set("chat_round_0", [...w.game.get("chat_round_0"), {
+    ...w.game.get("chat_round_0").at(-1), messageId: "need-summary-complete", content: completed, text: completed,
+  }]);
+  w.game.set("lastAttemptTimestamp", Date.now() - 31_000);
+  const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "The participant has finished." }, () => STATIC_REPLY);
+  assert.deepEqual(r.calls, ["detector", "static", "validator"]);
+  assert.equal(r.published.length, 1);
+});
+
 test("end-to-end: ELICIT participation_gap invites the code-verified quiet participant through the Expander", async () => {
   const w = world("adaptive", CHAT);
   const chat = w.game.get("chat_round_0");
@@ -286,7 +342,7 @@ test("end-to-end: a fabricated quotation never reaches a Specialist and uses the
   assert.equal(r.published.length, 1);
 });
 
-test("robustness: Adaptive publishes exactly one message per checkpoint for every detector outcome (message-count parity with Static)", async () => {
+test("robustness: non-deferral detector outcomes retain one message per checkpoint (message-count parity with Static)", async () => {
   const outcomes = {
     none: { need: "NONE", operation: null, target: null, rationale: "" },
     verified: need("SCRUTINIZE", "unsupported_claim", { label: "City B", messageIds: ["m0", "m1"], evidence: [{ messageId: "m0", span: "I prefer City B." }, { messageId: "m1", span: "City B sounds good to me too." }], optionLabels: ["City B"], criteria: [] }),

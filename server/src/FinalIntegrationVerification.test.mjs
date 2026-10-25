@@ -329,7 +329,7 @@ test("schema-invalid detector output never reaches a Specialist and falls back t
     return providerResponse({ role: "STATIC", message: "What else from your notes should the group hear?", groundingMessageIds: [] });
   }, () => handleChat(undefined, { game: w.game }));
 
-  assert.deepEqual(phases, ["assessor", "generator", "validator"]);
+  assert.deepEqual(phases, ["assessor", "assessor", "generator", "validator"]);
   assert.equal(published(w.game).length, 1);
   const audit = readAppendOnlyAttribute(w.game, "llmLog").at(-1);
   assert.match(audit.detectorError, /^ASSESSOR_SCHEMA_FAILURE:/);
@@ -377,8 +377,9 @@ test("schema-invalid Validator output cannot reach participants", async () => {
 
   assert.equal(published(w.game).length, 0);
   const audit = readAppendOnlyAttribute(w.game, "llmLog").at(-1);
-  assert.equal(audit.failureStage, "validator_unavailable");
-  assert.equal(audit.outcome, "SILENT_VALIDATOR_UNAVAILABLE");
+  assert.equal(audit.specialistFailure.failureStage, "validator_unavailable");
+  assert.equal(audit.specialistFailure.outcome, "SILENT_VALIDATOR_UNAVAILABLE");
+  assert.equal(audit.fallbackPublished, false);
 });
 
 test("a provider result cannot publish after the Game has ended even if an old Task reference remains", async () => {

@@ -96,22 +96,15 @@ test("callbacks.js: Static bypasses Adaptive assessment while both conditions re
 
   assert.equal([...callbacksSource.matchAll(/async function runSharedGeneration\(/g)].length, 1, "there must still be exactly one shared generation implementation");
   // Phase 4 design (audit-phase1.md v3): the Adaptive path has TWO
-  // independent branches after the gate -- Generalist (matched-frequency
-  // control) and Specialist (one of the three Controllers). Both call
-  // the same shared `runSharedGeneration` as the Static branch, so
-  // there are 5 call sites in handleChat: 1 participant-requested
-  // Generalist + 1 Static + 1 automatic Generalist + 1 Specialist +
-  // 1 Specialist-to-Generalist repair fallback.
-  assert.equal([...handleChatSource.matchAll(/runSharedGeneration\(/g)].length, 5, "requested Generalist and all automatic routes must share the same generation implementation");
+  // Requested Generalist, pure Static, Adaptive Specialist and shared Adaptive Static fallback.
+  assert.equal([...handleChatSource.matchAll(/runSharedGeneration\(/g)].length, 4, "requested Generalist and all automatic routes must share the same generation implementation");
 });
 
-test("callbacks.js: getLLMResponse has exactly one INVOCATION site in the whole file (the shared generation path), not one per facilitation branch", () => {
-  // Matches the call ("await getLLMResponse(...)"), not the function's own
-  // declaration ("async function getLLMResponse(...)").
-  const llmCallSites = [...callbacksSource.matchAll(/await\s+getLLMResponse\(/g)];
-  assert.equal(llmCallSites.length, 1, "expected exactly one getLLMResponse(...) invocation -- Static and Adaptive must share it, not each have their own");
-  const declarationSites = [...callbacksSource.matchAll(/function\s+getLLMResponse\(/g)];
-  assert.equal(declarationSites.length, 1, "expected exactly one getLLMResponse function declaration (no second LLM client)");
+test("callbacks.js: all routes share one transport and Generator invocation", () => {
+  const generator = callbacksSource.slice(callbacksSource.indexOf("async function runSharedGeneration"), callbacksSource.indexOf("// ── S1-S4 sequence definitions"));
+  assert.equal([...generator.matchAll(/return getLLMResponse\(messages, llmMaxOutputTokens, \{ \.\.\.generationOptions/g)].length, 1);
+  assert.equal([...callbacksSource.matchAll(/function\s+getLLMResponse\(/g)].length, 1);
+  assert.equal([...callbacksSource.matchAll(/async function requestChatCompletion\(/g)].length, 1);
 });
 
 test("callbacks.js: handleChat bails out before any dispatch if the current Round has no facilitation value at all", () => {

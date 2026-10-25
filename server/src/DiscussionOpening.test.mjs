@@ -226,7 +226,8 @@ test("Assessor context excludes the Facilitator opening from participant evidenc
     activeParticipantNames: ["Blue", "Pink", "Green"],
   });
 
-  assert.doesNotMatch(context.userContent, /Hi everyone, welcome!/);
+  assert.doesNotMatch(context.userContent.split("[CUMULATIVE_PUBLIC_CONTEXT]")[1], /Hi everyone, welcome!/);
+  assert.match(context.userContent, /\[DELIVERED_AI_CONTEXT_NOT_FACT_EVIDENCE\]/);
   assert.match(context.userContent, /The Blue report says Option A costs less\./);
   assert.deepEqual(context.eligibleMessageIds, ["m1"]);
 });

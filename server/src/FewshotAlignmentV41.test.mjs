@@ -128,7 +128,7 @@ for (const item of fixture.generator_regressions) {
       aiOrSystemMessageIds: [], recentAiMessageTexts: [],
       allowedGroundingIds: item.intervention_plan.evidenceIds,
       activeParticipantNames: item.runtime_inputs.ACTIVE_PARTICIPANT_NAMES,
-      maxWords: 50, maxSentences: 3, maxSections: 0,
+      maxWords: 50,
       enforcePlanGrounding: true, forbidInternalDisclosure: true,
     });
     assert.equal(checked.passed, true, JSON.stringify(checked.failedCriteria));

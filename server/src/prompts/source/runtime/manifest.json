@@ -13,8 +13,8 @@
       "generationSchema": "control_50/generation.schema.json",
       "validationSchema": "control_50/validation.schema.json",
       "planRequired": false,
-      "generatorSha256": "45b7cef7aebf380e7959ff6bf3880bf1cb3a4c58122cab23a0ae88afebccd3f5",
-      "validatorSha256": "202517f48d1c60ecdd342d63e5d852d4fdb8716f52c72ca8008d57469db2aa5b",
+      "generatorSha256": "ed9ec306b94e18bb49f707632332da0a233ffeadb7f74515335d5dc95c923fec",
+      "validatorSha256": "fb4b842ea4df5fc68974b7364006bfb0540cdac990aba37fc653b596e5beb1ea",
       "maxWords": 50
     },
     "generalist": {
@@ -26,8 +26,8 @@
       "generationSchema": "control_50/generation.schema.json",
       "validationSchema": "control_50/validation.schema.json",
       "planRequired": false,
-      "generatorSha256": "6bb81ef8ad08c1d1d8eb6e5dd124cd60f2a8ed8c4c1cb4e76a0f10aa70f65ee0",
-      "validatorSha256": "202517f48d1c60ecdd342d63e5d852d4fdb8716f52c72ca8008d57469db2aa5b",
+      "generatorSha256": "5770378ac67f8fc935cc992389f042aaee21d60cda2a63ee4a2b9f51ae1bdc52",
+      "validatorSha256": "fb4b842ea4df5fc68974b7364006bfb0540cdac990aba37fc653b596e5beb1ea",
       "maxWords": 50
     },
     "requested_generalist": {
@@ -53,8 +53,8 @@
       "validationSchema": "specialist/validation.schema.json",
       "preflightSchema": "specialist/plan_preflight.schema.json",
       "planRequired": true,
-      "generatorSha256": "54638e5d488bdf0638ecea1445748d387d7746b4add29cfe07686d4f7d035778",
-      "validatorSha256": "ae8c2c3a3704e84d3d23ad74bcb8b7ff05aca05f5bbbf93837e334fdbdaae6e0",
+      "generatorSha256": "917db993963f331829010aa334cf5b9a9e4fb686d23649f167732b387f98cb0e",
+      "validatorSha256": "4598f0c6f3f1d6727fca31b2d0ffc0bd71d3899e31bc2b38c222b73c7062898c",
       "maxWords": 50
     },
     "challenger": {
@@ -68,8 +68,8 @@
       "validationSchema": "specialist/validation.schema.json",
       "preflightSchema": "specialist/plan_preflight.schema.json",
       "planRequired": true,
-      "generatorSha256": "e621d055d80c371b3a61d1a0865daf342b2a08ae6fc23a5f43cef516d9882436",
-      "validatorSha256": "ae8c2c3a3704e84d3d23ad74bcb8b7ff05aca05f5bbbf93837e334fdbdaae6e0",
+      "generatorSha256": "302829e66e0edbd99761df29ad44f31063a7031395d332a77e21e7479a413255",
+      "validatorSha256": "4598f0c6f3f1d6727fca31b2d0ffc0bd71d3899e31bc2b38c222b73c7062898c",
       "maxWords": 50
     },
     "synthesiser": {
@@ -83,8 +83,8 @@
       "validationSchema": "specialist/validation.schema.json",
       "preflightSchema": "specialist/plan_preflight.schema.json",
       "planRequired": true,
-      "generatorSha256": "936ba3abff1edb477090118e1038cdef96c9ee3f34c962fb746a7aa2940e7ea8",
-      "validatorSha256": "ae8c2c3a3704e84d3d23ad74bcb8b7ff05aca05f5bbbf93837e334fdbdaae6e0",
+      "generatorSha256": "9d2878fecf7860e3b3450378879b398fe3536deb0e1d8ba3c562878110df9648",
+      "validatorSha256": "4598f0c6f3f1d6727fca31b2d0ffc0bd71d3899e31bc2b38c222b73c7062898c",
       "maxWords": 55
     }
   },
@@ -97,72 +97,72 @@
   "frozenControlScope": "Historical exact baseline and requested-Generalist route; Static/automatic Generalist use control_50 length-adapted policy.",
   "files": {
     "specialist/assessor.md": {
-      "sha256": "98f3bb91f2bceed7fbee41897546bd1f5e674a545b71d45242e9a5f145f97d2f",
-      "bytes": 48990
+      "sha256": "83ab502b4d93c94b598ead71b21153f4306d06deeccf00dc695391a3e2331fe0",
+      "bytes": 68690
     },
     "specialist/assessor.schema.json": {
-      "sha256": "311d630af3779885230fc0e270bcfd77c24bcc6c452eba1a50285a182ba7ef1d",
-      "bytes": 2247
+      "sha256": "cedc8c4a51806378a2335da93ef637587a133e37494fc4eee52dfecb5da6b0c6",
+      "bytes": 12230
     },
     "specialist/challenger.md": {
-      "sha256": "8104839a8fefbc4fb893042216f79c14c090bb996623812dd3ee6ba149e3b01e",
-      "bytes": 16321
+      "sha256": "15f72b64440fd3c5fa45fdf4ae325ef02251360749b64accfbdc449c8134f5df",
+      "bytes": 16563
     },
     "specialist/expander.md": {
-      "sha256": "58b1056362fe8d9f5725864f18d2848526acabbae7aee8e253ecb99c3db45bae",
-      "bytes": 11660
+      "sha256": "98062d8efd51c098262f4e37b6a2e434fc85e4058f1112b8848f0b75d146bbb0",
+      "bytes": 12058
     },
     "specialist/generation.schema.json": {
-      "sha256": "868b04435c85f3cad3854c705f13e220e26a4f4cd892a69405c4665e2353165b",
-      "bytes": 2787
+      "sha256": "7dcfb7c6c7794ce1d0f488dca30827ebc7dfbff2d1cf31d38a962337ef12a50c",
+      "bytes": 2556
     },
     "specialist/plan_preflight.schema.json": {
       "sha256": "b97c8440fc83a2575b5854f2b40b68f13feb2c87a3f1067c00c8084d9218ccd6",
       "bytes": 4445
     },
     "specialist/specialist_base.md": {
-      "sha256": "3f12aecdd7cd3f4ede298849c9cb03766777abb456db68eefcc49debb2a2d3c8",
-      "bytes": 8326
+      "sha256": "1dd255c95b3a9d17a44ecdbf871d6b971a1241504c1515dd0282a84b2fefc80a",
+      "bytes": 8387
     },
     "specialist/specialist_common.md": {
       "sha256": "33b4c228c50d0f37e4f6d213a9a2447e1666c22d3776a1d30e4938a6216967e6",
       "bytes": 5741
     },
     "specialist/synthesiser.md": {
-      "sha256": "9f7458b667b324bf1d2195c0ad6781b0f78368a7c698c879e3684e470e676052",
-      "bytes": 16893
+      "sha256": "e526dbb6f63aaa77d1f94e1348ec9b81e45aa8fa881d98f93d1e596cf2e660c7",
+      "bytes": 14992
     },
     "specialist/validation.schema.json": {
-      "sha256": "547b93a6c1dedf5dd45629d7a60d3c6c6a39e7f304d0e6dbda210b4b97ca4843",
-      "bytes": 3179
+      "sha256": "6b3e07298c11ac63630663bc548240b68701afb608d7c5d3a8d15ce830187f0e",
+      "bytes": 3219
     },
     "specialist/validator.md": {
-      "sha256": "ae8c2c3a3704e84d3d23ad74bcb8b7ff05aca05f5bbbf93837e334fdbdaae6e0",
-      "bytes": 9756
+      "sha256": "4598f0c6f3f1d6727fca31b2d0ffc0bd71d3899e31bc2b38c222b73c7062898c",
+      "bytes": 10407
     },
     "control_50/base.md": {
-      "sha256": "165f517c392361cb1f5765790fde3a0623663a07a04f8aa40673b15b6d46964e",
-      "bytes": 11768
+      "sha256": "eee1be5011d896d50dfdfaa0e57f3d4e38f07be4882822890f1c7d18a8e9ac62",
+      "bytes": 11348
     },
     "control_50/generalist.md": {
-      "sha256": "418b58322e8c5953ff0113d1c379255a102837a0d62b5deb47df8d8bd3a88aee",
-      "bytes": 3525
+      "sha256": "219ec47e10c0739436e7136a2b94ee48265f05055226ff25a143377456b1550c",
+      "bytes": 3403
     },
     "control_50/generation.schema.json": {
-      "sha256": "27ad27af7ed2dbee18dc264f555bbe22bf3fc79a02b473464ede595e094ade6c",
-      "bytes": 3086
+      "sha256": "2b271635594dc9c74c7d2bf649638493759a9fe2f66d8cf57d5879d0be4aab41",
+      "bytes": 2848
     },
     "control_50/static.md": {
-      "sha256": "3e66241467dee9a6a801efb10d2477a4064f69beed9445ef2355ece20433ceda",
-      "bytes": 2816
+      "sha256": "88f4877b3862412ab37f8c33720920698d3a0c319599918399c0afa2118e3dfb",
+      "bytes": 2758
     },
     "control_50/validation.schema.json": {
-      "sha256": "291d1e8c2351b13486720212bcff141060c4683504c75b14dc2759b1db3a99a1",
-      "bytes": 5444
+      "sha256": "0a05e67d2285c8598d519f595f51ceaf3819201a8c1c4520e157ac487c565611",
+      "bytes": 5339
     },
     "control_50/validator.md": {
-      "sha256": "202517f48d1c60ecdd342d63e5d852d4fdb8716f52c72ca8008d57469db2aa5b",
-      "bytes": 12249
+      "sha256": "fb4b842ea4df5fc68974b7364006bfb0540cdac990aba37fc653b596e5beb1ea",
+      "bytes": 12263
     },
     "frozen_control/base.md": {
       "sha256": "075deb1c9d1ddfc4d773e4b686079abc7e1a023957156fe4d4bd069e6b2c383e",
@@ -219,5 +219,7 @@
     "Challenger hard gate accepts any verified justification/concern/link need; numeric thresholds retained.",
     "No diversity-only role switch; fixed need/priority determines role.",
     "Only passed, matching preflight can enter Specialist validation; forged check flags rejected."
-  ]
+  ],
+  "updatedDate": "2026-10-25",
+  "revision": "word-limits-flexible-layout-bounded-adaptive-closeout-recovery"
 }

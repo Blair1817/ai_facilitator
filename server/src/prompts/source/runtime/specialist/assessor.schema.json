@@ -4,41 +4,450 @@
   "description": "One of four discussion needs with exact per-message evidence. Need/operation consistency, quotation accuracy, author counts and participation are re-verified deterministically by EvidenceChecker.checkNeedAssessment().",
   "type": "object",
   "properties": {
-    "need": { "type": "string", "enum": ["ELICIT", "SCRUTINIZE", "INTEGRATE", "NONE"] },
+    "need": {
+      "type": "string",
+      "enum": [
+        "ELICIT",
+        "SCRUTINIZE",
+        "INTEGRATE",
+        "NONE"
+      ]
+    },
     "operation": {
-      "type": ["string", "null"],
-      "enum": [null, "coverage_gap", "vague_information", "participation_gap", "unsupported_claim", "unclear_assumption", "unresolved_concern", "unclear_link", "fragmented_evidence", "cross_option_evidence", "public_discrepancy"]
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        null,
+        "coverage_gap",
+        "vague_information",
+        "participation_gap",
+        "unsupported_claim",
+        "unclear_assumption",
+        "unresolved_concern",
+        "unclear_link",
+        "fragmented_evidence",
+        "cross_option_evidence",
+        "public_discrepancy"
+      ]
     },
     "target": {
       "oneOf": [
-        { "type": "null" },
+        {
+          "type": "null"
+        },
         {
           "type": "object",
           "properties": {
-            "label": { "type": "string", "minLength": 1, "maxLength": 300 },
-            "messageIds": { "type": "array", "items": { "type": "string" }, "minItems": 1, "uniqueItems": true },
-            "evidence": { "type": "array", "items": { "$ref": "#/definitions/evidenceQuote" }, "minItems": 1 },
-            "optionLabels": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
-            "criteria": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
-            "participantName": { "type": "string", "minLength": 1, "description": "Mandatory only when operation is participation_gap; must exactly match a code-supplied quiet participant." }
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            },
+            "messageIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/evidenceQuote"
+              },
+              "minItems": 1
+            },
+            "optionLabels": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uniqueItems": true
+            },
+            "criteria": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uniqueItems": true
+            },
+            "participantName": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Mandatory only when operation is participation_gap; must exactly match a code-supplied quiet participant."
+            }
           },
-          "required": ["label", "messageIds", "evidence", "optionLabels", "criteria"],
+          "required": [
+            "label",
+            "messageIds",
+            "evidence",
+            "optionLabels",
+            "criteria"
+          ],
           "additionalProperties": false
         }
       ]
     },
-    "rationale": { "type": "string", "maxLength": 300 }
+    "rationale": {
+      "type": "string",
+      "maxLength": 300
+    },
+    "defer": {
+      "description": "Optional deliberate pause while a participant explicitly summarises now. Allowed only with NONE, null operation and null target. Omit otherwise.",
+      "type": "object",
+      "properties": {
+        "reason": {
+          "const": "participant_summary_in_progress"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/evidenceQuote"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "reason",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    "semanticReview": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "matches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "relation": {
+                "enum": [
+                  "different",
+                  "unchanged",
+                  "material_change"
+                ]
+              },
+              "responseEvidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/evidenceQuote"
+                }
+              },
+              "newEvidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/evidenceQuote"
+                }
+              }
+            },
+            "required": [
+              "id",
+              "relation",
+              "responseEvidence",
+              "newEvidence"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "key",
+        "matches"
+      ],
+      "additionalProperties": false
+    },
+    "closeout": {
+      "type": "object",
+      "properties": {
+        "proposal": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "active": {
+                  "type": "boolean"
+                },
+                "optionLabel": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/evidenceQuote"
+                  }
+                }
+              },
+              "required": [
+                "active",
+                "optionLabel",
+                "evidence"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "participants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "participantName": {
+                "type": "string"
+              },
+              "reviewedThroughMessageId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "stance": {
+                "enum": [
+                  "ready",
+                  "preference",
+                  "uncommitted",
+                  "withdrawn",
+                  "object",
+                  "continue"
+                ]
+              },
+              "optionLabel": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/definitions/evidenceQuote"
+                }
+              }
+            },
+            "required": [
+              "participantName",
+              "reviewedThroughMessageId",
+              "stance",
+              "optionLabel",
+              "evidence"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "proposal",
+        "participants"
+      ],
+      "additionalProperties": false
+    },
+    "integrationStatus": {
+      "enum": [
+        "qualified",
+        "insufficient_material",
+        "already_covered",
+        "participant_summary_in_progress",
+        "no_open_integration",
+        "not_assessed"
+      ]
+    },
+    "integrationCandidate": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "need": {
+              "const": "INTEGRATE"
+            },
+            "operation": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                null,
+                "coverage_gap",
+                "vague_information",
+                "participation_gap",
+                "unsupported_claim",
+                "unclear_assumption",
+                "unresolved_concern",
+                "unclear_link",
+                "fragmented_evidence",
+                "cross_option_evidence",
+                "public_discrepancy"
+              ]
+            },
+            "target": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 300
+                    },
+                    "messageIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "minItems": 1,
+                      "uniqueItems": true
+                    },
+                    "evidence": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/definitions/evidenceQuote"
+                      },
+                      "minItems": 1
+                    },
+                    "optionLabels": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "uniqueItems": true
+                    },
+                    "criteria": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "uniqueItems": true
+                    },
+                    "participantName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "Mandatory only when operation is participation_gap; must exactly match a code-supplied quiet participant."
+                    }
+                  },
+                  "required": [
+                    "label",
+                    "messageIds",
+                    "evidence",
+                    "optionLabels",
+                    "criteria"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "rationale": {
+              "type": "string",
+              "maxLength": 300
+            },
+            "semanticReview": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "matches": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "relation": {
+                        "enum": [
+                          "different",
+                          "unchanged",
+                          "material_change"
+                        ]
+                      },
+                      "responseEvidence": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/definitions/evidenceQuote"
+                        }
+                      },
+                      "newEvidence": {
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/definitions/evidenceQuote"
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "relation",
+                      "responseEvidence",
+                      "newEvidence"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "key",
+                "matches"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "need",
+            "operation",
+            "target",
+            "rationale"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
   },
-  "required": ["need", "operation", "target", "rationale"],
+  "required": [
+    "need",
+    "operation",
+    "target",
+    "rationale"
+  ],
   "additionalProperties": false,
   "definitions": {
     "evidenceQuote": {
       "type": "object",
       "properties": {
-        "messageId": { "type": "string", "minLength": 1 },
-        "span": { "type": "string", "minLength": 1 }
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "span": {
+          "type": "string",
+          "minLength": 1
+        }
       },
-      "required": ["messageId", "span"],
+      "required": [
+        "messageId",
+        "span"
+      ],
       "additionalProperties": false
     }
   }
