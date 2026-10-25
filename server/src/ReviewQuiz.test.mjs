@@ -38,88 +38,15 @@ const TASK_OBJECTIVES = {
 const EVIDENCE_RULE = "Use only the facts provided, without outside knowledge or assumptions.";
 const INFORMATION_DIFFERENCE_NOTICE = "Some information may be different from what other group members see.";
 
-const PROOFREAD_FACTS = {
-  "A": {
-    "shared": [
-      "Direct trains run often from the airport to the main sports area.",
-      "Some visitor cafés have too few seats after evening matches.",
-      "There is no tram stop close to the main fan area.",
-      "Rovenna has hosted large sports events on time.",
-      "Many mid-priced hotels are a short trip from the sports venues.",
-      "Local sports clubs support hosting the Games.",
-      "Direct buses link the main station to all three sports areas.",
-      "Visitor stalls will be spread across sites far apart.",
-      "Only one ticket desk stays open after evening matches."
-    ],
-    "Green": [
-      "Entry checks at a recent youth event kept queues short.",
-      "Local colleges have trained helpers who speak several languages.",
-      "The waterfront hosts popular music events on summer evenings.",
-      "A path near the river gets crowded during the weekend market.",
-      "Event tickets give discounts at several local museums.",
-      "A local sports centre provides indoor space for visiting teams.",
-      "Roadworks may delay travel to one sports venue."
-    ],
-    "Blue": [
-      "Teams can use covered rest areas between matches.",
-      "Local food stalls will sell low-cost meals near team hotels.",
-      "One visitor ticket covers local buses, trams and trains.",
-      "Some hotels ask for early deposits that cannot be refunded.",
-      "Two event bus routes share a crowded afternoon stop.",
-      "Local arts groups will perform during the Games.",
-      "Some volunteer shifts have no backup staff if plans change."
-    ],
-    "Pink": [
-      "A full-time event office can manage schedules at all sports venues.",
-      "Extra buses have funding to run after evening matches.",
-      "Sports clubs will offer free activities for visiting families.",
-      "Local volunteers will staff welcome desks at the main stations.",
-      "Two outdoor viewing areas have little shelter in bad weather.",
-      "Independent guesthouses offer fixed prices for the event weekend.",
-      "The event website offers information in only two languages."
-    ]
-  },
-  "B": {
-    "shared": [
-      "Clear indoor signs guide visitors to all main lecture rooms.",
-      "Some research displays are in a separate building across the courtyard.",
-      "The event app cannot remind attendees about their chosen talks.",
-      "The main library hall offers space for small meetings.",
-      "Halden has hosted several large research events without major problems.",
-      "Campus cafés offer meals that suit many dietary needs.",
-      "Outdoor seating areas provide space to meet between sessions.",
-      "Some research posters would hang in busy corridors.",
-      "Attendees from different sessions have breaks in separate buildings."
-    ],
-    "Green": [
-      "Online participants can ask questions during every streamed session.",
-      "Attendees can view research posters online before the summit.",
-      "A nearby gallery can host an evening event for researchers.",
-      "Some workshop rooms have fixed seats that limit group activities.",
-      "Staff will offer free workshops on explaining research to the public.",
-      "Student groups will offer free tours of campus exhibitions.",
-      "Several seminar rooms lack space to display workshop materials."
-    ],
-    "Blue": [
-      "Staff will help speakers test equipment before their talks.",
-      "One campus map shows the quickest routes between meeting rooms.",
-      "Graduates from several fields will lead a free careers discussion.",
-      "Only two campus help desks display changes to the timetable.",
-      "Campus buses have long queues after the largest afternoon talks.",
-      "The event website lists changes to room locations.",
-      "Lunch vouchers work at only two campus cafés."
-    ],
-    "Pink": [
-      "Most talks take place in one connected group of buildings.",
-      "Student helpers will share short notes on the main talks.",
-      "Research teams can book tables to show their work.",
-      "The largest lecture hall has comfortable seats and clear views.",
-      "Quiet rooms near the displays have too few power sockets.",
-      "Attendees can book tables for one-to-one research talks.",
-      "The campus desk cannot store bags after the afternoon sessions."
-    ]
-  }
-};
+// Source transcription is researcher-only and is not loaded by the experiment.
+const revisedMaterials = JSON.parse(readFileSync(path.join(dirname, "../test/fixtures/hidden-profile-valence-2026-10-25.json"), "utf8"));
+const PROOFREAD_FACTS = Object.fromEntries(revisedMaterials.tasks.map(({ taskVersion, facts }) => [
+  taskVersion,
+  Object.fromEntries(["Common", "P1", "P2", "P3"].map((visibility, index) => [
+    ["shared", "Green", "Blue", "Pink"][index],
+    facts.filter((fact) => fact.visibility === visibility).map((fact) => fact.text),
+  ])),
+]));
 
 function facts(markdown) {
   return markdown.split("\n").filter((line) => line.startsWith("- ")).map((line) => line.slice(2));

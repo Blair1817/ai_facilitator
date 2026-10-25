@@ -1,0 +1,771 @@
+{
+  "source": "Hidden_Profile_Tasks_Revised_Valence_2026-10-25.docx",
+  "tasks": [
+    {
+      "taskVersion": "A",
+      "facts": [
+        {
+          "id": "O1",
+          "option": "Talwick",
+          "role": "Optimal",
+          "category": "Mobility",
+          "valence": 1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "A frequent direct rail service connects the airport to the venue district."
+        },
+        {
+          "id": "O2",
+          "option": "Talwick",
+          "role": "Optimal",
+          "category": "Accommodation",
+          "valence": -1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "Some event hotels require multiple transfers, making daily travel to the venue district inconvenient."
+        },
+        {
+          "id": "O3",
+          "option": "Talwick",
+          "role": "Optimal",
+          "category": "Visitor experience",
+          "valence": -1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "Visitor surveys report few evening activities available within walking distance of the venue district."
+        },
+        {
+          "id": "O4",
+          "option": "Talwick",
+          "role": "Optimal",
+          "category": "Event operations",
+          "valence": 1,
+          "visibility": "P1",
+          "profiles": [
+            1
+          ],
+          "text": "A tested digital check-in system handled a recent international event with few delays."
+        },
+        {
+          "id": "O5",
+          "option": "Talwick",
+          "role": "Optimal",
+          "category": "Community and environment",
+          "valence": 1,
+          "visibility": "P1",
+          "profiles": [
+            1
+          ],
+          "text": "Local groups have recruited enough trained volunteers for the event, including many who speak several languages."
+        },
+        {
+          "id": "O6",
+          "option": "Talwick",
+          "role": "Optimal",
+          "category": "Mobility",
+          "valence": 1,
+          "visibility": "P2",
+          "profiles": [
+            2
+          ],
+          "text": "The bus operator can add enough event services without reducing normal routes for residents."
+        },
+        {
+          "id": "O7",
+          "option": "Talwick",
+          "role": "Optimal",
+          "category": "Accommodation",
+          "valence": 1,
+          "visibility": "P2",
+          "profiles": [
+            2
+          ],
+          "text": "Most partner hotels allow flexible check-in and can provide coordinated meal times for teams."
+        },
+        {
+          "id": "O8",
+          "option": "Talwick",
+          "role": "Optimal",
+          "category": "Event operations",
+          "valence": 1,
+          "visibility": "P3",
+          "profiles": [
+            3
+          ],
+          "text": "A permanent coordination centre allows venue staff, emergency services, transport teams, and organisers to coordinate event operations."
+        },
+        {
+          "id": "O9",
+          "option": "Talwick",
+          "role": "Optimal",
+          "category": "Visitor experience",
+          "valence": 1,
+          "visibility": "P3",
+          "profiles": [
+            3
+          ],
+          "text": "The main visitor area, a short shuttle ride from the venue district, offers museums, restaurants, and evening entertainment."
+        },
+        {
+          "id": "O10",
+          "option": "Talwick",
+          "role": "Optimal",
+          "category": "Community and environment",
+          "valence": 1,
+          "visibility": "P3",
+          "profiles": [
+            3
+          ],
+          "text": "Reusable cups and waste sorting are funded at every proposed event site."
+        },
+        {
+          "id": "D1",
+          "option": "Rovenna",
+          "role": "Decoy",
+          "category": "Event operations",
+          "valence": 1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "The city has a reliable record of delivering similar international events on time and within budget."
+        },
+        {
+          "id": "D2",
+          "option": "Rovenna",
+          "role": "Decoy",
+          "category": "Accommodation",
+          "valence": 1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "The city has enough mid-range hotel rooms close to all proposed venues."
+        },
+        {
+          "id": "D3",
+          "option": "Rovenna",
+          "role": "Decoy",
+          "category": "Community and environment",
+          "valence": 1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "Local sports clubs and the city business council have committed volunteers and practical resources to support the event."
+        },
+        {
+          "id": "D4",
+          "option": "Rovenna",
+          "role": "Decoy",
+          "category": "Visitor experience",
+          "valence": 1,
+          "visibility": "P1",
+          "profiles": [
+            1
+          ],
+          "text": "Visitors consistently rate the waterfront area and its evening cultural programme highly."
+        },
+        {
+          "id": "D5",
+          "option": "Rovenna",
+          "role": "Decoy",
+          "category": "Community and environment",
+          "valence": -1,
+          "visibility": "P1",
+          "profiles": [
+            1
+          ],
+          "text": "Residents near several proposed venues have formally objected to expected noise and late-evening crowds."
+        },
+        {
+          "id": "D6",
+          "option": "Rovenna",
+          "role": "Decoy",
+          "category": "Mobility",
+          "valence": 1,
+          "visibility": "P3",
+          "profiles": [
+            3
+          ],
+          "text": "A single travel pass lets visitors use rail, buses, trams, and the airport shuttle without buying separate tickets."
+        },
+        {
+          "id": "D7",
+          "option": "Rovenna",
+          "role": "Decoy",
+          "category": "Accommodation",
+          "valence": -1,
+          "visibility": "P2",
+          "profiles": [
+            2
+          ],
+          "text": "Several budget hotels require non-refundable bookings before final attendance numbers are confirmed."
+        },
+        {
+          "id": "D8",
+          "option": "Rovenna",
+          "role": "Decoy",
+          "category": "Event operations",
+          "valence": -1,
+          "visibility": "P2",
+          "profiles": [
+            2
+          ],
+          "text": "Mobile coverage becomes unreliable around one venue when crowds are largest."
+        },
+        {
+          "id": "D9",
+          "option": "Rovenna",
+          "role": "Decoy",
+          "category": "Visitor experience",
+          "valence": 1,
+          "visibility": "P2",
+          "profiles": [
+            2
+          ],
+          "text": "Free visitor activities have been scheduled at the central market and public squares."
+        },
+        {
+          "id": "D10",
+          "option": "Rovenna",
+          "role": "Decoy",
+          "category": "Mobility",
+          "valence": -1,
+          "visibility": "P3",
+          "profiles": [
+            3
+          ],
+          "text": "Two venue tram routes share one junction that becomes crowded at peak times."
+        },
+        {
+          "id": "F1",
+          "option": "Meridia",
+          "role": "Filler",
+          "category": "Mobility",
+          "valence": 1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "Direct public transport links the main station with every proposed venue."
+        },
+        {
+          "id": "F2",
+          "option": "Meridia",
+          "role": "Filler",
+          "category": "Visitor experience",
+          "valence": -1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "Visitor help desks close before most evening events and local attractions finish."
+        },
+        {
+          "id": "F3",
+          "option": "Meridia",
+          "role": "Filler",
+          "category": "Event operations",
+          "valence": -1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "The temporary media centre still lacks essential power and network equipment needed to open on schedule."
+        },
+        {
+          "id": "F4",
+          "option": "Meridia",
+          "role": "Filler",
+          "category": "Accommodation",
+          "valence": 1,
+          "visibility": "P1",
+          "profiles": [
+            1
+          ],
+          "text": "University residences can meet the expected need for extra low-cost beds."
+        },
+        {
+          "id": "F5",
+          "option": "Meridia",
+          "role": "Filler",
+          "category": "Community and environment",
+          "valence": 1,
+          "visibility": "P2",
+          "profiles": [
+            2
+          ],
+          "text": "Local schools and sports clubs will organise family activities throughout the event."
+        },
+        {
+          "id": "F6",
+          "option": "Meridia",
+          "role": "Filler",
+          "category": "Mobility",
+          "valence": -1,
+          "visibility": "P1",
+          "profiles": [
+            1
+          ],
+          "text": "Road repairs will cause travel delays between the airport and the northern venue area during the event."
+        },
+        {
+          "id": "F7",
+          "option": "Meridia",
+          "role": "Filler",
+          "category": "Accommodation",
+          "valence": 1,
+          "visibility": "P3",
+          "profiles": [
+            3
+          ],
+          "text": "Several independent hotels offer affordable rates near the central event area."
+        },
+        {
+          "id": "F8",
+          "option": "Meridia",
+          "role": "Filler",
+          "category": "Event operations",
+          "valence": -1,
+          "visibility": "P2",
+          "profiles": [
+            2
+          ],
+          "text": "The city needs more trained stewards to meet the usual staffing level."
+        },
+        {
+          "id": "F9",
+          "option": "Meridia",
+          "role": "Filler",
+          "category": "Visitor experience",
+          "valence": 1,
+          "visibility": "P1",
+          "profiles": [
+            1
+          ],
+          "text": "The visitor pass includes free museum entry and unlimited travel on local buses."
+        },
+        {
+          "id": "F10",
+          "option": "Meridia",
+          "role": "Filler",
+          "category": "Community and environment",
+          "valence": -1,
+          "visibility": "P3",
+          "profiles": [
+            3
+          ],
+          "text": "Public surveys show substantial resident opposition because of expected disruption in nearby neighbourhoods."
+        }
+      ]
+    },
+    {
+      "taskVersion": "B",
+      "facts": [
+        {
+          "id": "O1",
+          "option": "Norvale",
+          "role": "Optimal",
+          "category": "Access",
+          "valence": 1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "A frequent direct coach service connects the airport to the conference campus."
+        },
+        {
+          "id": "O2",
+          "option": "Norvale",
+          "role": "Optimal",
+          "category": "Accommodation",
+          "valence": -1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "Some summit hotels require multiple transfers, making daily travel to the conference campus inconvenient."
+        },
+        {
+          "id": "O3",
+          "option": "Norvale",
+          "role": "Optimal",
+          "category": "Delegate experience",
+          "valence": -1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "Delegate surveys report few evening dining options within walking distance of the conference campus."
+        },
+        {
+          "id": "O4",
+          "option": "Norvale",
+          "role": "Optimal",
+          "category": "Conference operations",
+          "valence": 1,
+          "visibility": "P1",
+          "profiles": [
+            1
+          ],
+          "text": "A tested digital registration system handled a recent academic conference with few delays."
+        },
+        {
+          "id": "O5",
+          "option": "Norvale",
+          "role": "Optimal",
+          "category": "Community and sustainability",
+          "valence": 1,
+          "visibility": "P1",
+          "profiles": [
+            1
+          ],
+          "text": "Student groups have recruited enough trained assistants for the summit, including many who speak several languages."
+        },
+        {
+          "id": "O6",
+          "option": "Norvale",
+          "role": "Optimal",
+          "category": "Access",
+          "valence": 1,
+          "visibility": "P2",
+          "profiles": [
+            2
+          ],
+          "text": "The shuttle operator can add enough summit services without reducing regular routes for students."
+        },
+        {
+          "id": "O7",
+          "option": "Norvale",
+          "role": "Optimal",
+          "category": "Accommodation",
+          "valence": 1,
+          "visibility": "P2",
+          "profiles": [
+            2
+          ],
+          "text": "Most partner hotels allow flexible check-in and can provide coordinated meal times for delegates."
+        },
+        {
+          "id": "O8",
+          "option": "Norvale",
+          "role": "Optimal",
+          "category": "Conference operations",
+          "valence": 1,
+          "visibility": "P3",
+          "profiles": [
+            3
+          ],
+          "text": "A permanent coordination centre allows organisers, security staff, technical teams, and campus services to coordinate summit operations."
+        },
+        {
+          "id": "O9",
+          "option": "Norvale",
+          "role": "Optimal",
+          "category": "Delegate experience",
+          "valence": 1,
+          "visibility": "P3",
+          "profiles": [
+            3
+          ],
+          "text": "The main delegate leisure area, a short shuttle ride from the conference campus, offers cafés, galleries, and evening events."
+        },
+        {
+          "id": "O10",
+          "option": "Norvale",
+          "role": "Optimal",
+          "category": "Community and sustainability",
+          "valence": 1,
+          "visibility": "P3",
+          "profiles": [
+            3
+          ],
+          "text": "Refill stations and waste collection are funded at every proposed summit building."
+        },
+        {
+          "id": "D1",
+          "option": "Halden",
+          "role": "Decoy",
+          "category": "Conference operations",
+          "valence": 1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "The campus has a reliable record of delivering similar academic conferences on time and within budget."
+        },
+        {
+          "id": "D2",
+          "option": "Halden",
+          "role": "Decoy",
+          "category": "Accommodation",
+          "valence": 1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "The campus has enough mid-range guest rooms close to all conference buildings."
+        },
+        {
+          "id": "D3",
+          "option": "Halden",
+          "role": "Decoy",
+          "category": "Community and sustainability",
+          "valence": 1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "Local faculty groups and the city business council have committed volunteers and practical resources to support the summit."
+        },
+        {
+          "id": "D4",
+          "option": "Halden",
+          "role": "Decoy",
+          "category": "Delegate experience",
+          "valence": 1,
+          "visibility": "P1",
+          "profiles": [
+            1
+          ],
+          "text": "Delegates consistently rate the lakeside area and its evening cultural programme highly."
+        },
+        {
+          "id": "D5",
+          "option": "Halden",
+          "role": "Decoy",
+          "category": "Community and sustainability",
+          "valence": -1,
+          "visibility": "P1",
+          "profiles": [
+            1
+          ],
+          "text": "Residents near several conference buildings have formally objected to expected traffic and late-evening noise."
+        },
+        {
+          "id": "D6",
+          "option": "Halden",
+          "role": "Decoy",
+          "category": "Access",
+          "valence": 1,
+          "visibility": "P3",
+          "profiles": [
+            3
+          ],
+          "text": "A single travel pass lets delegates use rail, buses, campus shuttles, and bicycle hire without buying separate tickets."
+        },
+        {
+          "id": "D7",
+          "option": "Halden",
+          "role": "Decoy",
+          "category": "Accommodation",
+          "valence": -1,
+          "visibility": "P2",
+          "profiles": [
+            2
+          ],
+          "text": "Several budget residences require non-refundable bookings before final delegate numbers are confirmed."
+        },
+        {
+          "id": "D8",
+          "option": "Halden",
+          "role": "Decoy",
+          "category": "Conference operations",
+          "valence": -1,
+          "visibility": "P2",
+          "profiles": [
+            2
+          ],
+          "text": "Wireless internet becomes unreliable inside one hall when attendance is highest."
+        },
+        {
+          "id": "D9",
+          "option": "Halden",
+          "role": "Decoy",
+          "category": "Delegate experience",
+          "valence": 1,
+          "visibility": "P2",
+          "profiles": [
+            2
+          ],
+          "text": "Free delegate activities have been scheduled at the riverside gardens and public library."
+        },
+        {
+          "id": "D10",
+          "option": "Halden",
+          "role": "Decoy",
+          "category": "Access",
+          "valence": -1,
+          "visibility": "P3",
+          "profiles": [
+            3
+          ],
+          "text": "Two campus shuttle routes share one entrance that becomes crowded at peak times."
+        },
+        {
+          "id": "F1",
+          "option": "Fenwick",
+          "role": "Filler",
+          "category": "Access",
+          "valence": 1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "Direct public transport links the central station with every conference building."
+        },
+        {
+          "id": "F2",
+          "option": "Fenwick",
+          "role": "Filler",
+          "category": "Delegate experience",
+          "valence": -1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "Delegate help desks close before most evening sessions and networking events finish."
+        },
+        {
+          "id": "F3",
+          "option": "Fenwick",
+          "role": "Filler",
+          "category": "Conference operations",
+          "valence": -1,
+          "visibility": "Common",
+          "profiles": [
+            1,
+            2,
+            3
+          ],
+          "text": "The proposed exhibition hall still lacks essential lighting and network equipment needed to open on schedule."
+        },
+        {
+          "id": "F4",
+          "option": "Fenwick",
+          "role": "Filler",
+          "category": "Accommodation",
+          "valence": 1,
+          "visibility": "P1",
+          "profiles": [
+            1
+          ],
+          "text": "Student residences can meet the expected need for extra low-cost rooms."
+        },
+        {
+          "id": "F5",
+          "option": "Fenwick",
+          "role": "Filler",
+          "category": "Community and sustainability",
+          "valence": 1,
+          "visibility": "P2",
+          "profiles": [
+            2
+          ],
+          "text": "Local schools and science charities will organise public activities throughout the summit."
+        },
+        {
+          "id": "F6",
+          "option": "Fenwick",
+          "role": "Filler",
+          "category": "Access",
+          "valence": -1,
+          "visibility": "P1",
+          "profiles": [
+            1
+          ],
+          "text": "Road repairs will cause travel delays between the airport and the eastern campus entrance during the summit."
+        },
+        {
+          "id": "F7",
+          "option": "Fenwick",
+          "role": "Filler",
+          "category": "Accommodation",
+          "valence": 1,
+          "visibility": "P3",
+          "profiles": [
+            3
+          ],
+          "text": "Several independent guesthouses offer affordable rates near the central conference area."
+        },
+        {
+          "id": "F8",
+          "option": "Fenwick",
+          "role": "Filler",
+          "category": "Conference operations",
+          "valence": -1,
+          "visibility": "P2",
+          "profiles": [
+            2
+          ],
+          "text": "The campus needs more trained technicians to meet the usual staffing level."
+        },
+        {
+          "id": "F9",
+          "option": "Fenwick",
+          "role": "Filler",
+          "category": "Delegate experience",
+          "valence": 1,
+          "visibility": "P1",
+          "profiles": [
+            1
+          ],
+          "text": "The delegate pass includes free exhibition entry and unlimited travel on local buses."
+        },
+        {
+          "id": "F10",
+          "option": "Fenwick",
+          "role": "Filler",
+          "category": "Community and sustainability",
+          "valence": -1,
+          "visibility": "P3",
+          "profiles": [
+            3
+          ],
+          "text": "Public surveys show substantial resident opposition because of expected disruption around the campus."
+        }
+      ]
+    }
+  ]
+}
