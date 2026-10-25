@@ -351,7 +351,8 @@ test("stale async Discussion results are discarded after their originating stage
   assert.match(callbacksSource, /game\.currentRound\?\.id !== originatingRoundId/);
   assert.match(callbacksSource, /game\.currentStage\?\.id !== originatingStageId/);
   assert.match(callbacksSource, /Discarded stale AI result after the originating Discussion stage ended/);
-  assert.match(callbacksSource, /Discarded stale LLM detector result after the originating Discussion stage ended/);
+  assert.match(callbacksSource, /isCurrent: \(\) => canPublishFacilitatorResult\(game, logEntry\)/);
+  assert.match(callbacksSource, /if \(!budget\.check\(\)\) return null/);
   assert.match(callbacksSource, /Discarded stale Validator result after the originating Discussion stage ended/);
   assert.match(callbacksSource, /Discarded stale repair Validator result after the originating Discussion stage ended/);
 });

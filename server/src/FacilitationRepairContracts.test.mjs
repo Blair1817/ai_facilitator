@@ -33,34 +33,18 @@ test("Static and Generalist prompt files are both startup dependencies", () => {
   assert.match(requiredArray, /"generalist\.md"/);
 });
 
-// 2026-10-21: a rejected Specialist now falls back once to the Static policy
-// (the Adaptive default), with no Specialist Validator-feedback repair.
-test("Specialist Validator rejection routes once to the Static policy without a Specialist repair", () => {
-  const specialistStart = callbacksSource.indexOf("// ── Specialist path:");
-  const specialistBody = callbacksSource.slice(specialistStart);
-  const specialistCall = specialistBody.indexOf("runSharedGeneration(");
-  const noRepair = specialistBody.indexOf("{ allowValidatorRepair: false }", specialistCall);
-  const rejectionCheck = specialistBody.indexOf('logEntry.outcome === "SILENT_VALIDATOR_REJECTED"');
-  const fallbackMarker = specialistBody.indexOf('logEntry.fallbackRoute = "SPECIALIST_TO_STATIC_POLICY"');
-  const staticBuild = specialistBody.search(/"static",\s*\n\s*null,\s*\n\s*null,/);
-  const fallbackCall = specialistBody.indexOf("runSharedGeneration(", staticBuild);
-
-  assert.ok(specialistCall >= 0 && noRepair > specialistCall && noRepair < rejectionCheck, "the Specialist attempt must disable Validator-feedback repair");
-  assert.ok(rejectionCheck >= 0, "fallback must be gated by a failed semantic validation");
-  assert.ok(fallbackMarker > rejectionCheck, "fallback route must be audit-logged");
-  assert.ok(staticBuild > fallbackMarker, "fallback must build the Static-policy context");
-  assert.ok(fallbackCall > staticBuild, "fallback context must use the shared generation/validation pipeline");
-  assert.doesNotMatch(specialistBody.slice(0, specialistBody.indexOf("Empirica.on(")), /"adaptive",\s*\n\s*"generalist"/, "automatic Adaptive no longer uses the Generalist prompt");
-});
-
-test("successful Static-policy fallback is recorded and published as STATIC", () => {
-  const specialistStart = callbacksSource.indexOf("// ── Specialist path:");
-  const specialistBody = callbacksSource.slice(specialistStart);
-  assert.match(specialistBody, /publishedRole\s*=\s*"STATIC"/);
-  assert.match(specialistBody, /logEntry\.selectedRole\s*=\s*"STATIC"/);
-  assert.match(specialistBody, /recordPublish\(game,\s*\{\s*role:\s*publishedRole/s);
-  assert.match(specialistBody, /specialistFailure\s*=\s*\{/);
-  assert.match(specialistBody, /fallbackPublished\s*=\s*result\.published/);
+// Actual bounded recovery behavior is exercised in AdaptivePipeline and
+// AdaptiveRecovery tests; this contract checks shared prompt/publication wiring.
+test("Adaptive recovery uses the same Static generator/validator path", () => {
+  const start = callbacksSource.indexOf("async function fallback()");
+  const end = callbacksSource.indexOf("async function generate(selection)", start);
+  const fallback = callbacksSource.slice(start, end);
+  assert.ok(start > 0 && end > start);
+  assert.match(fallback, /selectedRole = "STATIC"/);
+  assert.match(fallback, /buildGeneratorContext\([^;]*"static", null, null\)/);
+  assert.match(fallback, /runSharedGeneration\(/);
+  assert.match(fallback, /role: "STATIC"/);
+  assert.match(callbacksSource, /recordPublish\(game, \{ role: result\.role/);
 });
 
 test("@Facilitator routes to a participant-requested Generalist before automatic policies", () => {

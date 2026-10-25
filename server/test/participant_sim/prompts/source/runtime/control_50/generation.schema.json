@@ -21,29 +21,24 @@
         "object"
       ],
       "minLength": 1,
-      "maxLength": 1500,
-      "description": "Same structured/string output contract as the baseline. Complete flattened visible text is at most 1500 characters and at most 50 English words for automatic STATIC/GENERALIST; runtime checks combined text. Requested Generalist uses its frozen schema and separate policy.",
+      "description": "One intervention with optional sections, paragraphs and numbered lists. Runtime word ceiling across all visible text including titles and list numbers: 50 English words. No sentence, section or point-count cap.",
       "properties": {
         "summary": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 1500
+          "minLength": 1
         },
         "sections": {
           "type": "array",
-          "maxItems": 6,
           "items": {
             "type": "object",
             "properties": {
               "title": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 100
+                "minLength": 1
               },
               "body": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 1500
+                "minLength": 1
               }
             },
             "required": [
@@ -54,8 +49,7 @@
           }
         },
         "question": {
-          "type": "string",
-          "maxLength": 1500
+          "type": "string"
         }
       },
       "required": [

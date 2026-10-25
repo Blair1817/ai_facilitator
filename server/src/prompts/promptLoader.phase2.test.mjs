@@ -85,7 +85,8 @@ test("getStaticPromptBundle does NOT instruct the LLM to output a RATIONALE fiel
 test("getStaticPromptBundle uses the shared structured-message contract", () => {
   const bundle = getStaticPromptBundle();
   assert.match(bundle.content, /shared structured-message contract/);
-  assert.match(bundle.content, /combined plain text must stay under 1500 characters/);
+  assert.match(bundle.content, /runtime 50-word ceiling applies to the whole intervention/);
+  assert.match(bundle.content, /Numbered plain-text lists and paragraph breaks are allowed/);
   assert.doesNotMatch(bundle.content, /you may use newlines for formatting/i);
 });
 

@@ -13,21 +13,21 @@ export function buildSynthesisPointContract(optionLabels, allowedIds) {
       scoreboard: { type: "array", minItems: 1, maxItems: options.length, items: {
         type: "object", additionalProperties: false, properties: {
           option: { type: "string", enum: options },
-          points: { type: "array", minItems: 1, maxItems: 2, items: {
+          points: { type: "array", minItems: 1, items: {
             type: "object", additionalProperties: false, properties: {
-              text: { type: "string", minLength: 1, maxLength: 500 },
+              text: { type: "string", minLength: 1 },
               sourceMessageIds: { ...idList, minItems: 1 },
             }, required: ["text", "sourceMessageIds"],
           } },
         }, required: ["option", "points"],
       } },
-      question: { type: "string", minLength: 1, maxLength: 500 },
+      question: { type: "string", minLength: 1 },
       questionGroundingMessageIds: idList,
     }, required: ["role", "scoreboard", "question", "questionGroundingMessageIds"],
   };
   return {
     responseSchema: { name: "facilitator_synthesis_points", schema },
-    instruction: `\n\n## RUNTIME OUTPUT FORMAT FOR THIS REQUEST\nInstead of the legacy role/message/groundingMessageIds object, emit exactly\nrole, scoreboard, question and questionGroundingMessageIds matching the supplied\nJSON Schema. Each scoreboard item names one TARGET option and contains at most\ntwo atomic public points, each with its sourceMessageIds. Select two points when\nthree are available; never pack multiple independent facts into one point.\nPreserve each selected fact's qualifiers. The runtime formats these selected\npoints into the same one-sentence scoreboard and question the role requires.\nDo not output message, summary, sections, reasoning, counts or private data.\nUse questionGroundingMessageIds only for additional public framing in the\nquestion; otherwise []. All original role, neutrality and length limits apply.`,
+    instruction: `\n\n## RUNTIME OUTPUT FORMAT FOR THIS REQUEST\nInstead of the legacy role/message/groundingMessageIds object, emit exactly\nrole, scoreboard, question and questionGroundingMessageIds matching the supplied\nJSON Schema. Each scoreboard item names one TARGET option and contains public\npoints, each with its sourceMessageIds. Preserve each fact's qualifiers and\ninclude grounded explanation where it helps participants understand the point.\nThe runtime renders "Shared points", an option heading, numbered points under\neach option, and the closing question. Include all those visible words and\nnumber markers in the existing 55-word budget. Point count, sentence count and\nparagraph count are unrestricted within that word limit. List numbers indicate\nstructure, never scores or rankings. Do not output message, summary, sections,\ninternal reasoning or private data. Use questionGroundingMessageIds only for\nadditional public framing in the question; otherwise []. All role, grounding\nand neutrality rules still apply.`,
   };
 }
 
@@ -39,10 +39,13 @@ export function decodeSynthesisPoints(value, contract) {
   const sourceIds = [...new Set(value.scoreboard.flatMap(row => row.points.flatMap(point => point.sourceMessageIds)))];
   if (sourceIds.length < 2) return { ok: false, error: "Synthesis must organise at least two public contributions" };
   // Formatting only: no fact is generated, truncated or semantically rewritten.
-  const text = value.scoreboard.map(row => `${row.option}: ${row.points.map(point => point.text.trim().replace(/\.$/u, "")).join("; ")}`).join("; ");
+  const sections = value.scoreboard.map(row => ({
+    title: row.option,
+    body: row.points.map((point, index) => `${index + 1}. ${point.text.trim()}`).join("\n"),
+  }));
   return { ok: true, parsed: {
     role: value.role,
-    message: { summary: `Shared so far — ${text}.`, sections: [], question: value.question },
+    message: { summary: "Shared points", sections, question: value.question },
     groundingMessageIds: [...new Set([...sourceIds, ...value.questionGroundingMessageIds])],
   } };
 }

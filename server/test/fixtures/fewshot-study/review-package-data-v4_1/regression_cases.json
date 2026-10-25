@@ -52,13 +52,11 @@
         "signature": "[\"EVIDENCE_AUDIT\",[\"m2\",\"m3\"],\"Alex's claim that Cedar's event app guarantees perfect attendance has no stated support; Casey has substantively discussed Cedar on another aspect.\"]",
         "intensity": "medium",
         "maxWords": 50,
-        "maxSentences": 3,
         "gap": "Alex's claim that Cedar's event app guarantees perfect attendance has no stated support; Casey has substantively discussed Cedar on another aspect.",
         "prohibitions": [
           "MUST_NOT_RECOMMEND_OR_RANK_OPTION",
           "MUST_NOT_REVEAL_PRIVATE_PROFILE_INFORMATION",
-          "MUST_NOT_CLAIM_TO_KNOW_CORRECT_ANSWER",
-          "MUST_NOT_EXCEED_THREE_SENTENCES"
+          "MUST_NOT_CLAIM_TO_KNOW_CORRECT_ANSWER"
         ]
       },
       "runtime_inputs": {
@@ -227,13 +225,11 @@
         "signature": "[\"EVIDENCE_AUDIT\",[\"m3\",\"m4\"],\"The shared claim that Briar guarantees every presentation starts on time lacks support.\"]",
         "intensity": "medium",
         "maxWords": 50,
-        "maxSentences": 3,
         "gap": "The shared claim that Briar guarantees every presentation starts on time lacks support.",
         "prohibitions": [
           "MUST_NOT_RECOMMEND_OR_RANK_OPTION",
           "MUST_NOT_REVEAL_PRIVATE_PROFILE_INFORMATION",
-          "MUST_NOT_CLAIM_TO_KNOW_CORRECT_ANSWER",
-          "MUST_NOT_EXCEED_THREE_SENTENCES"
+          "MUST_NOT_CLAIM_TO_KNOW_CORRECT_ANSWER"
         ]
       },
       "runtime_inputs": {

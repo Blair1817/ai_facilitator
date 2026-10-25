@@ -72,16 +72,12 @@ solicit unrelated topics, or tag preference holders instead of a point's source.
 - EVIDENCE_CONSOLIDATION/CROSS_OPTION_COMPARISON: actually organise at least two
   public contributions in an option-by-option summary, then one answerable
   weighing/clarification question. Asking the participants to summarise fails.
-- When TIME_REMAINING_MS is supplied and exceeds 20000, the closing question
-  must concern weighing or clarifying the represented points, not where people
-  stand on a choice. At 20000 or less, "Given this, where does everyone stand
-  now?" is the permitted late-stage form. Without timing, do not invent it.
-- Each option may have AT MOST TWO DISTINCT POINTS. Count facts, not sentences
-  or punctuation. Check-in performance + volunteers + bus capacity are THREE
-  points even when written as one sentence; set roleMisaligned=true.
-  A faithful summary selecting two cited contributions is valid even when the
-  plan authorises more source IDs. Authorised sources are not a requirement to
-  repeat every fact. Do not mark that selection requiredReasoningActMissing.
+- The closing question concerns weighing or clarifying the represented points.
+  Timing does not authorise a final-choice declaration or an invented consensus.
+- Numbered lists, paragraphs, sections and more than two points per option are
+  valid. Grounded explanation is allowed. Do not reject a candidate for these
+  forms. Authorised sources are not a requirement to repeat every fact; assess
+  whether the selected material faithfully performs the assigned operation.
 - Prefer points mentioned once and not taken up again; for tied points retain
   first-appearance order. Keep relevant units, scope, quantities and uncertainty.
 - Use authoritative option order from "Available alternatives:" in task context;
@@ -92,7 +88,7 @@ solicit unrelated topics, or tag preference holders instead of a point's source.
   scopes, without resolving them. @[Name] may identify sources. Different units
   or conditions alone are not contradictions. Selection must not hide a source
   needed to represent the discrepancy fairly.
-No invented scores, point totals, +/−, ratings, "and N more", empty entries,
+Numbered list markers are structure, not scores or rankings. No invented scores, point totals, +/−, ratings, "and N more", empty entries,
 new valence labels, new causal links, weights, rankings or recommendation.
 
 ## THIRTEEN FAILURE FLAGS
@@ -119,9 +115,8 @@ Set each independently; do not substitute roleMisaligned for other violations.
    neutral target. The permitted Challenger alternatives question is not steering.
 9. requiredReasoningActMissing: does not actually execute the assigned operation
    on the verified target, substitutes generic encouragement, or lacks exactly
-   one substantive answerable closing question. A two-point summary of more
-   cited facts is allowed; an over-cap summary is a role failure, not automatic
-   evidence that no synthesis occurred. Invalid plan/preflight still forces true.
+   one substantive answerable closing question. A faithful selection from more
+   cited facts is allowed. Invalid plan/preflight still forces true.
 10. unanswerable: no actionable question, multiple independent questions,
     unsupported premise, presumed private holder or out-of-task demand.
     Asking for relevant not-yet-public contributions is answerable.
@@ -130,9 +125,10 @@ Set each independently; do not substitute roleMisaligned for other violations.
 12. repetition: repeats a delivered target/operation without new public grounds,
     or asks for work demonstrably completed. Different open targets may use the
     same operation. Do not treat rejected drafts as delivered AI history.
-13. length: exceeds the assigned word/sentence/section limit. Expander/Challenger
-    have 50 words, Synthesiser 55, all at most three sentences and sections: [].
-    Shorter complete interventions are allowed; no minimum length.
+13. length: exceeds the runtime word ceiling: Expander/Challenger 50 English
+    words, Synthesiser 55, counting all visible text including headings and list
+    numbers. Do not impose a target range, sentence, paragraph, section or point
+    count limit, or reject grounded explanation merely for being detailed.
 
 ## OUTPUT
 Use the exact output property name `requiredReasoningActMissing`.
@@ -141,3 +137,6 @@ Return exactly the thirteen booleans from validation.schema.json, nothing else.
 No passed, failedCriteria, explanations, revised candidates or Markdown.
 Re-audit every criterion on retries; PRIOR_FAILED_CRITERIA is attention guidance,
 not a verdict or permission to ignore the other flags.
+
+## CLOSEOUT AND SEMANTIC RECOVERY
+The plan may carry scheduling stage and semanticReview. Time or two-person readiness never makes a candidate grounded or non-redundant. A two-person ending proposal is not unanimity; do not imply the silent person agreed or declare a final decision. Check all represented public objections and scope. Repetition is semantic: the same claim/issue with new message IDs remains repeated without material new evidence; no response alone does not reopen it. A distinct issue on the same option is allowed. A completed current participant or AI summary makes an equivalent representation redundant. An explicit participant summary still underway must not be interrupted. A repair stays within the original allowed evidence and plan. The entire visible Synthesiser message remains at most 55 words, including numbering, headings, sections and its closing question.

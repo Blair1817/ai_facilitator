@@ -218,8 +218,8 @@
       },
       "role": "INFORMATION_SYNTHESISER",
       "message": "Shared so far \u2014 Talwick: tested digital check-in with few delays at a previous international event; enough trained multilingual volunteers; bus operator can add event services without cutting normal resident routes. Taken together, how do you weigh these points?",
-      "expectedPassed": false,
-      "requiredFailure": "roleMisaligned",
+      "expectedPassed": true,
+      "requiredFailure": null,
       "triggerType": null
     },
     {

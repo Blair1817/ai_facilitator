@@ -1,3 +1,6 @@
+import { createAdaptiveBudget, ADAPTIVE_FLOOR_MS, runAdaptiveSelection } from "./AdaptiveRecovery.mjs";
+import { selectAdaptiveAssessment } from "./AdaptiveEvidence.mjs";
+import { createCloseoutScheduler } from "./AdaptiveCloseoutScheduler.mjs";
 import { isPublicParticipantMessage, countPublicMessagesByName, quietParticipants } from "./CognitiveOperations.mjs";
 import { acceptIndependentDecision, finalizeIndependentDecision } from "./FinalDecisionSubmission.mjs";
 import { DECISION_NUDGE } from "../../shared/decisionSubmission.mjs";
@@ -123,7 +126,9 @@ async function finalizeAuditLog(store, entry) {
 }
 
 function canPublishFacilitatorResult(game, origin) {
-  if (origin?.phase !== "practice") return canPublishTestResult(game, origin);
+  if (origin?.phase !== "practice") return canPublishTestResult(game, origin)
+    && !(origin.facilitation === "adaptive" && !origin.participantRequested
+      && (!Number.isFinite(game.get("deadline")) || Date.now() >= game.get("deadline") || game.currentRound?.get("ended")));
   const stage = game.currentStage;
   return game.currentRound?.id === origin.originatingRoundId
     && game.currentRound?.get("isPractice") === true
@@ -137,7 +142,8 @@ function canPublishFacilitatorResult(game, origin) {
 
 async function whileFacilitatorPublishesVisibleResponse(game, logEntry, task) {
   const stillCurrent = () => canPublishFacilitatorResult(game, logEntry)
-    && (logEntry.participantRequested === true || game.get("humanMessageCount") === logEntry.humanMessageCount);
+    && (logEntry.participantRequested === true || game.get("humanMessageCount") === logEntry.humanMessageCount)
+    && (!logEntry.publicContextFingerprint || publicContextFingerprint(game.get(`chat_round_${logEntry.roundIndex}`) || []) === logEntry.publicContextFingerprint);
   const rejectStale = () => {
     logEntry.reason = "Discarded stale AI result before publication because the originating Discussion stage or automatic discussion context changed";
     logEntry.outcome = "SILENT";
@@ -204,6 +210,17 @@ function staticMatchedDelayMs() {
 }
 const CALLBACKS_INSTANCE_ID = randomUUID();
 const AUTOMATIC_PIPELINE_GROUP = "AUTOMATIC_INTERVENTION";
+export const adaptiveCloseoutScheduler = createCloseoutScheduler({
+  run: (game, adaptiveTrigger) => handleChat(undefined, { game, adaptiveTrigger }),
+  flush: () => Empirica.flush(),
+  onError: error => console.warn("Adaptive closeout callback failed", { message: error.message }),
+});
+Empirica.on("game", "deadline", (_ctx, { game }) => adaptiveCloseoutScheduler.register(game));
+
+function publicContextFingerprint(chat) {
+  return JSON.stringify(chat.filter(isFormalContextMessage).map(m => [m.messageId, m.text ?? m.content]));
+}
+
 
 // ── LLM API call ──────────────────────────────────────────────────────────────
 
@@ -265,7 +282,7 @@ async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens, o
       // rejecting that here would bypass the Generator/Assessor/Validator
       // parsers that explicitly and safely support the envelope.
       return buildSuccessfulLLMResult(text, responseMetadata);
-    }, resolveLLMRequestTimeoutMs(process.env.LLM_REQUEST_TIMEOUT_MS));
+    }, Math.min(options.timeoutMs ?? Infinity, resolveLLMRequestTimeoutMs(process.env.LLM_REQUEST_TIMEOUT_MS)));
   } catch (error) {
     console.error("LLM endpoint error:", { code: error?.code || "LLM_REQUEST_ERROR", message: error?.message || String(error) });
     return { success: false, error: error.message };
@@ -455,7 +472,7 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
 // verdict (i.e. the one that authorised publication, or the last failed
 // one for the silent path). Callers (Static / Generalist / Specialist)
 // only read `published`; the rest is for llmLog / post-hoc audit.
-async function runSharedGeneration(game, chatKey, built, logEntry, originatingRoundId, originatingStageId, chat, { allowValidatorRepair = true } = {}) {
+async function runSharedGeneration(game, chatKey, built, logEntry, originatingRoundId, originatingStageId, chat, { allowValidatorRepair = true, adaptiveBudget = null } = {}) {
   logEntry.promptMetadata = built.metadata;
   if (built.planPreflight) logEntry.planPreflight = built.planPreflight;
 
@@ -470,7 +487,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   // attempt would be responding to a stale world). True if the same
   // stage is still active.
   function isOriginatingStageActive() {
-    return canPublishFacilitatorResult(game, {
+    return (!adaptiveBudget || adaptiveBudget.check()) && canPublishFacilitatorResult(game, {
       ...logEntry,
       originatingRoundId,
       originatingStageId,
@@ -487,6 +504,10 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   //   {discarded: true}                       round/stage changed
   //   {silent: true, reason, logField?}       any failure
   async function attemptGeneration(userContentOverride = null) {
+    if (adaptiveBudget && !adaptiveBudget.check()) return { discarded: true };
+    const repairKind = userContentOverride && adaptiveBudget
+      ? (isSpecialistRole(built.metadata.generationRole) ? "generatorRepair" : "staticRepair") : null;
+    if (repairKind && adaptiveBudget.counts[repairKind] >= 1) return { silent: true, reason: `${repairKind} already used` };
     const pointContract = built.metadata.generationRole === "INFORMATION_SYNTHESISER"
       && ["EVIDENCE_CONSOLIDATION", "CROSS_OPTION_COMPARISON"].includes(built.interventionPlan?.requiredReasoningAct)
       && isOfficialOpenAIChatEndpoint(llmAPIEndpoint)
@@ -496,16 +517,20 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       { role: "system", content: built.systemPrompt + (pointContract?.instruction || "") },
       { role: "user",   content: userContentOverride ?? built.userContent },
     ];
-    logEntry.requestMade = true;
     logEntry.messagesOAIFormat = messages;
-
-    generatorAttempts += 1;
     const generatorStartedAt = Date.now();
     const generationOptions = isSpecialistRole(built.metadata.generationRole)
         ? { reasoningEffort: built.metadata.generationRole === "INFORMATION_SYNTHESISER" ? "medium" : "low" }
         : {};
     if (pointContract) generationOptions.responseSchema = pointContract.responseSchema;
-    const llmResponse = await getLLMResponse(messages, llmMaxOutputTokens, generationOptions);
+    const invoke = (timing = {}) => {
+      generatorAttempts += 1;
+      logEntry.requestMade = true;
+      return getLLMResponse(messages, llmMaxOutputTokens, { ...generationOptions, ...timing });
+    };
+    const llmResponse = adaptiveBudget
+      ? await adaptiveBudget.call("generator", invoke, repairKind)
+      : await invoke();
     logEntry.generatorLatenciesMs = [
       ...(logEntry.generatorLatenciesMs || []),
       Date.now() - generatorStartedAt,
@@ -568,8 +593,6 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       // is tagged triggerType: "PARTICIPANT_REQUEST" in its prompt metadata
       // -- that role needs more room to ground a substantive answer.
       maxWords: built.metadata.triggerType === "PARTICIPANT_REQUEST" ? null : built.metadata.maxWords ?? AUTOMATIC_MAX_WORDS,
-      maxSentences: built.metadata.triggerType === "PARTICIPANT_REQUEST" ? null : isSpecialistRole(built.metadata.generationRole) ? 3 : 2,
-      maxSections: isSpecialistRole(built.metadata.generationRole) ? 0 : null,
       enforcePlanGrounding: isSpecialistRole(built.metadata.generationRole),
       forbidInternalDisclosure: isSpecialistRole(built.metadata.generationRole),
       // 2026-08-13: pipe the per-checkpoint participant roster into
@@ -586,13 +609,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       return {
         silent: true,
         reason: `Generator output failed validation: ${deterministicResult.failedCriteria.join(", ")}`,
-        // Carried so the caller can offer a single, narrowly-scoped repair
-        // retry when the ONLY failure was the route's word cap (see
-        // isWordLimitOnlyFailure / buildWordLimitRepairUserContent below).
-        // Any other deterministic failure (ROLE_MISMATCH, MARKDOWN_DETECTED,
-        // UNKNOWN_GROUNDING_ID, ...) still fails silently on attempt 1, same
-        // as before -- those indicate a broken candidate, not just a
-        // trimmable one, so blindly retrying them is not safe.
+        // Adaptive can repair this same plan once; all routes revalidate.
         deterministicFailedCriteria: deterministicResult.failedCriteria,
         priorCandidate: candidate,
       };
@@ -601,11 +618,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     return { ok: true, candidate };
   }
 
-  // True only when the route's word cap was the SOLE deterministic failure.
-  // Scoped deliberately narrow: a message that is otherwise fully valid and
-  // merely ran long is safe to ask the model to shorten; a message that
-  // also failed grounding/role/markdown checks is not -- that goes silent
-  // exactly as before.
+  // Legacy control/requested routes retain their word-limit-only repair.
   function isWordLimitOnlyFailure(failedCriteria) {
     return (
       Array.isArray(failedCriteria) &&
@@ -640,7 +653,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       null,
       2
     );
-    return `${built.userContent}\n\n---\n\n[PRIOR_FAILED_CRITERIA]\nThe previous candidate at this checkpoint was rejected by the semantic Validator for: ${failedList}.\nPrevious candidate (do NOT repeat it -- generate a NEW message):\n${priorJson}\nRegenerate a candidate that does NOT violate the listed criteria.`;
+    return `${built.userContent}\n\n---\n\n[PRIOR_FAILED_CRITERIA]\nThe previous candidate at this checkpoint was rejected by the semantic Validator for: ${failedList}.\nPrevious candidate (do NOT repeat it -- generate a NEW message):\n${priorJson}\n${adaptiveBudget && isSpecialistRole(built.metadata.generationRole) ? `Repair the SAME need and plan using only the original allowed grounding IDs ${JSON.stringify(built.allowedGroundingIds)}. Remove unsupported claims; never expand evidence. ` : ""}Regenerate a candidate that does NOT violate the listed criteria.`;
   }
 
   // One Validator LLM call. Treats the LLM-side failure (API / parse /
@@ -655,14 +668,16 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       candidate,
       selectedRole: built.metadata.generationRole,
       taskGeneralContext: built.taskGeneralContext,
-      callLLM: (messages, options) => getLLMResponse(messages, llmMaxOutputTokens, options),
+      callLLM: (messages, options) => adaptiveBudget
+        ? adaptiveBudget.call("validator", timing => getLLMResponse(messages, llmMaxOutputTokens, { ...options, ...timing }))
+        : getLLMResponse(messages, llmMaxOutputTokens, options),
       priorFailedCriteria,
       priorCandidate,
       interventionPlan: built.interventionPlan, planPreflight: built.planPreflight,
       interventionHistory: built.interventionHistory, recentAiMessages: built.recentAiMessageTexts,
       activeParticipantNames: built.activeParticipantNames, contextScope: built.contextScope,
       triggerType: built.metadata.triggerType,
-      remainingTimeMs: built.remainingTimeMs,
+      remainingTimeMs: adaptiveBudget?.remainingTime() ?? built.remainingTimeMs,
     });
     logEntry.validatorLatenciesMs = [
       ...(logEntry.validatorLatenciesMs || []),
@@ -694,21 +709,26 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   if (a1.discarded) {
     logEntry.reason = "Discarded stale AI result after the originating Discussion stage ended";
     logEntry.outcome = "SILENT";
-    return { published: false };
+    return { published: false, attempts: generatorAttempts };
   }
 
-  // Single, narrowly-scoped repair retry for a word-limit-only rejection
-  // (see isWordLimitOnlyFailure above). Reuses attemptGeneration() itself,
-  // so the retry goes through the exact same schema/deterministic checks --
-  // if it is still too long, or now fails on something else, it falls
-  // through to the ordinary silent handling immediately below, unchanged.
-  if (a1.silent && isWordLimitOnlyFailure(a1.deterministicFailedCriteria)) {
-    logEntry.wordLimitRepairAttempted = true;
-    const wordLimitRepair = await attemptGeneration(buildWordLimitRepairUserContent(a1.priorCandidate));
+  // Repetition returns to selection; other Adaptive Specialist structure,
+  // format, grounding and length errors may use one same-plan repair.
+  const exactSpecialistRepeat = candidate => adaptiveBudget && isSpecialistRole(built.metadata.generationRole)
+    && candidate.deterministicFailedCriteria?.includes("DUPLICATE_OF_RECENT_AI_MESSAGE");
+  if (a1.silent && !exactSpecialistRepeat(a1) && (isWordLimitOnlyFailure(a1.deterministicFailedCriteria)
+    || (adaptiveBudget && isSpecialistRole(built.metadata.generationRole) && ["parse", "schema", "deterministic"].includes(logEntry.failureStage)))
+    && (!adaptiveBudget || adaptiveBudget.counts[isSpecialistRole(built.metadata.generationRole) ? "generatorRepair" : "staticRepair"] < 1)) {
+    logEntry.wordLimitRepairAttempted = isWordLimitOnlyFailure(a1.deterministicFailedCriteria);
+    const repairContent = logEntry.wordLimitRepairAttempted ? buildWordLimitRepairUserContent(a1.priorCandidate)
+      : `${built.userContent}\n\n[PRIOR_FAILED_CRITERIA]\n${a1.reason}\nPrevious output: ${logEntry.generatorRawResponses?.at(-1)?.rawText ?? ""}\nRepair the SAME need/plan once. Allowed grounding IDs remain exactly ${JSON.stringify(built.allowedGroundingIds)}. Do not expand evidence, change role, invent facts or increase the visible word limit. Return the required JSON.`;
+    const beforeRepair = generatorAttempts;
+    const wordLimitRepair = await attemptGeneration(repairContent);
+    logEntry.wordLimitRepairAttempted &&= generatorAttempts > beforeRepair;
     if (wordLimitRepair.discarded) {
       logEntry.reason = "Discarded stale AI result after the originating Discussion stage ended";
       logEntry.outcome = "SILENT";
-      return { published: false };
+      return { published: false, attempts: generatorAttempts };
     }
     a1 = wordLimitRepair;
   }
@@ -717,20 +737,20 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     logEntry.reason = a1.reason;
     if (a1.logField) Object.assign(logEntry, a1.logField);
     logEntry.outcome = "SILENT";
-    return { published: false };
+    return { published: false, attempts: generatorAttempts, repetition: !!exactSpecialistRepeat(a1) };
   }
 
   const v1 = await runValidator(a1.candidate);
   if (!isOriginatingStageActive()) {
     logEntry.reason = "Discarded stale Validator result after the originating Discussion stage ended";
     logEntry.outcome = "SILENT";
-    return { published: false };
+    return { published: false, attempts: generatorAttempts };
   }
   if (v1.validatorFailed) {
     logEntry.failureStage = "validator_unavailable";
     logEntry.reason = `Validator LLM unavailable on attempt 1 (${v1.code}): ${v1.error}`;
     logEntry.outcome = "SILENT_VALIDATOR_UNAVAILABLE";
-    return { published: false };
+    return { published: false, attempts: generatorAttempts };
   }
   logEntry.validator = v1.verdict;
   if (v1.verdict.passed) {
@@ -742,12 +762,16 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     return { published: posted, candidate: a1.candidate, attempts: generatorAttempts, validator: v1.verdict };
   }
 
-  // 2026-10-21: Adaptive Specialist and its Static-policy fallback skip the
-  // Validator-feedback repair (allowValidatorRepair=false) to bound cost; a
-  // rejected Specialist falls back once to the Static policy instead.
-  if (generatorAttempts >= 2 || !allowValidatorRepair) {
+  // Repetition is a selection failure, not a request to paraphrase. Other
+  // semantic failures may repair the same plan once under the shared budget.
+  const specialistRepetition = adaptiveBudget && isSpecialistRole(built.metadata.generationRole) && v1.verdict.failedCriteria.includes("repetition");
+  const repairKind = isSpecialistRole(built.metadata.generationRole) ? "generatorRepair" : "staticRepair";
+  const noSharedRepair = adaptiveBudget && adaptiveBudget.counts[repairKind] >= 1;
+  if (generatorAttempts >= 2 || !allowValidatorRepair || specialistRepetition || noSharedRepair) {
     logEntry.attempts = generatorAttempts;
-    logEntry.reason = "Specialist/control candidate rejected after the shared two-attempt repair budget was consumed";
+    logEntry.reason = specialistRepetition ? "Repeated semantic target rejected; returning to Controller for bounded reselection"
+      : !allowValidatorRepair ? "Validator rejected candidate; repair disabled for this route"
+      : `Validator rejected candidate; available repair already used (${generatorAttempts} generator calls)`;
     logEntry.outcome = "SILENT_VALIDATOR_REJECTED";
     return { published: false, attempts: generatorAttempts, validator: v1.verdict };
   }
@@ -756,26 +780,26 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   if (a2.discarded) {
     logEntry.reason = "Discarded stale AI result during repair (originating Discussion stage ended)";
     logEntry.outcome = "SILENT";
-    return { published: false };
+    return { published: false, attempts: generatorAttempts };
   }
   if (a2.silent) {
     logEntry.reason = `Repair Generator attempt failed: ${a2.reason}`;
     if (a2.logField) Object.assign(logEntry, a2.logField);
     logEntry.outcome = "SILENT_GENERATOR_FAILED_AFTER_VALIDATOR_REJECT";
-    return { published: false };
+    return { published: false, attempts: generatorAttempts };
   }
 
   const v2 = await runValidator(a2.candidate, v1.verdict.failedCriteria, a1.candidate);
   if (!isOriginatingStageActive()) {
     logEntry.reason = "Discarded stale repair Validator result after the originating Discussion stage ended";
     logEntry.outcome = "SILENT";
-    return { published: false };
+    return { published: false, attempts: generatorAttempts };
   }
   if (v2.validatorFailed) {
     logEntry.failureStage = "validator_unavailable";
     logEntry.reason = `Validator LLM unavailable on repair (${v2.code}): ${v2.error}`;
     logEntry.outcome = "SILENT_VALIDATOR_UNAVAILABLE";
-    return { published: false };
+    return { published: false, attempts: generatorAttempts };
   }
   logEntry.validatorRepair = v2.verdict;
   logEntry.attempts = 2;
@@ -1045,6 +1069,7 @@ Empirica.onGameStart(({ game }) => {
 
 Empirica.onRoundStart(({ round }) => {
   const game = round.currentGame;
+  adaptiveCloseoutScheduler.cancel(game, "round_started");
   round.set("callbacksInitializedAt", Date.now());
   round.set("callbacksInstanceId", CALLBACKS_INSTANCE_ID);
   if (round.get("isPractice") === true) {
@@ -1350,7 +1375,7 @@ export function handleFormalStageStart(stage) {
   const game = stage.currentGame;
   const stageName = stage.get("name");
   if (stage.round.get("isPractice") && stageName !== "FinalDecision") return;
-  if (stage.get("formalStageStartHandled")) return;
+  if (stage.get("formalStageStartHandled")) { adaptiveCloseoutScheduler.register(game); return; }
   stage.set("formalStageStartHandled", true);
   stage.set("callbacksInitializedAt", Date.now());
   stage.set("callbacksInstanceId", CALLBACKS_INSTANCE_ID);
@@ -1368,6 +1393,7 @@ export function handleFormalStageStart(stage) {
     }
     game.set("taskStartTime", now);
     game.set("deadline",      now + gameDuration * 60 * 1000);
+    adaptiveCloseoutScheduler.register(game);
     const chatKey = `chat_round_${stage.round.get("taskIndex")}`;
     const durationMs = gameDuration * 60 * 1000;
     const reminderMinutes = Math.ceil(gameDuration / 2);
@@ -1806,7 +1832,7 @@ async function handlePracticeFacilitatorRequest(game, requestMessage) {
   }
 }
 
-async function handleChat(env, { game }) {
+async function handleChat(env, { game, adaptiveTrigger = null }) {
   if (game.currentRound?.get("isPractice")) return;
   await recoverInterruptedInFlight(
     game,
@@ -1845,10 +1871,10 @@ async function handleChat(env, { game }) {
 
   const players = game.players;
   const chat = game.get(chatKey) || [];
-  if (!chat.length) return;
+  if (!chat.length && !adaptiveTrigger) return;
 
   const lastMessage = chat[chat.length - 1];
-  if (!isFormalHumanMessage(lastMessage)) return;
+  if (!adaptiveTrigger && !isFormalHumanMessage(lastMessage)) return;
 
   const currentStageName = game.currentStage?.get("name");
   if (currentStageName !== "Task") return;
@@ -1865,7 +1891,7 @@ async function handleChat(env, { game }) {
   // canonical final human message synchronously after the stage/timing guards
   // so a duplicate callback cannot increment pacing counters or start a
   // second pipeline, while a transiently incomplete stage can still retry.
-  if (typeof lastMessage.messageId === "string" && lastMessage.messageId.length > 0) {
+  if (!adaptiveTrigger && typeof lastMessage.messageId === "string" && lastMessage.messageId.length > 0) {
     if (game.get("lastProcessedHumanMessageId") === lastMessage.messageId) return;
     game.set("lastProcessedHumanMessageId", lastMessage.messageId);
   }
@@ -1874,32 +1900,33 @@ async function handleChat(env, { game }) {
 
   // ── Count the new human message (AI messages do not count, and
   // we already early-returned above if the last message is from AI). ──
-  const humanMessageCount = (game.get("humanMessageCount") || 0) + 1;
+  const humanMessageCount = (game.get("humanMessageCount") || 0) + (adaptiveTrigger ? 0 : 1);
   game.set("humanMessageCount", humanMessageCount);
 
   // A real human message breaks any silence -- rearm the watchdog so a
   // LATER lull (the group goes quiet again after this) can still be
   // caught, same delay as the opening case.
-  armSilenceWatchdog(game.currentStage, chatKey);
+  if (!adaptiveTrigger) armSilenceWatchdog(game.currentStage, chatKey);
 
   // ── Increment the opportunity counter (Phase 3: also tracked as
   // messagesSinceLastPublish; the legacy messagesSinceLastIntervention
   // field is kept as a derived/legacy alias so existing logs / tests
   // that reference it don't break). ──
-  const messagesSinceLastPublish = (game.get("messagesSinceLastPublish") ?? 0) + 1;
+  const messagesSinceLastPublish = (game.get("messagesSinceLastPublish") ?? 0) + (adaptiveTrigger ? 0 : 1);
   game.set("messagesSinceLastPublish", messagesSinceLastPublish);
   // Legacy alias (was reset to 0 on every attempt in the v1 code; now
   // it tracks the same counter as messagesSinceLastPublish, so old
   // log readers and tests that read it still get a sensible value).
   game.set("messagesSinceLastIntervention", messagesSinceLastPublish);
 
-  const now = new Date().getTime();
+  const now = Date.now();
   const remainingTime = Math.max(0, game.get("deadline") - now);
   const timeElapsed   = now - game.get("taskStartTime");
 
   // ── Phase 3: ask CheckpointManager whether the trigger conditions
-  // are satisfied. Static and Adaptive share the six-message opportunity
-  // gate, 30-second cooldown, and final time floor. Neither condition has a
+  // are satisfied. Ordinary Static/Adaptive messages share the six-message
+  // gate and 30-second cooldown. Adaptive uses a 20-second floor and its
+  // independent closeout scheduler shares the same in-flight lock. Neither has a
   // per-round automatic-attempt cap. Task/chat guards and per-message
   // deduplication remain shared.
   //
@@ -1916,9 +1943,9 @@ async function handleChat(env, { game }) {
   const latestHumanText = latestHumanMessages.length > 0
     ? latestHumanMessages[latestHumanMessages.length - 1].text
     : "";
-  const isMentionCheckpoint = containsFacilitatorMention(latestHumanText);
+  const isMentionCheckpoint = !adaptiveTrigger && containsFacilitatorMention(latestHumanText);
 
-  const trigger = shouldEvaluateCheckpoint({
+  let trigger = shouldEvaluateCheckpoint({
     store: game,
     humanMessageCount,
     currentStageName,
@@ -1926,13 +1953,28 @@ async function handleChat(env, { game }) {
     chatKeyPresent: true,
     now,
     isMentionCheckpoint,
+    config: facilitation === "adaptive" ? { ...CHECKPOINT_DEFAULTS, minTimeForInterventionMs: ADAPTIVE_FLOOR_MS } : CHECKPOINT_DEFAULTS,
   });
+  let triggerSource = "message";
+  if (facilitation === "adaptive" && !isMentionCheckpoint) {
+    adaptiveCloseoutScheduler.register(game);
+    if (adaptiveTrigger) {
+      triggerSource = trigger.trigger ? "message" : adaptiveTrigger.triggerSource;
+      const cooldown = now - (game.get("lastAttemptTimestamp") || 0) < CHECKPOINT_DEFAULTS.cooldownMs;
+      trigger = { trigger: remainingTime > ADAPTIVE_FLOOR_MS && !cooldown, reason: cooldown ? "cooldown" : "adaptive_20s_floor" };
+    } else {
+      // Any new public message invalidates an earlier intent snapshot. The
+      // next semantic scan recalculates withdrawals/objections from context.
+      if (currentRound.get("adaptiveEarlyCloseout")) currentRound.set("adaptiveEarlyCloseout", { active: false, reason: "new_message_requires_review" });
+      if (!trigger.trigger && new Set(latestHumanMessages.map(m => m.sender.id)).size >= 2 && remainingTime > ADAPTIVE_FLOOR_MS) adaptiveCloseoutScheduler.request(game);
+    }
+  }
 
   // Every callback audit event needs an identity, including ordinary
   // non-trigger outcomes (opportunity/cooldown/time-floor/dedup). Keep the
   // same id for a later beginInFlight/finalize lifecycle when the checkpoint
   // does trigger.
-  const auditRequestId = `${game.id}:${roundIndex}:${humanMessageCount}:${now}`;
+  const auditRequestId = `${game.id}:${roundIndex}:${humanMessageCount}:${now}${adaptiveTrigger ? `:${randomUUID()}` : ""}`;
   let logEntry = {
     stageId: originatingStageId, roundId: currentRound.id,
     auditRequestId,
@@ -1956,6 +1998,8 @@ async function handleChat(env, { game }) {
     // unconditionally so the post-hoc log can compute the
     // mention-trigger rate even on messages that didn't trigger
     // (e.g. a mention outside the Task stage).
+    triggerSource,
+    triggerSources: adaptiveTrigger?.triggerSources ?? ["message"],
     mentionDetected: isMentionCheckpoint,
     participantRequested: isMentionCheckpoint,
     originatingRoundId,
@@ -1977,7 +2021,7 @@ async function handleChat(env, { game }) {
     // Still log so the audit can see the trigger conditions per
     // human message.
     await finalizeAuditLog(game, logEntry);
-    return;
+    return { deferred: remainingTime > ADAPTIVE_FLOOR_MS, outcome: logEntry.outcome };
   }
 
   logEntry.serverInstanceId = CALLBACKS_INSTANCE_ID;
@@ -1988,10 +2032,11 @@ async function handleChat(env, { game }) {
     isMentionCheckpoint ? undefined : { exclusiveGroup: AUTOMATIC_PIPELINE_GROUP },
   );
   if (!beganInFlight) {
+    if (facilitation === "adaptive" && !isMentionCheckpoint && !adaptiveTrigger) adaptiveCloseoutScheduler.request(game);
     logEntry.outcome = "SILENT_AUTOMATIC_IN_FLIGHT";
     logEntry.reason = "Skipped automatic checkpoint because an earlier automatic intervention pipeline is still in flight";
     await finalizeAuditLog(game, logEntry);
-    return;
+    return { deferred: remainingTime > ADAPTIVE_FLOOR_MS, outcome: logEntry.outcome };
   }
 
   // Explicit @Facilitator request: answer with the participant-requested
@@ -2113,13 +2158,6 @@ async function handleChat(env, { game }) {
     return;
   }
 
-  // Adaptive need detector (2026-10-21 categorical redesign): one LLM call
-  // returns ONE of ELICIT / SCRUTINIZE / INTEGRATE / NONE with exact quotes.
-  // Code supplies exact per-participant message counts and re-verifies the
-  // result (EvidenceChecker.checkNeedAssessment). No numeric thresholds.
-  let checkedFactors = null;   // PolicyCompiler-compatible view of the verified need
-  let checkedNeed = null;
-  const assessorStart = Date.now();
   const formalChat = chat.filter(isFormalContextMessage);
   const cognitiveHistory = currentRound.get("cognitiveInterventionHistory") || [];
   const rosterNames = players.map(p => p.get("name")).filter(Boolean);
@@ -2127,200 +2165,146 @@ async function handleChat(env, { game }) {
   const quietNames = quietParticipants(participationCounts);
   logEntry.participationCounts = participationCounts;
   logEntry.quietParticipants = quietNames;
-  const assessorResult = await assessSemanticFactors({
-    chat: formalChat,
-    contextScope: "complete_current_round",
-    interventionHistory: cognitiveHistory,
-    activeParticipantNames: rosterNames,
-    participationCounts,
-    quietParticipants: quietNames,
-    taskGeneralContext: buildStaticSharedTaskOverview({
-      generalInfo: currentRound?.get("generalInfo"),
-      decisionOptions: currentRound?.get("decisionOptions"),
-    }),
-    callLLM: messages => getLLMResponse(messages, Math.max(Number(llmMaxOutputTokens) || 1000, 4096), { reasoningEffort: "low" }),
+  logEntry.publicContextFingerprint = publicContextFingerprint(chat);
+  const budget = createAdaptiveBudget({
+    deadline: () => game.get("deadline"), log: logEntry,
+    isCurrent: () => canPublishFacilitatorResult(game, logEntry)
+      && publicContextFingerprint(game.get(chatKey) || []) === logEntry.publicContextFingerprint,
   });
-  if (assessorResult.responseMetadata) {
+  let publishedPlan = null;
+  async function assess(excluded = []) {
+    if (!budget.check()) return null;
+    const start = Date.now();
+    const remaining = budget.remainingTime();
+    const scheduling = { remainingTimeMs: remaining, triggerSource: logEntry.triggerSource,
+      fixedIntegrationPriority: remaining <= 120_000, closeoutOpportunity: remaining <= 180_000,
+      priority: remaining <= 120_000 ? ["INTEGRATE", "SCRUTINIZE", "ELICIT"] : ["SCRUTINIZE", "INTEGRATE", "ELICIT"],
+      evaluateEarlyCloseout: true };
+    const assessorResult = await assessSemanticFactors({
+      chat: formalChat, contextScope: "complete_current_round", interventionHistory: cognitiveHistory,
+      activeParticipantNames: rosterNames, participationCounts, quietParticipants: quietNames,
+      scheduling, excludedTargets: excluded, allowStructureRepair: true,
+      taskGeneralContext: buildStaticSharedTaskOverview({ generalInfo: currentRound.get("generalInfo"), decisionOptions: currentRound.get("decisionOptions") }),
+      callLLM: (messages, options) => budget.call("assessor", timing => getLLMResponse(messages,
+        Math.max(Number(llmMaxOutputTokens) || 1000, 4096), { reasoningEffort: "low", ...timing }),
+        options?.structureRepair ? "assessorRepair" : null),
+    });
+    const attempt = { latencyMs: Date.now() - start, rawText: assessorResult.rawText, success: assessorResult.success,
+      code: assessorResult.code, error: assessorResult.error, structureFailures: assessorResult.attempts, responseMetadata: assessorResult.responseMetadata };
+    logEntry.assessments = [...(logEntry.assessments || []), attempt];
+    logEntry.detectorLatency = attempt.latencyMs;
+    logEntry.detectorRawResponse = attempt.rawText;
     logEntry.detectorResponseMetadata = assessorResult.responseMetadata;
-  }
-  if (
-    game.currentRound?.id !== originatingRoundId ||
-    game.currentStage?.id !== originatingStageId ||
-    game.currentStage?.get("name") !== "Task"
-  ) {
-    logEntry.reason = "Discarded stale LLM detector result after the originating Discussion stage ended";
-    await finalizeAuditLog(game, logEntry);
-    return;
-  }
-  logEntry.detectorLatency = Date.now() - assessorStart;
-  if (typeof assessorResult.rawText === "string") logEntry.detectorRawResponse = assessorResult.rawText;
-
-  if (assessorResult.success) {
-    logEntry.rawDetectorFactors = assessorResult.factors;
-    checkedNeed = checkNeedAssessment(assessorResult.factors, { chat: formalChat, activeParticipantNames: rosterNames });
-    checkedFactors = checkedNeed.checkedFactors;
-    logEntry.checkedDetectorFactors = {
-      need: checkedNeed.need,
-      rawNeed: checkedNeed.rawNeed,
-      role: checkedNeed.role,
-      operation: checkedNeed.operation,
-      target: checkedNeed.target,
-      downgradedReason: checkedNeed.downgradedReason,
-      evidenceRelations: [],
-    };
-  } else {
-    logEntry.detectorError = `${assessorResult.code}: ${assessorResult.error}`;
-  }
-
-  // Adaptive gate: "abstain" only at the final time floor; "static_policy"
-  // for NONE / rejected evidence / unavailable detector (so Adaptive speaks
-  // at every checkpoint where Static would); "specialist" for a verified need.
-  const lastRole                = game.get("lastRole");
-  const gateResult = evaluateNeedGate(checkedNeed, { remainingTime });
-
-  logEntry.gateDecision  = gateResult.decision;  // "specialist" | "static_policy" | "abstain"
-  logEntry.gateReason    = gateResult.reason;
-  logEntry.eligibleRoles = gateResult.eligibleRoles;
-  logEntry.stateScores   = gateResult.scores;
-  logEntry.perRole       = gateResult.perRole;
-  logEntry.abstentionKind = gateResult.abstentionKind;
-  logEntry.fallbackKind  = gateResult.fallbackKind;
-
-  if (logEntry.checkedDetectorFactors) {
-    game.set("lastCheckedDetectorFactors", logEntry.checkedDetectorFactors);
-  }
-
-  if (gateResult.decision === "abstain") {
-    logEntry.reason = gateResult.reason;
-    await finalizeAuditLog(game, logEntry);
-    return;
-  }
-
-  // ── Static-policy path: Adaptive's default when no verified need ─────
-  // Same prompt bundle and context assembler as the Static condition.
-  if (gateResult.decision === "static_policy") {
-    logEntry.routingDecision = "ADAPTIVE_STATIC_POLICY";
-    logEntry.selectedRole = "STATIC";
-    logEntry.reasoning    = gateResult.reason;
-
-    const built = buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, "static", null, null);
-    const result = await runSharedGeneration(
-      game, chatKey, built, logEntry, originatingRoundId, originatingStageId, chat
-    );
-
-    if (result.published) {
-      recordPublish(game, { role: "STATIC", messageId: logEntry.publishedMessageId ?? result.candidate?.messageId ?? null, now });
+    if (!assessorResult.success) {
+      logEntry.detectorError = `${attempt.code}: ${attempt.error}`;
+      const gate = evaluateNeedGate(null, { remainingTime: budget.remainingTime() });
+      Object.assign(logEntry, { gateDecision: gate.decision, gateReason: gate.reason, fallbackKind: gate.fallbackKind, abstentionKind: gate.abstentionKind });
+      return null;
     }
-
-    await finalizeAuditLog(game, logEntry);
-    return;
+    if (!budget.check()) return null;
+    logEntry.rawDetectorFactors = assessorResult.factors;
+    const checked = selectAdaptiveAssessment(assessorResult.factors, {
+      chat: formalChat, roster: rosterNames,
+      optionLabels: (currentRound.get("decisionOptions") || []).map(o => o.label),
+      remainingTimeMs: budget.remainingTime(), triggerSource: logEntry.triggerSource, history: cognitiveHistory, excluded,
+      validateIntegration: (candidate, semanticReview) => {
+        const plan = compilePlan("synthesiser", candidate.checkedFactors, {
+          eligibleMessageIds: withMessageIds(formalChat).filter(isFormalHumanMessage).map(m => m.messageId),
+          interventionHistory: cognitiveHistory, semanticReview, excludedTargets: excluded,
+        });
+        return preflightPlan(plan, { chat: formalChat, activeParticipantNames: rosterNames,
+          interventionHistory: cognitiveHistory, taskGeneralContext: buildStaticSharedTaskOverview({
+            generalInfo: currentRound.get("generalInfo"), decisionOptions: currentRound.get("decisionOptions"),
+          }) });
+      },
+    });
+    checked.excludedTargets = excluded;
+    logEntry.checkedDetectorFactors = { need: checked.need, rawNeed: checked.rawNeed, role: checked.role,
+      operation: checked.operation, target: checked.target, downgradedReason: checked.downgradedReason,
+      ...(checked.defer ? { defer: checked.defer } : {}), evidenceRelations: [] };
+    logEntry.scheduling = checked.scheduling;
+    logEntry.earlyCloseout = checked.early;
+    logEntry.integrationObservation = checked.integrationObservation;
+    logEntry.semanticReview = checked.semanticReview ?? checked.semantic ?? null;
+    currentRound.set("adaptiveEarlyCloseout", { ...checked.early, humanMessageCount, assessedAt: Date.now() });
+    if (checked.semanticReview) {
+      const states = { ...(currentRound.get("adaptiveTargetStates") || {}) };
+      for (const match of checked.semanticReview.matches) states[match.id] = { ...match, assessedAt: Date.now(), publicMessageBoundary: formalChat.length };
+      currentRound.set("adaptiveTargetStates", states);
+    }
+    game.set("lastCheckedDetectorFactors", logEntry.checkedDetectorFactors);
+    const gate = evaluateNeedGate(checked, { remainingTime: budget.remainingTime(), scheduling: checked.scheduling });
+    Object.assign(logEntry, { gateDecision: gate.decision, gateReason: gate.reason, eligibleRoles: gate.eligibleRoles,
+      stateScores: gate.scores, perRole: gate.perRole, abstentionKind: gate.abstentionKind, fallbackKind: gate.fallbackKind });
+    return checked;
   }
-
-  // ── Specialist path: the verified need fixes the role; run the policy
-  // compiler + Generator. chooseRole cannot return an Abstain.
-  const synthesiserFired = game.get("synthesiserFired");
-  const chosenRole = chooseRole(gateResult, { remainingTime, lastRole, synthesiserFired });
-
-  logEntry.selectedRole = chosenRole.role;
-  logEntry.forced       = chosenRole.forced;
-  logEntry.reasoning    = chosenRole.reasoning;
-
-  const chatWithIds        = withMessageIds(chat.filter(isFormalContextMessage));
-  const eligibleMessageIds = chatWithIds.filter(isFormalHumanMessage).map((m) => m.messageId);
-  const plan = compilePlan(chosenRole.role, checkedFactors, {
-    score:     null,
-    threshold: null,
-    eligibleMessageIds, interventionHistory: cognitiveHistory,
-  });
-  logEntry.plan = plan;
-
-  // ── Shared: build context, run ONE Generator + Validator attempt (no
-  // Validator-feedback repair for Specialists), publish at most once ──────
-  const built  = buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, "adaptive", chosenRole.role, plan);
-  let result = await runSharedGeneration(
-    game,
-    chatKey,
-    built,
-    logEntry,
-    originatingRoundId,
-    originatingStageId,
-    chat,
-    { allowValidatorRepair: false },
-  );
-
-  // Fallback: if the Specialist plan fails preflight or its candidate is
-  // rejected by the Validator, regenerate ONCE with the Static policy.
-  // Preserve the complete Specialist failure separately so the fallback's
-  // audit fields cannot overwrite its evidence.
-  let publishedRole = chosenRole.role;
-  if (!result.published && (built.blocked || logEntry.outcome === "SILENT_VALIDATOR_REJECTED")) {
-    logEntry.controllerSelectedRole = chosenRole.role;
-    logEntry.specialistFailure = {
-      reason: logEntry.reason,
-      outcome: logEntry.outcome,
-      attempts: result.attempts ?? 0,
-      promptMetadata: logEntry.promptMetadata,
-      validator: logEntry.validator,
-      validatorRepair: logEntry.validatorRepair,
-    };
-    logEntry.fallbackRoute = "SPECIALIST_TO_STATIC_POLICY";
+  async function fallback() {
+    logEntry.selectedRole = "STATIC";
+    logEntry.routingDecision = "ADAPTIVE_STATIC_POLICY";
     delete logEntry.validator;
     delete logEntry.validatorRepair;
-
-    const staticPolicyBuilt = buildGeneratorContext(
-      game,
-      players,
-      chat,
-      remainingTime,
-      timeElapsed,
-      "static",
-      null,
-      null,
-    );
-    result = await runSharedGeneration(
-      game,
-      chatKey,
-      staticPolicyBuilt,
-      logEntry,
-      originatingRoundId,
-      originatingStageId,
-      chat,
-      { allowValidatorRepair: false },
-    );
-    logEntry.fallbackPublished = result.published;
-    logEntry.totalGeneratorAttempts = logEntry.specialistFailure.attempts + (result.attempts ?? 0);
+    delete logEntry.failureStage;
+    const built = buildGeneratorContext(game, players, chat, budget.remainingTime(), Date.now() - game.get("taskStartTime"), "static", null, null);
+    const result = await runSharedGeneration(game, chatKey, built, logEntry, originatingRoundId, originatingStageId, chat, { adaptiveBudget: budget });
+    return { ...result, role: "STATIC", outcome: logEntry.outcome };
+  }
+  async function generate(selection) {
+    const gate = evaluateNeedGate(selection, { remainingTime: budget.remainingTime(), scheduling: selection.scheduling });
+    if (gate.decision !== "specialist") return { published: false };
+    const chosen = chooseRole(gate);
+    logEntry.selectedRole = chosen.role;
+    logEntry.controllerSelectedRole = chosen.role;
+    logEntry.forced = false;
+    logEntry.reasoning = gate.reason;
+    const plan = compilePlan(chosen.role, selection.checkedFactors, {
+      eligibleMessageIds: withMessageIds(formalChat).filter(isFormalHumanMessage).map(m => m.messageId),
+      interventionHistory: cognitiveHistory, scheduling: selection.scheduling, semanticReview: selection.semanticReview,
+      excludedTargets: selection.excludedTargets,
+    });
+    logEntry.plan = plan;
+    delete logEntry.validator;
+    delete logEntry.validatorRepair;
+    const built = buildGeneratorContext(game, players, chat, budget.remainingTime(), Date.now() - game.get("taskStartTime"), "adaptive", chosen.role, plan);
+    const result = await runSharedGeneration(game, chatKey, built, logEntry, originatingRoundId, originatingStageId, chat, { adaptiveBudget: budget });
+    if (result.published) publishedPlan = plan;
+    return { ...result, role: chosen.role, outcome: logEntry.outcome, reason: logEntry.reason, failureStage: logEntry.failureStage,
+      repetition: result.repetition || built.planPreflight?.failureReasons?.includes("TARGET_ALREADY_ADDRESSED") || false };
+  }
+  try {
+    const initial = await assess();
+    const result = await runAdaptiveSelection({ assess, generate, fallback, budget, log: logEntry, initial,
+      closeoutOnly: logEntry.triggerSource !== "message" });
+    logEntry.totalGeneratorAttempts = budget.calls.filter(c => c.kind === "generator").length;
+    logEntry.modelCallCount = budget.calls.length;
     if (result.published) {
-      publishedRole = "STATIC";
-      logEntry.selectedRole = "STATIC";
+      recordPublish(game, { role: result.role, messageId: logEntry.publishedMessageId, now: Date.now() });
+      if (publishedPlan) currentRound.set("cognitiveInterventionHistory", [...cognitiveHistory, {
+        planId: publishedPlan.planId, signature: publishedPlan.signature, role: result.role,
+        requiredReasoningAct: publishedPlan.requiredReasoningAct, target: publishedPlan.target,
+        evidence: publishedPlan.evidence, semanticKey: publishedPlan.semanticReview?.key ?? publishedPlan.target.label,
+        expectedUptake: publishedPlan.expectedUptake, messageId: logEntry.publishedMessageId,
+        publicMessageBoundary: formalChat.length, message: result.candidate?.message, timestamp: Date.now(),
+      }]);
     }
+  } catch (error) {
+    logEntry.outcome = "SILENT_CONTROLLER_ERROR";
+    logEntry.reason = String(error?.message || error);
+  } finally {
+    logEntry.modelCallCount = budget.calls.length;
+    logEntry.totalGeneratorAttempts = budget.calls.filter(c => c.kind === "generator").length;
+    if (logEntry.cancellation) logEntry.reason = logEntry.cancellation.reason;
+    await finalizeAuditLog(game, logEntry);
+    adaptiveCloseoutScheduler.resume(game);
   }
+  return { deferred: logEntry.cancellation?.reason === "discussion_context_changed", outcome: logEntry.outcome };
 
-  if (result.published) {
-    // Phase 3: use the manager to record the publish uniformly. This
-    // resets messagesSinceLastPublish (retained as an Adaptive audit metric),
-    // increments publishedThisRound,
-    // appends to interventionHistory, and updates lastRole. The
-    // synthesiserFired flag is handled inside recordPublish based on
-    // role alone (not on `forced`); callers that need to mark the
-    // forced-nudge state still set synthesiserFired directly (this
-    // branch is for the Controller's tracking; recordPublish's
-    // general bookkeeping is separate).
-    recordPublish(game, { role: publishedRole, messageId: logEntry.publishedMessageId ?? result.candidate?.messageId ?? null, now });
-    if (publishedRole === chosenRole.role) {
-      currentRound.set("cognitiveInterventionHistory", [...cognitiveHistory, { planId: plan.planId, signature: plan.signature, role: publishedRole, requiredReasoningAct: plan.requiredReasoningAct, target: plan.target, expectedUptake: plan.expectedUptake, messageId: logEntry.publishedMessageId, publicMessageBoundary: chat.length, message: result.candidate?.message, timestamp: Date.now() }]);
-    }
-    if (publishedRole === chosenRole.role && chosenRole.role === "synthesiser" && chosenRole.forced) {
-      game.set("synthesiserFired", true);
-    }
-  }
-
-  await finalizeAuditLog(game, logEntry);
 }
 
 Empirica.on("game", "chat_round_0", handleChat);
 Empirica.on("game", "chat_round_1", handleChat);
 
 Empirica.onStageEnded(({ stage }) => {
+  if (stage.get("name") === "Task") adaptiveCloseoutScheduler.cancel(stage.currentGame, "stage_ended");
   const round = stage.round;
   const game = stage.currentGame;
   const stageName = stage.get("name");
@@ -2401,6 +2385,7 @@ Empirica.onRoundEnded(({ round }) => {
 });
 
 Empirica.onGameEnded(({ game }) => {
+  adaptiveCloseoutScheduler.cancel(game, "game_ended");
   const storedEndedAt = game.get("endedAt");
   const endedAt = typeof storedEndedAt === "string" && storedEndedAt.trim()
     ? storedEndedAt

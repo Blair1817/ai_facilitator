@@ -21,29 +21,24 @@
         "object"
       ],
       "minLength": 1,
-      "maxLength": 1500,
-      "description": "One structured or string intervention. Complete flattened visible text must be at most 1500 characters and obey the assigned role's word ceiling: 55 English words for Synthesiser and 50 for Expander or Challenger. Sentence/section rules remain role-specific. Requested Generalist uses its separate frozen rules.",
+      "description": "One intervention with optional sections, paragraphs and numbered lists. Runtime word ceiling across all visible text including titles and list numbers: 55 English words for Synthesiser and 50 for Expander/Challenger. No sentence, section or point-count cap.",
       "properties": {
         "summary": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 1500
+          "minLength": 1
         },
         "sections": {
           "type": "array",
-          "maxItems": 6,
           "items": {
             "type": "object",
             "properties": {
               "title": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 100
+                "minLength": 1
               },
               "body": {
                 "type": "string",
-                "minLength": 1,
-                "maxLength": 1500
+                "minLength": 1
               }
             },
             "required": [
@@ -55,8 +50,7 @@
         },
         "question": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 1500
+          "minLength": 1
         }
       },
       "required": [

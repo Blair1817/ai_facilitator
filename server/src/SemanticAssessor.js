@@ -30,6 +30,7 @@
  * `callLLM` and no network/API key.
  */
 
+import { semanticReferences } from "./AdaptiveEvidence.mjs";
 import fs from "fs";
 import path from "path";
 import Ajv from "ajv";
@@ -112,6 +113,12 @@ export function validateAgainstAssessorSchema(parsed) {
   if (!valid) {
     return { ok: false, code: "ASSESSOR_SCHEMA_FAILURE", errors: validateFn.errors };
   }
+  if (parsed.defer != null && (parsed.need !== "NONE" || parsed.operation !== null || parsed.target !== null)) {
+    return {
+      ok: false, code: "ASSESSOR_SCHEMA_FAILURE",
+      errors: [{ instancePath: "/defer", keyword: "deferralContract", message: "requires need NONE, operation null and target null" }],
+    };
+  }
   // JSON Schema validates the object shape, but this operation-dependent
   // invariant is kept in code. The live provider currently receives only the
   // prompt (not a Structured Outputs schema), and conditional JSON Schema
@@ -152,7 +159,7 @@ export function validateAgainstAssessorSchema(parsed) {
  * EvidenceChecker.js's later span/message_id checks are validated against
  * IDs that mean the same thing on both sides of the pipeline.
  */
-export function buildAssessorUserContext({ chat, taskGeneralContext, interventionHistory = [], activeParticipantNames = [], contextScope = "complete_current_round", participationCounts = null, quietParticipants = [] }) {
+export function buildAssessorUserContext({ chat, taskGeneralContext, interventionHistory = [], activeParticipantNames = [], contextScope = "complete_current_round", participationCounts = null, quietParticipants = [], scheduling = {}, excludedTargets = [] }) {
   const chatWithIds = withMessageIds(chat);
   const humanWithIds = chatWithIds.filter(isPublicParticipantMessage);
   const localWithIds = humanWithIds.slice(-6);
@@ -169,6 +176,10 @@ export function buildAssessorUserContext({ chat, taskGeneralContext, interventio
     ["[PARTICIPATION_COUNTS]", JSON.stringify(participationCounts ?? {})],
     ["[QUIET_PARTICIPANTS]", JSON.stringify(Array.isArray(quietParticipants) ? quietParticipants : [])],
     ["[INTERVENTION_HISTORY]", JSON.stringify(interventionHistory)],
+    ["[SCHEDULING]", JSON.stringify(scheduling)],
+    ["[SEMANTIC_REFERENCES]", JSON.stringify(semanticReferences(interventionHistory, excludedTargets))],
+    ["[EXCLUDED_SEMANTIC_TARGETS]", JSON.stringify(excludedTargets)],
+    ["[DELIVERED_AI_CONTEXT_NOT_FACT_EVIDENCE]", formatMessagesWithIds(chatWithIds.filter(m => m.sender?.id === "ai"))],
     ["[CUMULATIVE_PUBLIC_CONTEXT]", cumulativePublicContext || "(no messages yet)"],
     ["[LOCAL_CONTEXT]", localContext || "(no messages yet)"],
   ];
@@ -195,7 +206,7 @@ export function buildAssessorUserContext({ chat, taskGeneralContext, interventio
  *     evaluateGate() see checkedFactors=null, which fails closed as an
  *     unavailable detector result.
  */
-export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM, interventionHistory, activeParticipantNames, contextScope, participationCounts, quietParticipants }) {
+export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM, interventionHistory, activeParticipantNames, contextScope, participationCounts, quietParticipants, scheduling = {}, excludedTargets = [], allowStructureRepair = false }) {
   if (typeof callLLM !== "function") {
     throw new Error("assessSemanticFactors() requires a callLLM(messages) function to be injected -- it does not perform network calls itself.");
   }
@@ -205,27 +216,25 @@ export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM,
     return { success: false, code: "ASSESSOR_PROMPT_BLOCKED", error: promptResult.reason };
   }
 
-  const { userContent } = buildAssessorUserContext({ chat, taskGeneralContext, interventionHistory, activeParticipantNames, contextScope, participationCounts, quietParticipants });
+  const { userContent } = buildAssessorUserContext({ chat, taskGeneralContext, interventionHistory, activeParticipantNames, contextScope, participationCounts, quietParticipants, scheduling, excludedTargets });
   const messages = [
     { role: "system", content: promptResult.content },
     { role: "user", content: userContent },
   ];
 
-  const llmResponse = await callLLM(messages);
-  const responseMetadata = llmResponse.responseMetadata ?? null;
-  if (!llmResponse.success) {
-    return { success: false, code: "ASSESSOR_API_ERROR", error: llmResponse.error, responseMetadata };
+  const attempts = [];
+  for (let attempt = 0; attempt < (allowStructureRepair ? 2 : 1); attempt++) {
+    const llmResponse = await callLLM(messages, { structureRepair: attempt > 0 });
+    const responseMetadata = llmResponse.responseMetadata ?? null;
+    if (!llmResponse.success) return { success: false, code: "ASSESSOR_API_ERROR", error: llmResponse.error, responseMetadata, attempts };
+    const parsed = strictParseJsonObject(llmResponse.rawText);
+    const schema = parsed.ok ? validateAgainstAssessorSchema(parsed.parsed) : null;
+    if (parsed.ok && schema.ok) return { success: true, factors: parsed.parsed, rawText: llmResponse.rawText, responseMetadata, attempts };
+    const failure = { code: parsed.ok ? "ASSESSOR_SCHEMA_FAILURE" : "ASSESSOR_PARSE_FAILURE",
+      error: parsed.ok ? JSON.stringify(schema.errors) : parsed.error, rawText: llmResponse.rawText, responseMetadata };
+    attempts.push(failure);
+    if (attempt > 0 || !allowStructureRepair) return { success: false, ...failure, attempts };
+    messages.push({ role: "assistant", content: llmResponse.rawText }, { role: "user", content:
+      `Repair the JSON structure once. Errors: ${failure.error}\nRequired schema: ${JSON.stringify(loadAssessorSchema())}\nKeep grounded public evidence and apply all scheduling/semantic rules. Never invent quotes or fill missing fields with invented facts. Return NONE with null operation/target if no supported need can be represented.` });
   }
-
-  const parseResult = strictParseJsonObject(llmResponse.rawText);
-  if (!parseResult.ok) {
-    return { success: false, code: "ASSESSOR_PARSE_FAILURE", error: parseResult.error, rawText: llmResponse.rawText, responseMetadata };
-  }
-
-  const schemaResult = validateAgainstAssessorSchema(parseResult.parsed);
-  if (!schemaResult.ok) {
-    return { success: false, code: "ASSESSOR_SCHEMA_FAILURE", error: JSON.stringify(schemaResult.errors), rawText: llmResponse.rawText, responseMetadata };
-  }
-
-  return { success: true, factors: parseResult.parsed, rawText: llmResponse.rawText, responseMetadata };
 }

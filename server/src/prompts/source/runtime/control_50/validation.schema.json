@@ -54,7 +54,7 @@
     },
     "length": {
       "type": "boolean",
-      "description": "true when complete visible automatic STATIC/GENERALIST text exceeds 50 English words or the existing two-sentence limit, or is excessively overloaded. Shorter messages are valid. Runtime enforces the word ceiling; the validator checks semantic length as well."
+      "description": "True only when complete visible text exceeds the runtime word ceiling: 50 English words. Count headings and list numbers. No other length or layout limit."
     }
   },
   "required": [

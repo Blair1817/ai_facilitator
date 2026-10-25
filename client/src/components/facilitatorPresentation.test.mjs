@@ -29,13 +29,21 @@ test("old messages and mismatched or malformed presentation fall back to plain t
   assert.equal(presentationForMessage({ content: "Text", presentation: { sections: null } }), null);
 });
 
-test("structured messages reject hidden fields, HTML, block markup and excessive combined length", () => {
+test("structured messages reject hidden fields, HTML and unsupported markup", () => {
   assert.equal(isFacilitatorPresentation({ ...presentation, rationale: "hidden" }), false);
   for (const summary of ["<script>alert(1)</script>", "# Heading", "- Bullet", "[link](https://example.com)", "**unclosed", " "]) {
     assert.equal(isFacilitatorPresentation({ ...presentation, summary }), false, summary);
   }
-  assert.equal(isFacilitatorPresentation({ ...presentation, sections: Array(7).fill(presentation.sections[0]) }), false);
-  assert.equal(isFacilitatorPresentation({ summary: "s".repeat(800), sections: [], question: "q".repeat(800) }), false);
+  assert.equal(isFacilitatorPresentation({ ...presentation, sections: Array(7).fill(presentation.sections[0]) }), true);
+  assert.equal(isFacilitatorPresentation({ summary: "s".repeat(800), sections: [], question: "q".repeat(800) }), true);
+});
+
+test("numbered points and paragraph breaks survive presentation and publication", () => {
+  const numbered = { summary: "Shared points", sections: [{ title: "Arden", body: "1. Covered walkways.\n2. Rooms are 12 minutes away.\n\n3. No app alerts." }], question: "How do you weigh these points?" };
+  assert.equal(isFacilitatorPresentation(numbered), true);
+  const candidate = normalizeGeneratorCandidate({ role: "INFORMATION_SYNTHESISER", message: numbered, groundingMessageIds: [] });
+  assert.match(candidate.message, /Arden\n\n1\. Covered walkways\.\n2\. Rooms are 12 minutes away\.\n\n3\. No app alerts\./);
+  assert.equal(presentationForMessage({ content: candidate.message, presentation: numbered }), numbered);
 });
 
 test("brief interventions need no sections or closing question; mentions remain in canonical text", () => {

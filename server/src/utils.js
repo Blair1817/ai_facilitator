@@ -31,7 +31,7 @@ export const THRESHOLDS = {
   // Revisit with real session data once more pilots have run.
   expander: { threshold: 0.30 },
   challenger: { threshold: 0.5 },
-  synthesiser: { threshold: 0.5, forced_trigger_seconds: 20 },
+  synthesiser: { threshold: 0.5 },
   gate: {
     min_time_for_intervention_seconds: 10,
     // 2026-08-13 widening from 0.05 to 0.20. The frozen deliberative
@@ -226,14 +226,6 @@ export function chooseRole(gateResult, { remainingTime, lastRole = null, synthes
   }
 
   const { eligibleRoles, scores, chosenRole } = gateResult;
-  const nearDeadline = remainingTime <= THRESHOLDS.synthesiser.forced_trigger_seconds * 1000;
-  if (nearDeadline && !synthesiserFired && eligibleRoles.includes("synthesiser")) {
-    return {
-      role: "synthesiser", forced: true,
-      reasoning: `Forced synthesiser nudge near deadline; independently eligible from LLM detector (score=${scores.synthesiser.toFixed(3)})`,
-    };
-  }
-
   // v3.2 never changes roles merely for variety. Current verified need
   // and the existing priority band determine the role; target repetition is
   // handled separately by PlanPreflight.
@@ -251,22 +243,20 @@ export function chooseRole(gateResult, { remainingTime, lastRole = null, synthes
  * Live Adaptive gate (2026-10-21 categorical redesign). Input is the output of
  * EvidenceChecker.checkNeedAssessment() (or null when the detector call
  * failed). Three outcomes:
- *   - "abstain":       only the final time floor (same floor as Static's
- *                      checkpoint rule) -- nothing is published.
- *   - "static_policy": NONE, a need rejected by the evidence check, or an
- *                      unavailable detector -- publish a Static-policy
- *                      message so Adaptive speaks at every checkpoint where
- *                      Static would.
+ *   - "abstain":       final time floor or verified participant-summary
+ *                      deferral -- nothing is generated or published.
+ *   - "static_policy": other NONE, rejected evidence, or unavailable
+ *                      detector -- retain the ordinary Static fallback.
  *   - "specialist":    a verified need; its role is fixed by the need.
  * No numeric thresholds, tie margins or discounts are involved. The returned
  * shape stays compatible with chooseRole() and the existing log fields.
  */
-export function evaluateNeedGate(checkedNeed, { remainingTime } = {}) {
+export function evaluateNeedGate(checkedNeed, { remainingTime, scheduling = null } = {}) {
   const empty = { scores: {}, eligibleRoles: [], hardGatedRoles: [], perRole: {} };
-  if (remainingTime <= THRESHOLDS.gate.min_time_for_intervention_seconds * 1000) {
+  if (remainingTime <= 20_000) {
     return {
       decision: "abstain",
-      reason: `Insufficient time remaining (${remainingTime}ms <= ${THRESHOLDS.gate.min_time_for_intervention_seconds}s floor) for a meaningful intervention-response cycle`,
+      reason: `Insufficient time remaining (${remainingTime}ms <= 20s floor) for a meaningful intervention-response cycle`,
       ...empty,
       abstentionKind: "time_floor",
     };
@@ -277,6 +267,15 @@ export function evaluateNeedGate(checkedNeed, { remainingTime } = {}) {
       reason: "Need detector output was unavailable or invalid; using the Static policy for this checkpoint",
       ...empty,
       fallbackKind: "detector_unavailable",
+    };
+  }
+  if (checkedNeed.need === "NONE" && !checkedNeed.role && !checkedNeed.downgradedReason
+    && checkedNeed.defer?.reason === "participant_summary_in_progress") {
+    return {
+      decision: "abstain",
+      reason: "A participant is explicitly summarising the discussion; wait for them to finish",
+      ...empty,
+      abstentionKind: "participant_summary_in_progress",
     };
   }
   if (!checkedNeed.role) {
@@ -293,7 +292,7 @@ export function evaluateNeedGate(checkedNeed, { remainingTime } = {}) {
   const role = checkedNeed.role;
   return {
     decision: "specialist",
-    reason: `Verified need ${checkedNeed.need}/${checkedNeed.operation} -> ${role}`,
+    reason: `Verified need ${checkedNeed.need}/${checkedNeed.operation} -> ${role} (${scheduling?.stage ?? "ordinary"})`,
     scores: { [role]: 1 },
     eligibleRoles: [role],
     hardGatedRoles: [role],

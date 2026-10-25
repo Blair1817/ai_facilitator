@@ -241,13 +241,13 @@ export function checkEvidence(rawFactors, { chat } = {}) {
 //       fragmented_evidence additionally cites at least three messages.
 //   N4  participation_gap names a roster participant who is quiet under the
 //       deterministic QUIET_PARTICIPANT_RULE.
-export function checkNeedAssessment(raw, { chat, activeParticipantNames = [] } = {}) {
+export function checkNeedAssessment(raw, { chat, activeParticipantNames = [], scheduling = null } = {}) {
   const chatWithIds = withMessageIds(chat || []);
   const publicMessages = chatWithIds.filter(isPublicParticipantMessage);
   const messageById = new Map(publicMessages.map((m) => [m.messageId, m]));
   const participationCounts = countPublicMessagesByName(publicMessages, activeParticipantNames);
   const quiet = quietParticipants(participationCounts);
-  const base = { rawNeed: raw?.need ?? null, participationCounts, quietParticipants: quiet };
+  const base = { rawNeed: raw?.need ?? null, participationCounts, quietParticipants: quiet, scheduling };
   const none = (downgradedReason) => ({
     ...base, need: "NONE", role: null, operation: null, target: null, downgradedReason, checkedFactors: null,
   });
@@ -255,6 +255,21 @@ export function checkNeedAssessment(raw, { chat, activeParticipantNames = [] } =
   // N1
   if (!raw || typeof raw !== "object" || !Object.prototype.hasOwnProperty.call(NEED_CATEGORIES, raw.need)) {
     return none("INVALID_NEED");
+  }
+  // A deliberate pause must survive NONE -> Static fallback routing. The
+  // assessor judges whether summarising is still underway; code verifies the
+  // cited participant text, never infers that state from audit prose/keywords.
+  if (raw.defer != null) {
+    if (raw.need !== "NONE" || raw.operation !== null || raw.target !== null
+      || raw.defer.reason !== "participant_summary_in_progress") return none("INVALID_DEFERRAL");
+    const evidence = raw.defer.evidence;
+    if (!Array.isArray(evidence) || !evidence.length
+      || evidence.some(q => typeof q?.span !== "string" || !q.span.trim()
+        || !messageById.get(q.messageId)?.text?.includes(q.span))) return none("INVALID_DEFERRAL_EVIDENCE");
+    return { ...none(null), defer: {
+      reason: raw.defer.reason,
+      evidence: evidence.map(q => ({ messageId: q.messageId, span: q.span })),
+    } };
   }
   if (raw.need === "NONE") return none(null);
   const role = NEED_CATEGORIES[raw.need];

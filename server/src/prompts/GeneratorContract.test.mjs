@@ -348,12 +348,11 @@ test("deterministic validation: multiple simultaneous failures are all reported,
   assert.ok(result.failedCriteria.includes("UNKNOWN_GROUNDING_ID"));
 });
 
-test("Synthesiser mechanical boundaries accept 55 words and three sentences, then fail closed one over", () => {
+test("Synthesiser accepts four sentences but still rejects more than 55 words", () => {
   const context = {
     selectedRole: "INFORMATION_SYNTHESISER",
     eligibleMessageIds: ["m0"],
     maxWords: 55,
-    maxSentences: 3,
   };
   const candidate = (message) => ({ role: "INFORMATION_SYNTHESISER", message, groundingMessageIds: ["m0"] });
   const fiftyFiveWords = Array.from({ length: 55 }, (_, index) => `word${index + 1}`).join(" ");
@@ -362,7 +361,7 @@ test("Synthesiser mechanical boundaries accept 55 words and three sentences, the
   assert.equal(runDeterministicValidation(candidate(fiftyFiveWords), context).passed, true);
   assert.deepEqual(runDeterministicValidation(candidate(fiftySixWords), context).failedCriteria, ["MESSAGE_EXCEEDS_WORD_LIMIT"]);
   assert.equal(runDeterministicValidation(candidate("First. Second. Third."), context).passed, true);
-  assert.deepEqual(runDeterministicValidation(candidate("First. Second. Third. Fourth."), context).failedCriteria, ["MESSAGE_EXCEEDS_SENTENCE_LIMIT"]);
+  assert.equal(runDeterministicValidation(candidate("First. Second. Third. Fourth."), context).passed, true);
 });
 
 test("Synthesiser schema, role and flattened structured output cannot bypass grounding or length checks", () => {
@@ -381,7 +380,6 @@ test("Synthesiser schema, role and flattened structured output cannot bypass gro
     selectedRole: "INFORMATION_SYNTHESISER",
     eligibleMessageIds: ["m0"],
     maxWords: 55,
-    maxSentences: 3,
   });
   assert.ok(checked.failedCriteria.includes("MESSAGE_EXCEEDS_WORD_LIMIT"));
 
@@ -407,8 +405,8 @@ test("Synthesiser runtime prompt matches the simulator, manifest bytes and compo
   assert.equal(bundle.blocked, false);
   assert.equal(bundle.metadata.maxWords, 55);
   assert.equal(bundle.metadata.promptHash, manifest.routes.synthesiser.generatorSha256);
-  assert.match(bundle.content, /typical intervention should be about 30–45 English words/);
-  assert.match(bundle.content, /longer response of up to 55 words is acceptable/);
+  assert.doesNotMatch(bundle.content, /30–45|at most three sentences|at most two points per option/);
+  assert.match(bundle.content, /runtime ceiling is 55 English words/);
 });
 
 // ── deterministic @-mention hygiene (2026-08-13) ────────────────────────
@@ -518,9 +516,9 @@ test("stripMarkdownWrapper: strips ATX headers (`# `, `## `, `### `) at line sta
   assert.equal(out, "Summary\nHalden leads on time, Norvale on team structure.");
 });
 
-test("stripMarkdownWrapper: strips numbered list markers at line start", () => {
+test("stripMarkdownWrapper: preserves numbered list markers at line start", () => {
   const out = stripMarkdownWrapper("1. Halden: reliable\n2. Norvale: not looking good\n3. Fenwick: surveys");
-  assert.equal(out, "Halden: reliable\nNorvale: not looking good\nFenwick: surveys");
+  assert.equal(out, "1. Halden: reliable\n2. Norvale: not looking good\n3. Fenwick: surveys");
 });
 
 test("stripMarkdownWrapper: strips inline backticks", () => {
@@ -648,8 +646,10 @@ test("strict parser: end-to-end — a markdown-laden 703-char real failing outpu
   );
 });
 
-test("strict parser: schema cap is now 1500 (regression: cap was 400, raised 2026-08-21)", () => {
-  // Pin the new cap. If a future change reverts it to 400, this test fails.
-  const maxLength = getGenerationSchemaMaxLength();
-  assert.equal(maxLength, 1500, `expected schema cap=1500, got ${maxLength}`);
+test("automatic text has only a word ceiling; requested route keeps its existing schema", () => {
+  assert.equal(getGenerationSchemaMaxLength(), null);
+  assert.equal(buildRuntimeGenerationSchema("GENERALIST", "PARTICIPANT_REQUEST").properties.message.maxLength, 1500);
+  const candidate = { role: "GENERALIST", message: { summary: "s".repeat(800), sections: [], question: "q".repeat(800) }, groundingMessageIds: [] };
+  assert.equal(validateAgainstGenerationSchema(candidate, "GENERALIST", "PARTICIPANT_REQUEST").ok, false);
+  assert.equal(validateAgainstGenerationSchema(candidate, "GENERALIST").ok, true);
 });

@@ -75,12 +75,12 @@ Late:
 
 The output contract is owned by `base.md` (prepended to this file) and
 `generation.schema.json`. The role field must be `GENERALIST`. The
-message is one short plain-text sentence (two at most), with no
-sections, ending with a question or the confirmation reminder. Use
+message may use paragraphs or sections, ending with a question or the
+confirmation reminder. Use
 `groundingMessageIds: []`, since this role makes no transcript-specific
 claim. Do not add any other fields. Do not output code fences,
 explanations, or commentary around the JSON.
 
 ## LENGTH
 
-Keep the complete visible intervention at most 50 English words (<=50). There is no minimum length. Say less, not more -- one short sentence is usually enough.
+Keep the complete visible intervention at most 50 English words (<=50).
