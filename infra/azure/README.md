@@ -39,6 +39,13 @@ Only port 8080 is an Azure ingress target. Do not add port 3001 as HTTP ingress
 or an additional TCP port. If ExportServer is unavailable, `/exports` returns a
 gateway error while Participant/Admin traffic continues to use Empirica.
 
+The main container's startup, readiness, and liveness probes request
+`/exports/healthz` through port 8080. This unauthenticated endpoint returns only
+`{"status":"ok"}` from the callbacks process. Research routes still require
+Basic Auth. Do not use a TCP probe of port 8080 for the main container: Caddy
+can remain alive after callbacks crash, hiding failed stage progression and
+exports. The gateway container can keep its own TCP probes.
+
 ## Out-of-band secrets
 
 Create or update these Container App secrets without putting their values in a
@@ -91,7 +98,8 @@ file contents into an environment variable.
 3. Copy the saved YAML to a new temporary file. Merge the checked-in fragment,
    replacing the gateway image placeholders. Retain every existing application
    image, environment variable, secret reference, `/data` and Empirica-config
-   volume mount, registry setting, probe, scale rule, and traffic setting.
+   volume mount, registry setting, scale rule, and traffic setting. Replace
+   the main container's probes with the HTTP callbacks probes in the fragment.
    Container arrays are replacement-sensitive; do not pass the fragment itself
    to `az containerapp update`.
 
@@ -136,12 +144,12 @@ revision is confirmed healthy.
 
 - The checked-in file is an incremental fragment because the repository has no
   authoritative ACA definition. A live YAML merge must be reviewed carefully
-  to avoid dropping existing environment, volume, probe, scale, or registry
+  to avoid dropping existing environment, volume, scale, or registry
   settings.
 - Basic Auth is one shared researcher identity unless separate deployments or a
   stronger identity layer are introduced later. Always use Azure HTTPS ingress.
-- Gateway health does not prove ExportServer health. This is intentional for
-  experiment isolation; monitor `/exports` and ExportServer logs separately.
+- Gateway health does not prove callbacks health. Keep the main container's
+  HTTP callbacks probes; also verify authenticated exports after deployment.
 - Keep the gateway image tag immutable and review upstream Caddy security
   releases before each deployment.
 
