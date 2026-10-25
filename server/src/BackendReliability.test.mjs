@@ -261,7 +261,11 @@ test("overlapping automatic callbacks do not start a second pipeline or publish 
     const first = handleChat(undefined, { game: w.game });
     await waitUntil(() => requests === 1);
     const chat = w.game.get("chat_round_0");
+    // 2026-10-25: up to two new human messages are tolerated; three make the
+    // older automatic result stale.
     chat.push(humanMessage(w.game, w.players[0], "A later public fact.", 6));
+    chat.push(humanMessage(w.game, w.players[1], "Another later fact.", 7));
+    chat.push(humanMessage(w.game, w.players[2], "And one more.", 8));
     w.game.set("lastAttemptTimestamp", Date.now() - 31_000);
     const second = handleChat(undefined, { game: w.game });
     await second;
@@ -271,8 +275,31 @@ test("overlapping automatic callbacks do not start a second pipeline or publish 
   });
   assert.equal(w.game.get("attemptedThisRound"), 1);
   assert.equal(w.game.get("publishedThisRound") || 0, 0);
-  assert.equal(published(w).length, 0, "the older automatic result is stale after the later human message");
+  assert.equal(published(w).length, 0, "the older automatic result is stale after more than two later human messages");
   assert.ok(readAppendOnlyAttribute(w.game, "llmLog").some((entry) => entry.outcome === "SILENT_AUTOMATIC_IN_FLIGHT"));
+});
+
+test("Static still publishes when one human message arrives while its Generator is running", async () => {
+  const { handleChat } = await getOfflineCallbacksHarness();
+  const w = world("static");
+  let resolveFirst;
+  const firstResponse = new Promise((resolve) => { resolveFirst = resolve; });
+  let requests = 0;
+  await withMockedFetch(async (_url, options) => {
+    requests += 1;
+    if (requests === 1) return firstResponse;
+    return validResponseFor(JSON.parse(options.body));
+  }, async () => {
+    const first = handleChat(undefined, { game: w.game });
+    await waitUntil(() => requests === 1);
+    w.game.get("chat_round_0").push(humanMessage(w.game, w.players[0], "A later public fact.", 6));
+    await handleChat(undefined, { game: w.game });   // counted; blocked by cooldown
+    resolveFirst(validResponseFor({ messages: [{ content: "# static.md" }] }));
+    await first;
+  });
+  assert.equal(published(w).length, 1, "one new message must not discard the Static checkpoint");
+  assert.equal(w.game.get("publishedThisRound"), 1);
+  assert.equal(w.game.get("messagesSinceLastPublish"), 0);
 });
 
 test("duplicate chat callbacks are idempotent while the first provider request is slow", async () => {

@@ -142,8 +142,7 @@ function canPublishFacilitatorResult(game, origin) {
 
 async function whileFacilitatorPublishesVisibleResponse(game, logEntry, task) {
   const stillCurrent = () => canPublishFacilitatorResult(game, logEntry)
-    && (logEntry.participantRequested === true || game.get("humanMessageCount") === logEntry.humanMessageCount)
-    && (!logEntry.publicContextFingerprint || publicContextFingerprint(game.get(`chat_round_${logEntry.roundIndex}`) || []) === logEntry.publicContextFingerprint);
+    && (logEntry.participantRequested === true || automaticContextStillUsable(game, logEntry));
   const rejectStale = () => {
     logEntry.reason = "Discarded stale AI result before publication because the originating Discussion stage or automatic discussion context changed";
     logEntry.outcome = "SILENT";
@@ -202,11 +201,13 @@ const llmMaxOutputTokens = Number.parseInt(process.env.LLM_MAX_OUTPUT_TOKENS ?? 
 // 2026-10-21: matched-latency delay for Static checkpoints. Adaptive makes
 // one extra LLM call (the need detector) before generating, so Static waits
 // this long before its own generation to keep checkpoint-to-message timing
-// comparable across conditions. Placeholder default: set it to the median
-// Adaptive `detectorLatency` observed in pilot logs. 0 disables it. Read at
+// comparable across conditions. Default 0 (off); if used, set it to the
+// median Adaptive `detectorLatency` observed in pilot logs. Read at
 // call time so tests and operators can change it without a rebuild.
 function staticMatchedDelayMs() {
-  return Math.max(0, Number(process.env.STATIC_MATCHED_DELAY_MS ?? 6000) || 0);
+  // 2026-10-25: default 0 (was a 6000 ms placeholder). A delay lengthens the
+  // window in which new messages arrive; set it only from measured latency.
+  return Math.max(0, Number(process.env.STATIC_MATCHED_DELAY_MS ?? 0) || 0);
 }
 const CALLBACKS_INSTANCE_ID = randomUUID();
 const AUTOMATIC_PIPELINE_GROUP = "AUTOMATIC_INTERVENTION";
@@ -217,8 +218,38 @@ export const adaptiveCloseoutScheduler = createCloseoutScheduler({
 });
 Empirica.on("game", "deadline", (_ctx, { game }) => adaptiveCloseoutScheduler.register(game));
 
+function publicContextEntries(chat) {
+  return chat.filter(isFormalContextMessage).map(m => [m.messageId, m.text ?? m.content]);
+}
 function publicContextFingerprint(chat) {
-  return JSON.stringify(chat.filter(isFormalContextMessage).map(m => [m.messageId, m.text ?? m.content]));
+  return JSON.stringify(publicContextEntries(chat));
+}
+
+// 2026-10-25: an automatic (Static or Adaptive) result may still be published
+// when at most STALE_TOLERANCE_HUMAN_MESSAGES new human messages arrived after
+// its context snapshot and the snapshot itself is unchanged. Previously ANY
+// new message discarded the result, so with realistic LLM latency in an
+// active 3-person chat Static almost never published. Same rule for both
+// conditions; participant requests are unaffected.
+const STALE_TOLERANCE_HUMAN_MESSAGES = 2;
+// A new Facilitator message (for example a participant-requested reply) since
+// the snapshot always makes the older automatic result stale. Adaptive
+// closeout runs started by the scheduler (180s/120s/early-closeout probe) keep
+// the strict rule (no new message at all): they are intent-sensitive and the
+// scheduler already defers and retries them.
+function automaticContextStillUsable(game, logEntry) {
+  const tolerance = logEntry.facilitation === "adaptive" && logEntry.triggerSource && logEntry.triggerSource !== "message"
+    ? 0 : STALE_TOLERANCE_HUMAN_MESSAGES;
+  const newHuman = (game.get("humanMessageCount") || 0) - (logEntry.humanMessageCount || 0);
+  if (newHuman < 0 || newHuman > tolerance) return false;
+  if (!logEntry.publicContextFingerprint) return newHuman === 0;
+  let snapshot;
+  try { snapshot = JSON.parse(logEntry.publicContextFingerprint); } catch { return false; }
+  const formal = (game.get(`chat_round_${logEntry.roundIndex}`) || []).filter(isFormalContextMessage);
+  if (JSON.stringify(publicContextEntries(formal.slice(0, snapshot.length))) !== logEntry.publicContextFingerprint) return false;
+  const added = formal.slice(snapshot.length);
+  return added.length <= tolerance
+    && added.every(m => (m.messageType ?? (m.sender?.id === "ai" ? "facilitator" : "human")) === "human");
 }
 
 
@@ -2104,6 +2135,7 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
   // fallback participant-facing message.
   if (facilitation === "static") {
     logEntry.routingDecision = "STATIC_REQUIRED_MESSAGE";
+    logEntry.publicContextFingerprint = publicContextFingerprint(chat);
     // 2026-10-21: matched-latency delay (see staticMatchedDelayMs()).
     const matchedDelayMs = staticMatchedDelayMs();
     if (matchedDelayMs > 0) {
@@ -2169,7 +2201,7 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
   const budget = createAdaptiveBudget({
     deadline: () => game.get("deadline"), log: logEntry,
     isCurrent: () => canPublishFacilitatorResult(game, logEntry)
-      && publicContextFingerprint(game.get(chatKey) || []) === logEntry.publicContextFingerprint,
+      && automaticContextStillUsable(game, logEntry),
   });
   let publishedPlan = null;
   async function assess(excluded = []) {

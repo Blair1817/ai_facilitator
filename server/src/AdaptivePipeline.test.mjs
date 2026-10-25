@@ -164,12 +164,38 @@ test("<=20s starts no automatic call, and time/context/end changes during calls 
       if (change === "time") w.game.set("deadline", Date.now() + 20_000);
       else if (change === "end") w.stage.set("ended", true);
       else if (change === "round") w.game.currentRound = new FakeRound({}, w.game);
-      else w.game.set("chat_round_0", [...w.game.get("chat_round_0"), { ...w.chat[0], messageId: "new-context", text: change }]);
+      // 2026-10-25: message-triggered runs tolerate <= 2 new human messages,
+      // so a context change here adds three.
+      else w.game.set("chat_round_0", [...w.game.get("chat_round_0"),
+        ...[1, 2, 3].map(i => ({ ...w.chat[0], messageId: `new-context-${i}`, text: `${change} ${i}` }))]);
     } });
     assert.equal(r.published.length, 0, change);
     assert.deepEqual(r.requests.map(r => r.kind), ["assessor", "generator"], change);
     assert.ok(r.audit.cancellation, change);
   }
+});
+test("stale tolerance: message runs publish after <=2 new human messages; closeout runs and new Facilitator messages stay strict", async () => {
+  const addHuman = (w, n) => w.game.set("chat_round_0", [...w.game.get("chat_round_0"),
+    ...Array.from({ length: n }, (_, i) => ({ ...w.chat[0], messageId: `during-${i}`, text: `during ${i}` }))]);
+  const message = world();
+  const ok = await run(message, { mutate(kind, w) { if (kind === "generator") addHuman(w, 1); } });
+  assert.equal(ok.published.length, 1, "one new human message no longer discards a message-triggered result");
+  const two = world();
+  assert.equal((await run(two, { mutate(kind, w) { if (kind === "generator") addHuman(w, 2); } })).published.length, 1);
+
+  const closeout = world({ remaining: 180_000 }); closeout.game.set("messagesSinceLastPublish", 0);
+  const raw = { ...need(closeout), integrationCandidate: need(closeout, "INTEGRATE"), integrationStatus: "qualified" };
+  const strict = await run(closeout, { assessments: [raw], trigger: { triggerSource: "time_180", triggerSources: ["time_180"] },
+    mutate(kind, w) { if (kind === "generator") addHuman(w, 1); } });
+  assert.equal(strict.published.length, 0, "scheduler-triggered closeout keeps the strict rule");
+  assert.ok(strict.audit.cancellation);
+
+  const facilitator = world();
+  const superseded = await run(facilitator, { mutate(kind, w) {
+    if (kind === "generator") w.game.set("chat_round_0", [...w.game.get("chat_round_0"),
+      { ...w.chat[0], messageId: "ai-reply", text: "Facilitator reply", messageType: "facilitator", speakerType: "facilitator", sender: { id: "ai", name: "Facilitator" } }]);
+  } });
+  assert.equal(superseded.published.length, 0, "a newer Facilitator message always supersedes the older automatic result");
 });
 test("ten real checkpoints are replayable; checkpoint45 makes no new automatic call", async () => {
   assert.equal(replay.gameId, "adaptive-replay-session");
