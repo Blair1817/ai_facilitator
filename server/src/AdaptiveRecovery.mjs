@@ -45,7 +45,7 @@ export const isRepetition = result => result?.validator?.failedCriteria?.include
 /** Retry selection once, never recursively; no need/invalid/second failure
  * returns to the same Static policy. A closeout-only empty initial scan is
  * different from a failed candidate and does not create a timed Static turn. */
-export async function runAdaptiveSelection({ assess, generate, fallback, budget, log, initial, closeoutOnly = false }) {
+export async function runAdaptiveSelection({ assess, generate, fallback, budget, log, initial, closeoutOnly = false, redraw = null }) {
   let selection = initial;
   for (let pass = 0; pass < 2; pass++) {
     if (!budget.check()) return { published: false };
@@ -72,7 +72,9 @@ export async function runAdaptiveSelection({ assess, generate, fallback, budget,
     const excluded = { id: "excluded:0", target: selection.target, operation: selection.operation,
       semanticKey: selection.semanticReview?.key ?? selection.target?.label, reason: "validator_repetition" };
     log.excludedSemanticTargets = [excluded];
-    selection = await assess([excluded]);
+    // 2026-10-26: redraw once from the remaining verified pool (no new
+    // detector call); with no remaining candidate this ends in Static.
+    selection = redraw ? redraw(selection) : await assess([excluded]);
     log.reselectionResult = { need: selection?.need ?? null, role: selection?.role ?? null,
       rejection: selection?.downgradedReason ?? null };
   }

@@ -21,7 +21,7 @@
  * DynamicContext.mjs/utils.js.
  */
 
-import { COGNITIVE_NEEDS, NEED_CATEGORIES, isPublicParticipantMessage, countPublicMessagesByName, quietParticipants } from "./CognitiveOperations.mjs";
+import { COGNITIVE_NEEDS, NEED_CATEGORIES, isPublicParticipantMessage, countPublicMessagesByName, quietParticipants, verifiedParticipationTargets } from "./CognitiveOperations.mjs";
 import { withMessageIds } from "./prompts/DynamicContext.mjs";
 
 // v2 design (Phase 4): expanded to the 8 factors listed in the
@@ -295,7 +295,9 @@ export function checkNeedAssessment(raw, { chat, activeParticipantNames = [], sc
   // N4
   if (raw.operation === "participation_gap") {
     const name = target.participantName;
-    if (typeof name !== "string" || !activeParticipantNames.includes(name) || !quiet.includes(name)) {
+    // 2026-10-26: quiet overall OR silent across the recent window (code-verified).
+    if (typeof name !== "string" || !activeParticipantNames.includes(name)
+      || !verifiedParticipationTargets(publicMessages, activeParticipantNames).includes(name)) {
       return none("PARTICIPANT_NOT_VERIFIED_QUIET");
     }
   }

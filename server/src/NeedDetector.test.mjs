@@ -18,6 +18,9 @@ import { checkNeedAssessment } from "./EvidenceChecker.js";
 import { evaluateNeedGate, chooseRole } from "./utils.js";
 import { compilePlan } from "./PolicyCompiler.js";
 import { preflightPlan } from "./PlanPreflight.mjs";
+// 2026-10-26: detector output now reports independent candidates.
+import { toDetectorOutput, toDetectorText } from "../test/participant_sim/fakes/detectorOutput.mjs";
+const asDetector = data => typeof data === "string" ? toDetectorText(data) : toDetectorOutput(data);
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 process.argv[1] = path.join(dirname, "fake-entry.js");
@@ -69,7 +72,7 @@ const summaryPause = (chat) => ({
 test("summary deferral requires NONE and exact public participant evidence", () => {
   const chat = [...CHAT, msg("Alex", "Let me summarise these points now; I am still putting them together.")];
   const raw = summaryPause(chat);
-  assert.equal(validateAgainstAssessorSchema(raw).ok, true);
+  assert.equal(validateAgainstAssessorSchema(toDetectorOutput(raw)).ok, true);
   const checked = check(raw, chat);
   assert.deepEqual(checked.defer, raw.defer);
   const variants = [
@@ -86,8 +89,8 @@ test("summary deferral requires NONE and exact public participant evidence", () 
     assert.equal(result.defer, undefined);
     assert.equal(evaluateNeedGate(result, { remainingTime: 60_000 }).decision, "static_policy");
   }
-  assert.equal(validateAgainstAssessorSchema({ ...raw, need: "INTEGRATE" }).ok, false);
-  assert.equal(validateAgainstAssessorSchema({ ...raw, defer: { ...raw.defer, evidence: [] } }).ok, false);
+  assert.equal(validateAgainstAssessorSchema(toDetectorOutput({ ...raw, need: "INTEGRATE", operation: "fragmented_evidence", target: target(chat, [0, 1, 2]) })).ok, false, "defer requires every candidate to be null");
+  assert.equal(validateAgainstAssessorSchema(toDetectorOutput({ ...raw, defer: { ...raw.defer, evidence: [] } })).ok, false);
   const aiChat = [...CHAT, { text: chat[7].text, sender: { id: "ai", name: "Facilitator" }, messageType: "facilitator" }];
   assert.equal(check(raw, aiChat).downgradedReason, "INVALID_DEFERRAL_EVIDENCE");
 });
@@ -244,11 +247,11 @@ async function runCheckpoint(w, detector, generatorFor, { onFetch } = {}) {
   globalThis.fetch = async (_url, options) => {
     const body = JSON.parse(options.body);
     const system = body.messages[0].content;
-    onFetch?.(system);
+    onFetch?.(system, body);
     if (system.startsWith("# assessor.md")) {
       calls.push("detector");
       if (detector === "API_ERROR") return new Response("boom", { status: 500 });
-      return provider(detector);
+      return provider(asDetector(detector));
     }
     if (system.startsWith("# validator.md")) { calls.push("validator"); return provider(passFlags()); }
     const prompt = /# (static|expander|challenger|synthesiser|generalist)\.md/.exec(system)?.[1] ?? "unknown";
@@ -283,20 +286,21 @@ test("end-to-end: a finished summary does not leave a sticky pause at the next c
     ...w.game.get("chat_round_0").at(-1), messageId: "need-summary-complete", content: completed, text: completed,
   }]);
   w.game.set("lastAttemptTimestamp", Date.now() - 31_000);
-  const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "The participant has finished." }, () => STATIC_REPLY);
-  assert.deepEqual(r.calls, ["detector", "static", "validator"]);
+  const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "The participant has finished." },
+    prompt => prompt === "expander"
+      ? { role: "INFORMATION_EXPANDER", message: "@[Jordan], anything from your notes on any of the options, good or bad? No worries if not.", groundingMessageIds: [] }
+      : STATIC_REPLY);
+  assert.equal(r.calls[0], "detector");
+  assert.notEqual(r.audit.gateDecision, "abstain", "no sticky pause");
   assert.equal(r.published.length, 1);
 });
 
-test("end-to-end: ELICIT participation_gap invites the code-verified quiet participant through the Expander", async () => {
+// 2026-10-26: participation is decided by code. With no detector candidate,
+// the code-verified quiet participant is the only pool entry.
+test("end-to-end: the code-verified quiet participant enters the random pool and the Expander invites them", async () => {
   const w = world("adaptive", CHAT);
-  const chat = w.game.get("chat_round_0");
-  const detector = need("ELICIT", "participation_gap", {
-    label: "Invite Jordan", messageIds: ["m5"], evidence: [{ messageId: "m5", span: chat[5].text }],
-    optionLabels: [], criteria: [], participantName: "Jordan",
-  });
   let expanderContext = "";
-  const r = await runCheckpoint(w, detector, (prompt, body) => {
+  const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "No content need." }, (prompt, body) => {
     expanderContext = body.messages[1].content;
     return prompt === "expander"
       ? { role: "INFORMATION_EXPANDER", message: "@[Jordan], anything from your notes on any of the options, good or bad? No worries if not.", groundingMessageIds: [] }
@@ -308,6 +312,10 @@ test("end-to-end: ELICIT participation_gap invites the code-verified quiet parti
   assert.equal(r.audit.selectedRole, "expander");
   assert.equal(r.audit.plan.requiredReasoningAct, "PARTICIPATION_ELICITATION");
   assert.deepEqual(r.audit.quietParticipants, ["Jordan"]);
+  assert.equal(r.audit.selection.mode, "randomized");
+  assert.deepEqual(r.audit.selection.pool.map(c => c.source), ["code_quiet"]);
+  assert.equal(r.audit.selection.probability, 1);
+  assert.deepEqual(w.round.get("participationInvites").Jordan.count, 1);
   assert.match(expanderContext, /PARTICIPATION_ELICITATION/);
 });
 
@@ -328,7 +336,8 @@ test("end-to-end: the detector receives exact participation counts and the quiet
 });
 
 test("end-to-end: a fabricated quotation never reaches a Specialist and uses the Static policy", async () => {
-  const w = world("adaptive", CHAT);
+  // Balanced participation, so the pool has no code participation candidate.
+  const w = world("adaptive", [...CHAT, msg("Jordan", "City A has trains."), msg("Jordan", "City B has trams.")]);
   const detector = need("SCRUTINIZE", "unsupported_claim", {
     label: "City B", messageIds: ["m0", "m1"],
     evidence: [{ messageId: "m0", span: "City B is obviously best" }, { messageId: "m1", span: "City B sounds good to me too." }],
@@ -414,7 +423,128 @@ test("Adaptive never waits for the Static matched delay", async () => {
   }
 });
 
-test("schema accepts the categorical output used throughout these tests", () => {
-  assert.equal(validateAgainstAssessorSchema(need("ELICIT", "participation_gap", target(CHAT, [5], { participantName: "Jordan" }))).ok, true);
-  assert.equal(validateAgainstAssessorSchema({ need: "NONE", operation: null, target: null, rationale: "" }).ok, true);
+test("schema accepts independent candidates and rejects a detector participation candidate", () => {
+  assert.equal(validateAgainstAssessorSchema(toDetectorOutput(need("ELICIT", "participation_gap", target(CHAT, [5], { participantName: "Jordan" })))).ok, false);
+  assert.equal(validateAgainstAssessorSchema(toDetectorOutput({ need: "NONE", operation: null, target: null, rationale: "" })).ok, true);
+  assert.equal(validateAgainstAssessorSchema(toDetectorOutput(need("SCRUTINIZE", "unsupported_claim", target(CHAT, [0, 1])))).ok, true);
+});
+
+// ── 2026-10-26: random selection, silence rule and intervention accounting ──
+const { drawCandidate, candidateRaws, selectAdaptiveAssessment } = await import("./AdaptiveEvidence.mjs");
+const { silentInWindow, countOptionMentions, SILENCE_WINDOW } = await import("./CognitiveOperations.mjs");
+const { countsAsIntervention, resolveFacilitatorProvenance } = await import("./ExportService.mjs");
+const EXPANDER_REPLY = (name) => ({ role: "INFORMATION_EXPANDER", message: `@[${name}], anything from your notes on any of the options, good or bad? No worries if not.`, groundingMessageIds: [] });
+let appended = 0;
+function appendHuman(w, name, text) {
+  const player = w.game.players.find(p => p.get("name") === name);
+  const chat = w.game.get("chat_round_0");
+  chat.push(buildCanonicalMessage({ messageId: `extra-${appended++}`, groupId: w.game.id, participantId: player.id, roundIndex: 0,
+    stage: "Discussion", messageType: "human", speakerType: "human", timestamp: Date.now(), sequencePosition: 1000 + appended,
+    content: text, sender: { id: player.id, name } }));
+  w.game.set("humanMessageCount", (w.game.get("humanMessageCount") || 0) + 1);
+  w.game.set("messagesSinceLastPublish", (w.game.get("messagesSinceLastPublish") || 0) + 1);
+}
+// Jordan speaks once, then Alex and Casey post twelve messages.
+const SILENT_JORDAN = [msg("Jordan", "I have a couple of notes."),
+  ...Array.from({ length: SILENCE_WINDOW }, (_, i) => msg(i % 2 ? "Casey" : "Alex", `City ${i % 2 ? "B" : "A"} point ${i}.`))];
+
+test("draw is uniform by role (not by candidate count) and avoids a third consecutive turn of one role", () => {
+  const pool = [{ role: "expander", id: 1 }, { role: "expander", id: 2 }, { role: "challenger" }, { role: "synthesiser" }];
+  const seq = [0.1, 0.5, 0.9]; const counts = {};
+  for (let i = 0; i < 3000; i++) { const d = drawCandidate(pool, { random: () => seq[i % 3] }); counts[d.picked.role] = (counts[d.picked.role] || 0) + 1; }
+  assert.deepEqual(counts, { expander: 1000, challenger: 1000, synthesiser: 1000 });
+  assert.equal(drawCandidate(pool, { random: () => 0 }).probability, 1 / 6, "1/3 role × 1/2 within role");
+  assert.equal(drawCandidate([{ role: "challenger" }, { role: "expander" }], { random: () => 0, recentRoles: ["challenger", "challenger"] }).picked.role, "expander");
+  assert.equal(drawCandidate([{ role: "challenger" }], { recentRoles: ["challenger", "challenger"] }).picked.role, "challenger", "a lone candidate is still used");
+  assert.equal(drawCandidate([], {}), null);
+});
+
+test("independent candidates are verified separately; one rejection does not affect the others", () => {
+  const raw = toDetectorOutput({ ...need("SCRUTINIZE", "unsupported_claim", target(CHAT, [0, 1])),
+    integrationCandidate: need("INTEGRATE", "cross_option_evidence", target(CHAT, [2, 4], { optionLabels: ["City A", "City B"], criteria: ["transport"] })) });
+  assert.equal(candidateRaws(raw).length, 2);
+  const selected = selectAdaptiveAssessment(raw, { chat: CHAT, roster: ROSTER, remainingTimeMs: 400_000, random: () => 0 });
+  assert.equal(selected.role, "challenger");
+  assert.deepEqual(selected.selection.pool.map(c => c.role), ["challenger"]);
+  assert.deepEqual(selected.selection.rejected, [{ need: "INTEGRATE", operation: "cross_option_evidence", reason: "INSUFFICIENT_DISTINCT_PARTICIPANTS" }]);
+  const allRejected = selectAdaptiveAssessment(toDetectorOutput(need("SCRUTINIZE", "unsupported_claim", target(CHAT, [0, 2]))),
+    { chat: CHAT, roster: ROSTER, remainingTimeMs: 400_000 });
+  assert.equal(allRejected.role, null);
+  assert.equal(evaluateNeedGate(allRejected, { remainingTime: 400_000 }).fallbackKind, "evidence_check_failed");
+});
+
+test("silence rule window: needs SILENCE_WINDOW public messages; option mentions are counted by code", () => {
+  assert.equal(SILENCE_WINDOW, 12);
+  assert.deepEqual(silentInWindow(SILENT_JORDAN, ROSTER), ["Jordan"]);
+  assert.deepEqual(silentInWindow(SILENT_JORDAN.slice(0, SILENCE_WINDOW), ROSTER), [], "eleven later messages are not enough");
+  assert.deepEqual(countOptionMentions(CHAT, ["City A", "City B"]), { "City A": 2, "City B": 4 });
+});
+
+test("end-to-end: a participant silent for 12 messages is invited by rule without a detector call; Static is unaffected", async () => {
+  const w = world("adaptive", SILENT_JORDAN);
+  const r = await runCheckpoint(w, () => { throw new Error("no detector call"); }, prompt => prompt === "expander" ? EXPANDER_REPLY("Jordan") : STATIC_REPLY);
+  assert.deepEqual(r.calls, ["expander", "validator"]);
+  assert.match(r.published[0].text ?? r.published[0].content, /@\[Jordan\]/);
+  assert.equal(r.audit.selection.mode, "rule_triggered");
+  assert.equal(r.audit.plan.requiredReasoningAct, "PARTICIPATION_ELICITATION");
+  assert.equal(w.round.get("participationInvites").Jordan.count, 1);
+  assert.equal(w.game.get("publishedThisRound"), 1, "it replaces the checkpoint message; no extra publication");
+
+  for (let i = 0; i < 6; i++) appendHuman(w, i % 2 ? "Casey" : "Alex", `More detail ${i}.`);
+  w.game.set("lastAttemptTimestamp", Date.now() - 31_000);
+  const again = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "none" }, () => STATIC_REPLY);
+  assert.equal(again.calls[0], "detector", "no second invitation within 12 messages of the first");
+  assert.equal(again.audit.selection.mode, "randomized");
+
+  const staticWorld = world("static", SILENT_JORDAN);
+  const s = await runCheckpoint(staticWorld, null, () => STATIC_REPLY);
+  assert.deepEqual(s.calls, ["static", "validator"]);
+});
+
+test("end-to-end: the detector receives option mention counts and no priority fields", async () => {
+  const w = world("adaptive", [...CHAT, msg("Jordan", "City A has trains."), msg("Jordan", "City B has trams.")]);
+  let input = "";
+  await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "none" }, () => STATIC_REPLY,
+    { onFetch: (system, body) => { if (system.startsWith("# assessor.md")) input = body?.messages?.[1]?.content ?? input; } });
+  assert.match(input, /\[OPTION_MENTION_COUNTS\]\n\{"City A":3,"City B":5\}/);
+  assert.doesNotMatch(input, /"priority"|fixedIntegrationPriority/);
+});
+
+test("end-to-end: an @Facilitator reply is not an intervention and does not reset the six-message gate", async () => {
+  const lines = [...CHAT.slice(0, 5), msg("Casey", "@[Facilitator] can you recap the transport facts?")];
+  const w = world("static", lines);
+  const r = await runCheckpoint(w, null, () => ({ role: "GENERALIST", message: "City A transport is 12 minutes and City B is 18 minutes, as shared.", groundingMessageIds: ["m2", "m3"] }));
+  assert.equal(r.published.length, 1);
+  assert.equal(r.published[0].countsAsIntervention, false);
+  assert.equal(w.game.get("totalInterventions") || 0, 0);
+  assert.equal(w.game.get("totalParticipantRequestReplies"), 1);
+  assert.equal(w.game.get("messagesSinceLastPublish"), 6, "the six-message gate is untouched");
+
+  appendHuman(w, "Alex", "Thanks, that helps.");
+  w.game.set("messagesSinceLastPublish", w.game.get("messagesSinceLastPublish") - 1); // runCheckpoint re-counts the last message
+  w.game.set("humanMessageCount", w.game.get("humanMessageCount") - 1);
+  const next = await runCheckpoint(w, null, () => STATIC_REPLY);
+  assert.deepEqual(next.calls, ["static", "validator"]);
+  assert.equal(published(w.game).at(-1).countsAsIntervention, true);
+  assert.equal(w.game.get("totalInterventions"), 1);
+});
+
+test("end-to-end: a fixed silence nudge during generation does not discard the automatic result", async () => {
+  const w = world("static", [...CHAT, msg("Jordan", "City A has trains.")]);
+  const r = await runCheckpoint(w, null, () => STATIC_REPLY, { onFetch: (system) => {
+    if (!system.startsWith("# validator.md")) return;
+    w.game.get("chat_round_0").push({ messageId: `facilitator-nudge-${Date.now()}`, stage: "Discussion", messageType: "facilitator",
+      speakerType: "facilitator", facilitatorOrigin: "DETERMINISTIC_FIXED", countsAsIntervention: false,
+      text: "No rush — feel free to keep sharing your thoughts whenever you’re ready.", sender: { id: "ai", name: "Facilitator" } });
+  } });
+  assert.equal(r.published.length, 2, "the nudge plus the automatic message");
+  assert.equal(r.audit.outcome, "PUBLISHED");
+});
+
+test("export labels only automatic LLM messages as interventions", () => {
+  assert.equal(countsAsIntervention({ facilitatorOrigin: "LLM_GENERATED", facilitatorTrigger: "AUTOMATIC_CHECKPOINT" }), true);
+  assert.equal(countsAsIntervention({ facilitatorOrigin: "LLM_GENERATED", facilitatorTrigger: "PARTICIPANT_REQUEST" }), false);
+  assert.equal(countsAsIntervention({ facilitatorOrigin: "NON_LLM_FALLBACK", facilitatorTrigger: "PARTICIPANT_REQUEST" }), false);
+  const nudge = resolveFacilitatorProvenance({ messageId: "facilitator-nudge-x", facilitatorTrigger: "SILENCE_NUDGE" }, {}, []);
+  assert.equal(countsAsIntervention(nudge), false);
 });

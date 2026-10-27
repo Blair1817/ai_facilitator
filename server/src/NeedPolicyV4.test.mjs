@@ -79,10 +79,9 @@ test("participant simulation uses the same current Assessor rules and common gro
   }
 });
 
-test("Assessor makes the participation target name mandatory and teaches a genuinely unclear causal link", () => {
+test("Assessor leaves participation to code and teaches a genuinely unclear causal link", () => {
   const prompt = readFileSync(path.join(runtimeDir, "assessor.md"), "utf8");
-  assert.match(prompt, /target\.participantName` is mandatory for this operation/);
-  assert.match(prompt, /Before returning participation_gap, verify that target\.participantName is present/);
+  assert.match(prompt, /participation invitations are decided by code, so never report a participation candidate/);
   assert.match(prompt, /volunteer availability is why its two bus routes share a crowded afternoon stop/);
   assert.doesNotMatch(prompt, /Those two things fit together, so I would choose Orsena/);
 });

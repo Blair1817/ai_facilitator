@@ -1,3 +1,5 @@
+> **Outdated (2026-10-26):** role selection is now described in `docs/adaptive-need-detection.md` (independent need judgements, random selection, silence rule).
+
 # LLM-only detector decision
 
 Effective on branch `llm-detector-only` from 2026-08-11.

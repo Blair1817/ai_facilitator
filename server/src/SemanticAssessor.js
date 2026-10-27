@@ -113,41 +113,13 @@ export function validateAgainstAssessorSchema(parsed) {
   if (!valid) {
     return { ok: false, code: "ASSESSOR_SCHEMA_FAILURE", errors: validateFn.errors };
   }
-  if (parsed.defer != null && (parsed.need !== "NONE" || parsed.operation !== null || parsed.target !== null)) {
+  // 2026-10-26: independent candidates. A participant-summary deferral pauses
+  // the checkpoint, so it is valid only when every candidate is null.
+  const candidates = parsed?.candidates || {};
+  if (parsed.defer != null && ["elicit", "scrutinize", "integrate"].some((key) => candidates[key] != null)) {
     return {
       ok: false, code: "ASSESSOR_SCHEMA_FAILURE",
-      errors: [{ instancePath: "/defer", keyword: "deferralContract", message: "requires need NONE, operation null and target null" }],
-    };
-  }
-  // JSON Schema validates the object shape, but this operation-dependent
-  // invariant is kept in code. The live provider currently receives only the
-  // prompt (not a Structured Outputs schema), and conditional JSON Schema
-  // keywords would not improve generation reliability. Enforce the authored
-  // contract here so a participation target can never silently lose its name.
-  const hasParticipantName = Boolean(
-    parsed?.target
-    && Object.prototype.hasOwnProperty.call(parsed.target, "participantName"),
-  );
-  if (parsed?.operation === "participation_gap" && !hasParticipantName) {
-    return {
-      ok: false,
-      code: "ASSESSOR_SCHEMA_FAILURE",
-      errors: [{
-        instancePath: "/target",
-        keyword: "operationContract",
-        message: "must include participantName when operation is participation_gap",
-      }],
-    };
-  }
-  if (parsed?.operation !== "participation_gap" && hasParticipantName) {
-    return {
-      ok: false,
-      code: "ASSESSOR_SCHEMA_FAILURE",
-      errors: [{
-        instancePath: "/target/participantName",
-        keyword: "operationContract",
-        message: "is allowed only when operation is participation_gap",
-      }],
+      errors: [{ instancePath: "/defer", keyword: "deferralContract", message: "requires every candidate to be null" }],
     };
   }
   return { ok: true };
@@ -159,7 +131,7 @@ export function validateAgainstAssessorSchema(parsed) {
  * EvidenceChecker.js's later span/message_id checks are validated against
  * IDs that mean the same thing on both sides of the pipeline.
  */
-export function buildAssessorUserContext({ chat, taskGeneralContext, interventionHistory = [], activeParticipantNames = [], contextScope = "complete_current_round", participationCounts = null, quietParticipants = [], scheduling = {}, excludedTargets = [] }) {
+export function buildAssessorUserContext({ chat, taskGeneralContext, interventionHistory = [], activeParticipantNames = [], contextScope = "complete_current_round", participationCounts = null, quietParticipants = [], optionMentionCounts = null, scheduling = {}, excludedTargets = [] }) {
   const chatWithIds = withMessageIds(chat);
   const humanWithIds = chatWithIds.filter(isPublicParticipantMessage);
   const localWithIds = humanWithIds.slice(-6);
@@ -175,6 +147,8 @@ export function buildAssessorUserContext({ chat, taskGeneralContext, interventio
     // (CognitiveOperations.countPublicMessagesByName / quietParticipants).
     ["[PARTICIPATION_COUNTS]", JSON.stringify(participationCounts ?? {})],
     ["[QUIET_PARTICIPANTS]", JSON.stringify(Array.isArray(quietParticipants) ? quietParticipants : [])],
+    // 2026-10-26: code-computed public mentions per task option (coverage_gap input).
+    ["[OPTION_MENTION_COUNTS]", JSON.stringify(optionMentionCounts ?? {})],
     ["[INTERVENTION_HISTORY]", JSON.stringify(interventionHistory)],
     ["[SCHEDULING]", JSON.stringify(scheduling)],
     ["[SEMANTIC_REFERENCES]", JSON.stringify(semanticReferences(interventionHistory, excludedTargets))],
@@ -206,7 +180,7 @@ export function buildAssessorUserContext({ chat, taskGeneralContext, interventio
  *     evaluateGate() see checkedFactors=null, which fails closed as an
  *     unavailable detector result.
  */
-export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM, interventionHistory, activeParticipantNames, contextScope, participationCounts, quietParticipants, scheduling = {}, excludedTargets = [], allowStructureRepair = false }) {
+export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM, interventionHistory, activeParticipantNames, contextScope, participationCounts, quietParticipants, optionMentionCounts = null, scheduling = {}, excludedTargets = [], allowStructureRepair = false }) {
   if (typeof callLLM !== "function") {
     throw new Error("assessSemanticFactors() requires a callLLM(messages) function to be injected -- it does not perform network calls itself.");
   }
@@ -216,7 +190,7 @@ export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM,
     return { success: false, code: "ASSESSOR_PROMPT_BLOCKED", error: promptResult.reason };
   }
 
-  const { userContent } = buildAssessorUserContext({ chat, taskGeneralContext, interventionHistory, activeParticipantNames, contextScope, participationCounts, quietParticipants, scheduling, excludedTargets });
+  const { userContent } = buildAssessorUserContext({ chat, taskGeneralContext, interventionHistory, activeParticipantNames, contextScope, participationCounts, quietParticipants, optionMentionCounts, scheduling, excludedTargets });
   const messages = [
     { role: "system", content: promptResult.content },
     { role: "user", content: userContent },
@@ -235,6 +209,6 @@ export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM,
     attempts.push(failure);
     if (attempt > 0 || !allowStructureRepair) return { success: false, ...failure, attempts };
     messages.push({ role: "assistant", content: llmResponse.rawText }, { role: "user", content:
-      `Repair the JSON structure once. Errors: ${failure.error}\nRequired schema: ${JSON.stringify(loadAssessorSchema())}\nKeep grounded public evidence and apply all scheduling/semantic rules. Never invent quotes or fill missing fields with invented facts. Return NONE with null operation/target if no supported need can be represented.` });
+      `Repair the JSON structure once. Errors: ${failure.error}\nRequired schema: ${JSON.stringify(loadAssessorSchema())}\nKeep grounded public evidence and apply all scheduling/semantic rules. Never invent quotes or fill missing fields with invented facts. Set a candidate to null when its need cannot be represented with supported public evidence.` });
   }
 }

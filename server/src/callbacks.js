@@ -1,7 +1,7 @@
 import { createAdaptiveBudget, ADAPTIVE_FLOOR_MS, runAdaptiveSelection } from "./AdaptiveRecovery.mjs";
-import { selectAdaptiveAssessment } from "./AdaptiveEvidence.mjs";
+import { selectAdaptiveAssessment, redrawAdaptiveSelection } from "./AdaptiveEvidence.mjs";
 import { createCloseoutScheduler } from "./AdaptiveCloseoutScheduler.mjs";
-import { isPublicParticipantMessage, countPublicMessagesByName, quietParticipants } from "./CognitiveOperations.mjs";
+import { isPublicParticipantMessage, countPublicMessagesByName, quietParticipants, silentInWindow, countOptionMentions, SILENCE_WINDOW, PARTICIPATION_INVITE_CAP } from "./CognitiveOperations.mjs";
 import { acceptIndependentDecision, finalizeIndependentDecision } from "./FinalDecisionSubmission.mjs";
 import { DECISION_NUDGE } from "../../shared/decisionSubmission.mjs";
 import { ClassicListenersCollector } from "@empirica/core/admin/classic";
@@ -247,7 +247,9 @@ function automaticContextStillUsable(game, logEntry) {
   try { snapshot = JSON.parse(logEntry.publicContextFingerprint); } catch { return false; }
   const formal = (game.get(`chat_round_${logEntry.roundIndex}`) || []).filter(isFormalContextMessage);
   if (JSON.stringify(publicContextEntries(formal.slice(0, snapshot.length))) !== logEntry.publicContextFingerprint) return false;
-  const added = formal.slice(snapshot.length);
+  // 2026-10-26: fixed, non-LLM Facilitator messages (silence nudges, opening)
+  // are not interventions and neither supersede nor count toward tolerance.
+  const added = formal.slice(snapshot.length).filter(m => m.facilitatorOrigin !== "DETERMINISTIC_FIXED");
   return added.length <= tolerance
     && added.every(m => (m.messageType ?? (m.sender?.id === "ai" ? "facilitator" : "human")) === "human");
 }
@@ -1327,6 +1329,7 @@ function appendFacilitatorNudge(stage, attribute, content, onceFlagKey, facilita
     role: FACILITATOR_ROLES.FIXED_MESSAGE,
     facilitatorOrigin: "DETERMINISTIC_FIXED",
     facilitatorTrigger,
+    countsAsIntervention: false,
     sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
   });
   if (onceFlagKey) game.set(onceFlagKey, true);
@@ -1706,14 +1709,19 @@ async function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole
       facilitatorTrigger: logEntry.triggerType === "PARTICIPANT_REQUEST"
         ? "PARTICIPANT_REQUEST"
         : "AUTOMATIC_CHECKPOINT",
+      // 2026-10-26: only automatic checkpoint messages are interventions;
+      // replies to an @Facilitator request are counted separately.
+      countsAsIntervention: !practice && logEntry.triggerType !== "PARTICIPANT_REQUEST",
       auditRequestId: logEntry.auditRequestId,
       presentation: llmAction.presentation,
       sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
     });
     logEntry.messageAdded = true;
-    logEntry.countsAsIntervention = !practice;
+    const participantRequest = logEntry.triggerType === "PARTICIPANT_REQUEST";
+    logEntry.countsAsIntervention = !practice && !participantRequest;
     logEntry.publishedMessageId = publishedMessage.messageId;
-    if (!practice) game.set("totalInterventions", (game.get("totalInterventions") || 0) + 1);
+    if (!practice && participantRequest) game.set("totalParticipantRequestReplies", (game.get("totalParticipantRequestReplies") || 0) + 1);
+    else if (!practice) game.set("totalInterventions", (game.get("totalInterventions") || 0) + 1);
     return true;
   });
 }
@@ -1739,6 +1747,7 @@ async function postParticipantRequestFallback(game, chatKey, logEntry) {
       role: FACILITATOR_ROLES.NON_LLM_FALLBACK,
       facilitatorOrigin: "NON_LLM_FALLBACK",
       facilitatorTrigger: "PARTICIPANT_REQUEST",
+      countsAsIntervention: false,
       auditRequestId: logEntry.auditRequestId,
       sender: { id: "ai", name: "Facilitator", avatar: `https://api.dicebear.com/9.x/initials/svg?backgroundColor=000000&seed=F` },
     });
@@ -2198,6 +2207,34 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
   logEntry.participationCounts = participationCounts;
   logEntry.quietParticipants = quietNames;
   logEntry.publicContextFingerprint = publicContextFingerprint(chat);
+  // 2026-10-26: code-computed option coverage for the detector, participation
+  // targets decided by code, and the role history used by the random draw.
+  const optionLabels = (currentRound.get("decisionOptions") || []).map(o => o.label).filter(Boolean);
+  const optionMentionCounts = countOptionMentions(formalChat, optionLabels);
+  logEntry.optionMentionCounts = optionMentionCounts;
+  const recentRoles = cognitiveHistory.map(h => h.role).filter(Boolean);
+  const participationInvites = currentRound.get("participationInvites") || {};
+  const invitable = name => {
+    const record = participationInvites[name];
+    return !record || ((record.count || 0) < PARTICIPATION_INVITE_CAP
+      && humanMessageCount - (record.atHumanMessageCount ?? -Infinity) >= SILENCE_WINDOW);
+  };
+  const pickOne = names => names[Math.floor(Math.random() * names.length)];
+  // A code-built participation candidate: invite `name`, anchored to the latest
+  // public participant message (the current topic). Verified by the same checker.
+  const participationCandidate = (name, source) => {
+    const anchor = withMessageIds(formalChat).filter(isPublicParticipantMessage).at(-1);
+    if (!name || !anchor?.text) return null;
+    const checked = checkNeedAssessment({ need: "ELICIT", operation: "participation_gap", rationale: source, target: {
+      label: `Invite ${name} to share anything from their notes`, messageIds: [anchor.messageId],
+      evidence: [{ messageId: anchor.messageId, span: anchor.text }], optionLabels: [], criteria: [], participantName: name } },
+      { chat: formalChat, activeParticipantNames: rosterNames });
+    return checked.role ? { ...checked, source } : null;
+  };
+  const silentNames = logEntry.triggerSource === "message" ? silentInWindow(formalChat, rosterNames).filter(invitable) : [];
+  logEntry.silenceRule = { window: SILENCE_WINDOW, silent: silentInWindow(formalChat, rosterNames), eligible: silentNames };
+  const quietCandidateName = pickOne(quietNames.filter(n => invitable(n) && !silentNames.includes(n)));
+  const extraCandidates = [participationCandidate(quietCandidateName, "code_quiet")].filter(Boolean);
   const budget = createAdaptiveBudget({
     deadline: () => game.get("deadline"), log: logEntry,
     isCurrent: () => canPublishFacilitatorResult(game, logEntry)
@@ -2208,13 +2245,12 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
     if (!budget.check()) return null;
     const start = Date.now();
     const remaining = budget.remainingTime();
+    // 2026-10-26: no priority between needs is supplied to the detector.
     const scheduling = { remainingTimeMs: remaining, triggerSource: logEntry.triggerSource,
-      fixedIntegrationPriority: remaining <= 120_000, closeoutOpportunity: remaining <= 180_000,
-      priority: remaining <= 120_000 ? ["INTEGRATE", "SCRUTINIZE", "ELICIT"] : ["SCRUTINIZE", "INTEGRATE", "ELICIT"],
-      evaluateEarlyCloseout: true };
+      closeoutOpportunity: remaining <= 180_000, evaluateEarlyCloseout: true };
     const assessorResult = await assessSemanticFactors({
       chat: formalChat, contextScope: "complete_current_round", interventionHistory: cognitiveHistory,
-      activeParticipantNames: rosterNames, participationCounts, quietParticipants: quietNames,
+      activeParticipantNames: rosterNames, participationCounts, quietParticipants: quietNames, optionMentionCounts,
       scheduling, excludedTargets: excluded, allowStructureRepair: true,
       taskGeneralContext: buildStaticSharedTaskOverview({ generalInfo: currentRound.get("generalInfo"), decisionOptions: currentRound.get("decisionOptions") }),
       callLLM: (messages, options) => budget.call("assessor", timing => getLLMResponse(messages,
@@ -2239,6 +2275,7 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
       chat: formalChat, roster: rosterNames,
       optionLabels: (currentRound.get("decisionOptions") || []).map(o => o.label),
       remainingTimeMs: budget.remainingTime(), triggerSource: logEntry.triggerSource, history: cognitiveHistory, excluded,
+      extraCandidates, recentRoles,
       validateIntegration: (candidate, semanticReview) => {
         const plan = compilePlan("synthesiser", candidate.checkedFactors, {
           eligibleMessageIds: withMessageIds(formalChat).filter(isFormalHumanMessage).map(m => m.messageId),
@@ -2251,6 +2288,8 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
       },
     });
     checked.excludedTargets = excluded;
+    logEntry.detectorCandidates = assessorResult.factors?.candidates ?? null;
+    logEntry.selection = { ...checked.selection, remaining: (checked.selection?.remaining || []).length };
     logEntry.checkedDetectorFactors = { need: checked.need, rawNeed: checked.rawNeed, role: checked.role,
       operation: checked.operation, target: checked.target, downgradedReason: checked.downgradedReason,
       ...(checked.defer ? { defer: checked.defer } : {}), evidenceRelations: [] };
@@ -2303,13 +2342,41 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
       repetition: result.repetition || built.planPreflight?.failureReasons?.includes("TARGET_ALREADY_ADDRESSED") || false };
   }
   try {
-    const initial = await assess();
+    // 2026-10-26: silence hard rule (Adaptive, message-triggered checkpoints
+    // only): a participant silent across the last SILENCE_WINDOW public
+    // messages is invited by the Expander. Not randomized; no detector call.
+    let initial = null;
+    const silentTarget = participationCandidate(pickOne(silentNames), "silence_rule");
+    if (silentTarget) {
+      const scheduling = { stage: "ordinary", remainingTimeMs: budget.remainingTime(), triggerSource: logEntry.triggerSource };
+      initial = { ...silentTarget, scheduling, early: { active: false, reason: "not_assessed" },
+        selection: { mode: "rule_triggered", pool: [{ need: "ELICIT", operation: "participation_gap", role: "expander",
+          participantName: silentTarget.target.participantName, source: "silence_rule" }],
+          probability: 1 / silentNames.length, rejected: [], remaining: [] } };
+      logEntry.selection = { ...initial.selection, remaining: 0 };
+      const gate = evaluateNeedGate(initial, { remainingTime: budget.remainingTime(), scheduling });
+      Object.assign(logEntry, { gateDecision: gate.decision, gateReason: gate.reason, eligibleRoles: gate.eligibleRoles });
+    } else {
+      initial = await assess();
+    }
+    const redraw = previous => {
+      const next = redrawAdaptiveSelection(previous, { recentRoles });
+      logEntry.selection = { ...logEntry.selection, redraw: { probability: next.selection?.probability ?? null,
+        role: next.role ?? null, need: next.need ?? null } };
+      return next;
+    };
     const result = await runAdaptiveSelection({ assess, generate, fallback, budget, log: logEntry, initial,
-      closeoutOnly: logEntry.triggerSource !== "message" });
+      closeoutOnly: logEntry.triggerSource !== "message", redraw });
     logEntry.totalGeneratorAttempts = budget.calls.filter(c => c.kind === "generator").length;
     logEntry.modelCallCount = budget.calls.length;
     if (result.published) {
       recordPublish(game, { role: result.role, messageId: logEntry.publishedMessageId, now: Date.now() });
+      const invited = publishedPlan?.requiredReasoningAct === "PARTICIPATION_ELICITATION" ? publishedPlan.target?.participantName : null;
+      if (invited) {
+        const previous = participationInvites[invited] || {};
+        currentRound.set("participationInvites", { ...participationInvites,
+          [invited]: { count: (previous.count || 0) + 1, atHumanMessageCount: humanMessageCount } });
+      }
       if (publishedPlan) currentRound.set("cognitiveInterventionHistory", [...cognitiveHistory, {
         planId: publishedPlan.planId, signature: publishedPlan.signature, role: result.role,
         requiredReasoningAct: publishedPlan.requiredReasoningAct, target: publishedPlan.target,

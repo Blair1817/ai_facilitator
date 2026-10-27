@@ -75,3 +75,34 @@ export function quietParticipants(counts, rule = QUIET_PARTICIPANT_RULE) {
     return othersMean >= rule.minOthersMean && count < rule.maxShareOfOthersMean * othersMean;
   }).map(([name]) => name);
 }
+
+// ── Participation targets and option coverage (2026-10-26) ─────────────────
+// Silence hard rule: a roster participant with no public message among the
+// last SILENCE_WINDOW public participant messages (two 6-message checkpoint
+// intervals). Evaluated only when at least SILENCE_WINDOW messages exist.
+export const SILENCE_WINDOW = 12;
+// Per participant and round: at most this many participation invitations, and
+// none within SILENCE_WINDOW human messages of the previous invitation.
+export const PARTICIPATION_INVITE_CAP = 2;
+
+/** Roster names with zero messages among the last `window` public participant messages. */
+export function silentInWindow(chat, rosterNames = [], window = SILENCE_WINDOW) {
+  const messages = (Array.isArray(chat) ? chat : []).filter(isPublicParticipantMessage);
+  if (messages.length < window) return [];
+  const recent = new Set(messages.slice(-window).map((m) => m?.sender?.name));
+  return (Array.isArray(rosterNames) ? rosterNames : []).filter((name) => typeof name === "string" && name.trim() && !recent.has(name));
+}
+
+/** Code-verified participation targets: quiet overall OR silent in the recent window. */
+export function verifiedParticipationTargets(chat, rosterNames = []) {
+  const quiet = quietParticipants(countPublicMessagesByName(chat, rosterNames));
+  return [...new Set([...quiet, ...silentInWindow(chat, rosterNames)])];
+}
+
+/** Number of public participant messages mentioning each option label (case-insensitive). */
+export function countOptionMentions(chat, optionLabels = []) {
+  const messages = (Array.isArray(chat) ? chat : []).filter(isPublicParticipantMessage);
+  return Object.fromEntries((Array.isArray(optionLabels) ? optionLabels : [])
+    .filter((label) => typeof label === "string" && label.trim())
+    .map((label) => [label, messages.filter((m) => String(m?.text ?? m?.content ?? "").toLowerCase().includes(label.toLowerCase())).length]));
+}

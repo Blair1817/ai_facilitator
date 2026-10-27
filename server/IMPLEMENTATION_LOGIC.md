@@ -1,3 +1,5 @@
+> **Outdated (2026-10-26):** role selection is now described in `docs/adaptive-need-detection.md` (independent need judgements, random selection, silence rule).
+
 # Delibra Adaptive Pipeline — Implementation Logic
 
 This engineering reference describes the current server implementation. The

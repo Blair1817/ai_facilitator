@@ -9,6 +9,9 @@ import { buildCanonicalMessage } from "./ExperimentPolicies.mjs";
 import { checkEvidence, checkNeedAssessment, FACTOR_KEYS } from "./EvidenceChecker.js";
 import { VALIDATOR_CRITERIA } from "./SemanticValidator.js";
 import { readAppendOnlyAttribute } from "./AppendOnlyAttribute.mjs";
+// 2026-10-26: the detector now reports independent candidates; legacy
+// single-need fixtures below are converted where the detector output is used.
+import { toDetectorOutput } from "../test/participant_sim/fakes/detectorOutput.mjs";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 process.argv[1] = path.join(dirname, "fake-entry.js");
@@ -159,26 +162,28 @@ test("Assessor contract matches the runtime schema and simulator copy exactly", 
 
   // 2026-10-21: categorical need detector contract.
   const schema = JSON.parse(fs.readFileSync(path.join(dirname, "prompts/source/runtime/specialist/assessor.schema.json"), "utf8"));
-  assert.deepEqual(schema.required, ["need", "operation", "target", "rationale"]);
-  assert.deepEqual(schema.properties.need.enum, ["ELICIT", "SCRUTINIZE", "INTEGRATE", "NONE"]);
+  assert.deepEqual(schema.required, ["candidates", "rationale"]);
+  assert.deepEqual(schema.properties.candidates.required, ["elicit", "scrutinize", "integrate"]);
+  assert.equal(Object.hasOwn(schema.definitions.target.properties, "participantName"), false, "participation is decided by code");
   assert.equal(schema.additionalProperties, false);
   assert.equal(schema.definitions.evidenceQuote.additionalProperties, false);
 
-  assert.equal(validateAgainstAssessorSchema(SCRUTINIZE_CITY_B).ok, true);
-  assert.equal(validateAgainstAssessorSchema(NO_NEED).ok, true);
+  assert.equal(validateAgainstAssessorSchema(toDetectorOutput(SCRUTINIZE_CITY_B)).ok, true);
+  assert.equal(validateAgainstAssessorSchema(toDetectorOutput(NO_NEED)).ok, true);
+  assert.equal(validateAgainstAssessorSchema(SCRUTINIZE_CITY_B).ok, false, "legacy single-need output is rejected");
   assert.equal(validateAgainstAssessorSchema(factors()).ok, false, "legacy eight-factor output is rejected");
 
   const emptyTarget = need("SCRUTINIZE", "unsupported_claim", { label: "x", messageIds: [], evidence: [], optionLabels: [], criteria: [] });
-  assert.equal(validateAgainstAssessorSchema(emptyTarget).ok, false, "empty target evidence arrays are rejected");
+  assert.equal(validateAgainstAssessorSchema(toDetectorOutput(emptyTarget)).ok, false, "empty target evidence arrays are rejected");
 
   const aliasQuote = need("SCRUTINIZE", "unsupported_claim", { ...SCRUTINIZE_CITY_B.target, evidence: [{ messageIds: ["m0"], span: "I prefer City B." }] });
-  assert.equal(validateAgainstAssessorSchema(aliasQuote).ok, false, "messageIds is rejected inside an evidence quotation");
+  assert.equal(validateAgainstAssessorSchema(toDetectorOutput(aliasQuote)).ok, false, "messageIds is rejected inside an evidence quotation");
 });
 
 test("passive two-criterion coverage cannot verify integration from two messages by one participant", () => {
   const prompt = fs.readFileSync(path.join(dirname, "prompts/source/runtime/specialist/assessor.md"), "utf8");
   assert.match(prompt, /fragmented_evidence: related facts are spread across at least three messages from at least two participants/);
-  assert.match(prompt, /re-verifies every quotation, author count and participation claim/);
+  assert.match(prompt, /re-verifies every quotation and author count/);
 
   const passiveChat = [
     { text: "Eldoron has the strongest capacity position.", sender: { id: "p1", name: "Red" } },
@@ -240,7 +245,7 @@ test("schema-valid target quotations still require real public message IDs downs
     messageIds: ["m0", "m999"],
     evidence: [{ messageId: "m0", span: "I prefer City B." }, { messageId: "m999", span: "fabricated" }],
   });
-  assert.equal(validateAgainstAssessorSchema(raw).ok, true, "JSON shape alone is schema-valid");
+  assert.equal(validateAgainstAssessorSchema(toDetectorOutput(raw)).ok, true, "JSON shape alone is schema-valid");
   const checked = checkNeedAssessment(raw, { chat, activeParticipantNames: ["Alex", "Casey", "Jordan"] });
   assert.equal(checked.need, "NONE");
   assert.equal(checked.downgradedReason, "INVALID_EVIDENCE");
@@ -257,7 +262,7 @@ test("Adaptive valid intervention traverses Assessor, evidence checking, Control
     const system = body.messages[0].content;
     if (system.startsWith("# assessor.md")) {
       phases.push("assessor");
-      return providerResponse(assessor);
+      return providerResponse(toDetectorOutput(assessor));
     }
     if (system.startsWith("# validator.md")) {
       phases.push("validator");
@@ -295,7 +300,7 @@ test("Adaptive NONE result publishes a Static-policy message, not an abstention 
   const phases = [];
   await withFetch(async (_url, options) => {
     const system = JSON.parse(options.body).messages[0].content;
-    if (system.startsWith("# assessor.md")) { phases.push("assessor"); return providerResponse(NO_NEED); }
+    if (system.startsWith("# assessor.md")) { phases.push("assessor"); return providerResponse(toDetectorOutput(NO_NEED)); }
     if (system.startsWith("# validator.md")) { phases.push("validator"); return providerResponse(validatorFlags()); }
     phases.push("generator");
     assert.match(system, /# static\.md/);
@@ -345,7 +350,7 @@ test("invalid Generator output cannot reach participants", async () => {
   const assessor = SCRUTINIZE_CITY_B;
   await withFetch(async (_url, options) => {
     const system = JSON.parse(options.body).messages[0].content;
-    if (system.startsWith("# assessor.md")) return providerResponse(assessor);
+    if (system.startsWith("# assessor.md")) return providerResponse(toDetectorOutput(assessor));
     if (system.startsWith("# validator.md")) {
       validatorCalled = true;
       return providerResponse(validatorFlags());
@@ -366,7 +371,7 @@ test("schema-invalid Validator output cannot reach participants", async () => {
   const assessor = SCRUTINIZE_CITY_B;
   await withFetch(async (_url, options) => {
     const system = JSON.parse(options.body).messages[0].content;
-    if (system.startsWith("# assessor.md")) return providerResponse(assessor);
+    if (system.startsWith("# assessor.md")) return providerResponse(toDetectorOutput(assessor));
     if (system.startsWith("# validator.md")) return providerResponse({ notGrounded: false });
     return providerResponse({
       role: "EVIDENCE_CHALLENGER",

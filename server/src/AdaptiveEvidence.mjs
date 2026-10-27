@@ -63,11 +63,47 @@ export function verifySemanticTarget(review, { chat, references = [] }) {
   return { ok: true, evaluated: true, review };
 }
 
-export function selectAdaptiveAssessment(raw, { chat, roster, optionLabels = [], remainingTimeMs, triggerSource = "message", history = [], excluded = [], validateIntegration = null }) {
+// 2026-10-26: the detector judges ELICIT / SCRUTINIZE / INTEGRATE
+// independently. Each reported candidate is verified on its own; the runtime
+// then draws uniformly among roles present in the verified pool (and uniformly
+// within a role). There is no priority between needs.
+export const CANDIDATE_KEYS = Object.freeze({ elicit: "ELICIT", scrutinize: "SCRUTINIZE", integrate: "INTEGRATE" });
+export const MAX_CONSECUTIVE_SAME_ROLE = 2;
+
+/** Split independent detector output into per-need candidates for checkNeedAssessment(). */
+export function candidateRaws(raw) {
+  const candidates = raw?.candidates || {};
+  return Object.entries(CANDIDATE_KEYS).filter(([key]) => candidates[key]).map(([key, need]) => ({
+    need, operation: candidates[key].operation, target: candidates[key].target, rationale: candidates[key].rationale,
+    ...(candidates[key].semanticReview ? { semanticReview: candidates[key].semanticReview } : {}),
+  }));
+}
+
+const summarise = c => ({ need: c.need, operation: c.operation, role: c.role, label: c.target?.label ?? null,
+  participantName: c.target?.participantName ?? null, source: c.source ?? "detector" });
+
+/** Uniform draw: first a role among roles present, then a candidate within that role.
+ * A role that already filled the last MAX_CONSECUTIVE_SAME_ROLE turns is skipped
+ * when another role is available. Returns the exact selection probability. */
+export function drawCandidate(pool, { random = Math.random, recentRoles = [] } = {}) {
+  if (!pool?.length) return null;
+  let roles = [...new Set(pool.map(c => c.role))];
+  const last = recentRoles.slice(-MAX_CONSECUTIVE_SAME_ROLE);
+  if (last.length === MAX_CONSECUTIVE_SAME_ROLE && last.every(r => r === last[0]) && roles.some(r => r !== last[0])) {
+    roles = roles.filter(r => r !== last[0]);
+  }
+  const pick = list => list[Math.min(list.length - 1, Math.floor(random() * list.length))];
+  const role = pick(roles);
+  const within = pool.filter(c => c.role === role);
+  const picked = pick(within);
+  return { picked, probability: 1 / (roles.length * within.length), eligibleRoles: roles,
+    remaining: pool.filter(c => c !== picked) };
+}
+
+export function selectAdaptiveAssessment(raw, { chat, roster, optionLabels = [], remainingTimeMs, triggerSource = "message", history = [], excluded = [], validateIntegration = null, extraCandidates = [], random = Math.random, recentRoles = [] }) {
   const early = verifyEarlyCloseout(raw?.closeout, { chat, roster, optionLabels });
-  const fixedPriority = remainingTimeMs <= 120_000;
-  const stage = fixedPriority ? "integration_priority_fixed" : early.active ? "integration_priority_early" : remainingTimeMs <= 180_000 ? "closeout_assessment" : "ordinary";
-  const scheduling = { stage, remainingTimeMs, triggerSource, integrationPriority: fixedPriority || early.active };
+  const stage = remainingTimeMs <= 180_000 ? "closeout_assessment" : early.active ? "early_closeout" : "ordinary";
+  const scheduling = { stage, remainingTimeMs, triggerSource };
   const references = semanticReferences(history, excluded);
   const check = candidate => {
     if (!candidate) return null;
@@ -78,8 +114,7 @@ export function selectAdaptiveAssessment(raw, { chat, roster, optionLabels = [],
     }
     const semantic = verifySemanticTarget(candidate.semanticReview, { chat, references });
     if (!semantic.ok) return { ...checked, need: "NONE", role: null, checkedFactors: null, downgradedReason: semantic.reason, semantic };
-    // A priority candidate must qualify as an executable integration plan
-    // before it can displace a valid scrutiny need.
+    // An integration candidate must qualify as an executable plan.
     if (checked.role === "synthesiser" && validateIntegration) {
       const preflight = validateIntegration(checked, candidate.semanticReview);
       if (preflight.status !== "passed") return { ...checked, need: "NONE", role: null, checkedFactors: null,
@@ -87,18 +122,43 @@ export function selectAdaptiveAssessment(raw, { chat, roster, optionLabels = [],
     }
     return { ...checked, semanticReview: candidate.semanticReview, semantic };
   };
-  const primary = check(raw);
-  // A verified explicit participant summary always takes precedence.
-  if (primary?.defer) return { ...primary, early, scheduling };
-  const integration = raw?.need === "INTEGRATE" ? primary : check(raw?.integrationCandidate);
-  const integrationReady = integration?.need === "INTEGRATE" && integration.role === "synthesiser";
+  // A verified explicit participant summary always pauses the checkpoint.
+  if (raw?.defer != null) {
+    const deferred = checkNeedAssessment({ need: "NONE", operation: null, target: null, defer: raw.defer },
+      { chat, activeParticipantNames: roster, scheduling });
+    return { ...deferred, early, scheduling, selection: { mode: "deferred", pool: [], rejected: [] } };
+  }
+  const verified = [], rejected = [];
+  for (const candidate of candidateRaws(raw)) {
+    const result = check(candidate);
+    if (result?.role) verified.push(result);
+    else rejected.push({ need: candidate.need, operation: candidate.operation, reason: result?.downgradedReason ?? "unverified" });
+  }
+  const integration = verified.find(c => c.role === "synthesiser");
+  // Scheduler-triggered closeout checks keep their existing integration-only scope.
   const closeoutOnly = triggerSource !== "message" && excluded.length === 0;
   const mayGenerate = triggerSource !== "early_closeout_probe" || early.active;
-  let selected = primary;
-  if (integrationReady && (scheduling.integrationPriority || closeoutOnly)) selected = integration;
-  if (closeoutOnly && (!mayGenerate || !integrationReady)) selected = { need: "NONE", role: null, checkedFactors: null };
+  const pool = closeoutOnly ? (mayGenerate && integration ? [integration] : []) : [...verified, ...extraCandidates];
+  const draw = drawCandidate(pool, { random, recentRoles });
+  // With no verified candidate, keep the rejection reasons so the gate records
+  // evidence_check_failed (not no_need) when the detector did report needs.
+  const selected = draw?.picked ?? { need: "NONE", role: null, checkedFactors: null,
+    ...(rejected.length && !closeoutOnly ? { rawNeed: rejected.map(r => r.need).join(","), downgradedReason: rejected.map(r => r.reason).join(",") } : {}) };
   return { ...selected, early, scheduling,
-    integrationObservation: { evaluated: raw?.need === "INTEGRATE" || Object.hasOwn(raw || {}, "integrationCandidate"),
-      qualified: !!integrationReady, reason: integration?.downgradedReason ?? raw?.integrationStatus ?? null },
+    selection: { mode: closeoutOnly ? "closeout" : "randomized", pool: pool.map(summarise), rejected,
+      probability: draw?.probability ?? null, eligibleRoles: draw?.eligibleRoles ?? [],
+      remaining: draw?.remaining ?? [], recentRoles: recentRoles.slice(-MAX_CONSECUTIVE_SAME_ROLE) },
+    integrationObservation: { evaluated: Boolean(raw?.candidates), qualified: Boolean(integration),
+      reason: rejected.find(r => r.need === "INTEGRATE")?.reason ?? raw?.integrationStatus ?? null },
   };
+}
+
+/** Redraw once from the remaining verified pool after a repetition rejection. */
+export function redrawAdaptiveSelection(previous, { random = Math.random, recentRoles = [] } = {}) {
+  const pool = previous?.selection?.remaining || [];
+  const draw = drawCandidate(pool, { random, recentRoles });
+  const selected = draw?.picked ?? { need: "NONE", role: null, checkedFactors: null };
+  return { ...selected, early: previous?.early, scheduling: previous?.scheduling,
+    selection: { ...previous?.selection, mode: "redraw", probability: draw?.probability ?? null,
+      eligibleRoles: draw?.eligibleRoles ?? [], remaining: draw?.remaining ?? [] } };
 }

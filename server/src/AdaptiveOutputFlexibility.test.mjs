@@ -13,6 +13,8 @@ const { compilePlan } = await import("./PolicyCompiler.js");
 const { preflightPlan } = await import("./PlanPreflight.mjs");
 const { evaluateNeedGate } = await import("./utils.js");
 const { validateAgainstAssessorSchema } = await import("./SemanticAssessor.js");
+// 2026-10-26: detector few-shots report independent candidates.
+const { candidateRaws, selectAdaptiveAssessment } = await import("./AdaptiveEvidence.mjs");
 const source = path.join(dirname, "prompts/source/runtime/specialist");
 function examples(file) {
   return [...fs.readFileSync(path.join(source, file), "utf8").matchAll(/### ([AG]-\d+)[^\n]*\n\nINPUT\n([^\n]+)\n\nOUTPUT\n([^\n]+)/g)]
@@ -43,7 +45,9 @@ const assessments = examples("assessor.md");
 for (const id of ["A-15"]) test(`${id}: ordinary fact-by-fact sharing without a decision/recap signal compiles to an executable plan`, () => {
   const { input, output } = assessments.find(e => e.id === id);
   const chat = chatFor(input);
-  const checked = checkNeedAssessment(output, { chat, activeParticipantNames: input.ACTIVE_PARTICIPANT_NAMES });
+  assert.equal(validateAgainstAssessorSchema(output).ok, true);
+  const [candidate] = candidateRaws(output);
+  const checked = checkNeedAssessment(candidate, { chat, activeParticipantNames: input.ACTIVE_PARTICIPANT_NAMES });
   assert.equal(checked.need, "INTEGRATE");
   const plan = compilePlan(checked.role, checked.checkedFactors, { eligibleMessageIds: input.CUMULATIVE_PUBLIC_CONTEXT.map(m => m.messageId), interventionHistory: [] });
   const marker = preflightPlan(plan, { chat, taskGeneralContext: input.TASK_GENERAL_CONTEXT, activeParticipantNames: input.ACTIVE_PARTICIPANT_NAMES, interventionHistory: [], contextScope: input.CONTEXT_SCOPE });
@@ -54,8 +58,9 @@ for (const id of ["A-15"]) test(`${id}: ordinary fact-by-fact sharing without a 
 test("A-08: explicit participant summary pauses automatic intervention, including Static fallback", () => {
   const { input, output } = assessments.find(e => e.id === "A-08");
   assert.equal(validateAgainstAssessorSchema(output).ok, true);
-  const checked = checkNeedAssessment(output, { chat: chatFor(input), activeParticipantNames: input.ACTIVE_PARTICIPANT_NAMES });
+  const checked = selectAdaptiveAssessment(output, { chat: chatFor(input), roster: input.ACTIVE_PARTICIPANT_NAMES, remainingTimeMs: 60_000 });
   assert.equal(checked.downgradedReason, null);
+  assert.equal(checked.selection.mode, "deferred");
   const gate = evaluateNeedGate(checked, { remainingTime: 60_000 });
   assert.equal(gate.decision, "abstain");
   assert.equal(gate.abstentionKind, "participant_summary_in_progress");
@@ -64,10 +69,10 @@ test("G-08 uses the ordinary-sharing A-15 context, not the waiting A-08 context"
   const assessment = assessments.find(e => e.id === "A-15");
   const generator = examples("synthesiser.md").find(e => e.id === "G-08");
   assert.deepEqual(generator.input.CUMULATIVE_PUBLIC_CONTEXT, assessment.input.CUMULATIVE_PUBLIC_CONTEXT);
-  assert.deepEqual(generator.input.TARGET, assessment.output.target);
+  assert.deepEqual(generator.input.TARGET, assessment.output.candidates.integrate.target);
 });
 test("completed participant summary remains the authored NONE boundary (not a model evaluation)", () => {
-  assert.equal(assessments.find(e => e.id === "A-12").output.need, "NONE");
+  assert.deepEqual(assessments.find(e => e.id === "A-12").output.candidates, { elicit: null, scrutinize: null, integrate: null });
 });
 test("OpenAI point schema decodes three points, publishes numbering, and counts all rendered words", () => {
   const contract = buildSynthesisPointContract(["Arden"], ["m0", "m1", "m2"]);

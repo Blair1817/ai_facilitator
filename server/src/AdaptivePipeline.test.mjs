@@ -10,6 +10,13 @@ import { getOfflineCallbacksHarness } from "../test/participant_sim/fakes/loadCa
 import { readAppendOnlyAttribute } from "./AppendOnlyAttribute.mjs";
 import { VALIDATOR_CRITERIA } from "./SemanticValidator.js";
 import { selectAdaptiveAssessment } from "./AdaptiveEvidence.mjs";
+// 2026-10-26: legacy single-need fixtures are converted to independent candidates.
+import { toDetectorOutput, toDetectorText } from "../test/participant_sim/fakes/detectorOutput.mjs";
+const asDetector = data => typeof data === "string" ? toDetectorText(data) : toDetectorOutput(data);
+async function withRandom(value, task) {
+  const original = Math.random; Math.random = () => value;
+  try { return await task(); } finally { Math.random = original; }
+}
 const dir = path.dirname(fileURLToPath(import.meta.url));
 process.argv[1] = path.join(dir, "fake-entry.js");
 const replay = JSON.parse(fs.readFileSync(path.join(dir, "../test/fixtures/adaptive-closeout-replay.json")));
@@ -17,9 +24,10 @@ test("five runtime closeout/reselection few-shots pass schema, evidence and expe
   const { validateAgainstAssessorSchema } = await import("./SemanticAssessor.js");
   const cases = JSON.parse(fs.readFileSync(path.join(dir, "../test/fixtures/adaptive-closeout-examples.json")));
   for (const c of cases) {
-    assert.equal(validateAgainstAssessorSchema(c.output).ok, true, c.id);
+    const output = toDetectorOutput(c.output);
+    assert.equal(validateAgainstAssessorSchema(output).ok, true, c.id);
     const input = c.input;
-    const selected = selectAdaptiveAssessment(c.output, {
+    const selected = selectAdaptiveAssessment(output, {
       chat: input.CUMULATIVE_PUBLIC_CONTEXT.map(m => ({ ...m, sender: { id: m.sender, name: m.sender } })),
       roster: input.ACTIVE_PARTICIPANT_NAMES, optionLabels: ["Norvale", "Halden", "Fenwick"],
       remainingTimeMs: input.SCHEDULING.remainingTimeMs, triggerSource: input.SCHEDULING.triggerSource,
@@ -69,7 +77,7 @@ async function run(w, { assessments = [need(w)], generators, validators = [], tr
     const kind = system.startsWith("# assessor.md") ? "assessor" : system.startsWith("# validator.md") ? "validator" : "generator";
     requests.push({ kind, ...body });
     let data;
-    if (kind === "assessor") data = assessments[Math.min(a++, assessments.length - 1)];
+    if (kind === "assessor") data = asDetector(assessments[Math.min(a++, assessments.length - 1)]);
     else if (kind === "validator") data = validators[v++] ?? flags();
     else data = generators?.[g++] ?? (system.includes("# synthesiser.md") ? synthesis : system.includes("# challenger.md") ? challengerReply : staticReply);
     await mutate?.(kind, w, requests);
@@ -84,16 +92,23 @@ async function run(w, { assessments = [need(w)], generators, validators = [], tr
     timers.forEach(clearTimeout); globalThis.fetch = oldFetch; globalThis.setTimeout = oldTimeout;
   }
 }
-test("qualified integration outranks scrutiny at 120s throughout Assessor/checker/plan/generator/validator", async () => {
+// 2026-10-26: no priority between needs. Both verified candidates enter the
+// pool and the role is drawn uniformly (Math.random is fixed here).
+test("verified scrutiny and integration are both eligible and the role is drawn uniformly, at any remaining time", async () => {
   for (const remaining of [400_000, 120_000]) {
-    const w = world({ remaining }), raw = { ...need(w), integrationCandidate: need(w, "INTEGRATE"), integrationStatus: "qualified" };
-    const r = await run(w, { assessments: [raw] });
-    assert.equal(r.published.length, 1);
-    assert.equal(r.audit.plan.role, remaining > 120_000 ? "challenger" : "synthesiser");
-    assert.equal(r.audit.plan.requiredReasoningAct, remaining > 120_000 ? "EVIDENCE_AUDIT" : "EVIDENCE_CONSOLIDATION");
-    assert.equal(r.audit.plan.scheduling.integrationPriority, remaining <= 120_000);
-    assert.match(r.requests[0].messages[1].content, /\[SCHEDULING\]/);
-    assert.ok(r.audit.visibleWordCount <= (remaining > 120_000 ? 50 : 55));
+    for (const [value, role, act] of [[0, "challenger", "EVIDENCE_AUDIT"], [0.99, "synthesiser", "EVIDENCE_CONSOLIDATION"]]) {
+      const w = world({ remaining }), raw = { ...need(w), integrationCandidate: need(w, "INTEGRATE"), integrationStatus: "qualified" };
+      const r = await withRandom(value, () => run(w, { assessments: [raw] }));
+      assert.equal(r.published.length, 1);
+      assert.equal(r.audit.plan.role, role, `${remaining}/${value}`);
+      assert.equal(r.audit.plan.requiredReasoningAct, act);
+      assert.equal(r.audit.selection.mode, "randomized");
+      assert.deepEqual(r.audit.selection.pool.map(c => c.role), ["challenger", "synthesiser"]);
+      assert.equal(r.audit.selection.probability, 0.5);
+      assert.equal(Object.hasOwn(r.audit.plan.scheduling, "integrationPriority"), false);
+      assert.doesNotMatch(r.requests[0].messages[1].content, /"priority"|fixedIntegrationPriority/);
+      assert.ok(r.audit.visibleWordCount <= (role === "challenger" ? 50 : 55));
+    }
   }
 });
 test("180s independent scan can integrate below six messages; an already-covered/empty scan does not emit Static", async () => {
@@ -108,7 +123,7 @@ test("180s independent scan can integrate below six messages; an already-covered
 });
 test("insufficient integration evidence is never relabelled into a Synthesiser plan", () => {
   const w = world(), raw = { ...need(w), integrationCandidate: { ...need(w, "INTEGRATE"), target: { ...need(w, "INTEGRATE").target, messageIds: ["m0"], evidence: [{ messageId: "m0", span: lines[0] }] } } };
-  const selection = selectAdaptiveAssessment(raw, { chat: w.chat, roster: names, remainingTimeMs: 100_000 });
+  const selection = selectAdaptiveAssessment(toDetectorOutput(raw), { chat: w.chat, roster: names, remainingTimeMs: 100_000 });
   assert.equal(selection.role, "challenger");
   assert.equal(selection.integrationObservation.reason, "INSUFFICIENT_DISTINCT_PARTICIPANTS");
 });
@@ -142,18 +157,26 @@ test("unsupported facts use one same-plan repair; Static keeps its own bounded r
   assert.equal(r.audit.fallbackPublished, true);
   assert.equal(r.requests.length, 9);
 });
-test("repetition triggers one reassessment; NONE/invalid/second rejection each uses original Static", async () => {
-  for (const second of ["none", "invalid", "another"]) {
-    const w = world();
-    const next = second === "none" ? none : second === "invalid" ? "invalid json" : { ...need(w), semanticReview: {
-      key: "Norvale different public issue", matches: [{ id: "excluded:0", relation: "different", responseEvidence: [], newEvidence: [] }] } };
-    const r = await run(w, { assessments: [need(w), next], validators: [flags("repetition"), ...(second === "another" ? [flags("repetition")] : []), flags()] });
-    assert.equal(r.audit.recovery.counts.reselection, 1);
-    assert.equal(r.audit.fallbackPublished, true);
-    assert.equal(r.audit.selectedRole, "STATIC");
-    assert.equal(r.audit.recovery.counts.generatorRepair, 0, "repetition is not a paraphrase repair");
-    assert.match(r.requests.find((req, i) => i > 0 && req.kind === "assessor").messages[1].content, /EXCLUDED_SEMANTIC_TARGETS/);
-  }
+// 2026-10-26: a repetition rejection redraws once from the remaining verified
+// pool without a new detector call; an empty pool ends in the Static policy.
+test("repetition redraws once from the remaining verified pool; an empty pool uses Static", async () => {
+  const single = await run(world(), { assessments: [need(world())], validators: [flags("repetition"), flags()] });
+  assert.equal(single.requests.filter(r => r.kind === "assessor").length, 1, "no reassessment call");
+  assert.equal(single.audit.recovery.counts.reselection, 1);
+  assert.equal(single.audit.recovery.counts.generatorRepair, 0, "repetition is not a paraphrase repair");
+  assert.equal(single.audit.reselectionResult.need, "NONE");
+  assert.equal(single.audit.fallbackPublished, true);
+  assert.equal(single.audit.selectedRole, "STATIC");
+
+  const w = world(), raw = { ...need(w), integrationCandidate: need(w, "INTEGRATE"), integrationStatus: "qualified" };
+  const both = await withRandom(0, () => run(w, { assessments: [raw], validators: [flags("repetition"), flags()] }));
+  assert.equal(both.requests.filter(r => r.kind === "assessor").length, 1);
+  assert.equal(both.audit.recovery.counts.reselection, 1);
+  assert.equal(both.audit.reselectionResult.role, "synthesiser");
+  assert.equal(both.audit.selection.redraw.role, "synthesiser");
+  assert.equal(both.audit.selection.redraw.probability, 1);
+  assert.equal(both.published.length, 1);
+  assert.equal(both.audit.selectedRole, "synthesiser");
 });
 test("<=20s starts no automatic call, and time/context/end changes during calls prevent late publication", async () => {
   const floor = await run(world({ remaining: 20_000 })); assert.equal(floor.requests.length, 0);
@@ -219,7 +242,7 @@ test("ten real checkpoints are replayable; checkpoint45 makes no new automatic c
   }
 });
 
-test("real checkpoint33 repetition is reselected once then NONE uses Static, with no forced synthesis", async () => {
+test("real checkpoint33 repetition redraws once from an empty pool, then NONE uses Static, with no forced synthesis", async () => {
   const f = replay.checkpoints.find(c => c.checkpoint === 33);
   const w = world({ chat: f.chat, remaining: f.remainingTimeMs });
   w.round.set("generalInfo", f.taskGeneralContext);
@@ -248,7 +271,7 @@ test("early two-person public readiness can trigger qualified integration below 
     generators: [{ ...synthesis, groundingMessageIds: ["m0", "m1", "m2"] }],
     trigger: { triggerSource: "early_closeout_probe", triggerSources: ["early_closeout_probe"] } });
   assert.equal(r.published.length, 1);
-  assert.equal(r.audit.scheduling.stage, "integration_priority_early");
+  assert.equal(r.audit.scheduling.stage, "early_closeout");
   assert.deepEqual(r.audit.earlyCloseout.supporters, ["A", "B"]);
   assert.equal(w.stage.get("ended"), undefined);
   assert.equal(w.round.get("finalDecisionConfirmed"), undefined);
@@ -263,7 +286,7 @@ test("overlapping timed/message evaluations share the durable automatic lock and
   globalThis.fetch = async (_url, options) => {
     const system = JSON.parse(options.body).messages[0].content;
     if (system.startsWith("# assessor.md")) {
-      assessorCalls++; started(); await new Promise(resolve => { release = resolve; }); return provider(need(w));
+      assessorCalls++; started(); await new Promise(resolve => { release = resolve; }); return provider(toDetectorOutput(need(w)));
     }
     return provider(system.startsWith("# validator.md") ? flags() : challengerReply);
   };

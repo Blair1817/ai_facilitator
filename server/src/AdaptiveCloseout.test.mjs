@@ -43,13 +43,17 @@ test("one person repeated, different options, stale review, invented quote and A
   const ai = [chat[0], { ...chat[1], sender: { id: "ai", name: "B" }, speakerType: "facilitator" }];
   assert.equal(verify(observation(), ai).active, false);
 });
-test("third person's objection blocks early priority, while fixed 120-second priority survives", () => {
+// 2026-10-26: there is no integration priority; the objection still removes
+// early-closeout readiness and the stage label is descriptive only.
+test("third person's objection blocks early-closeout readiness; stages are descriptive with no priority", () => {
   const messages = [...chat, msg("C", "Wait, I want to keep discussing", 2)];
   const closeout = observation(messages); closeout.participants[2].stance = "continue";
-  const raw = { need: "NONE", operation: null, target: null, rationale: "No open integration", closeout, integrationCandidate: null, integrationStatus: "already_covered" };
+  const raw = { candidates: { elicit: null, scrutinize: null, integrate: null }, rationale: "No open integration", closeout, integrationStatus: "already_covered" };
   const select = remainingTimeMs => selectAdaptiveAssessment(raw, { chat: messages, roster, optionLabels, remainingTimeMs });
-  assert.equal(select(500_000).scheduling.integrationPriority, false);
-  assert.equal(select(120_000).scheduling.stage, "integration_priority_fixed");
+  assert.equal(select(500_000).early.active, false);
+  assert.equal(select(500_000).scheduling.stage, "ordinary");
+  assert.equal(Object.hasOwn(select(500_000).scheduling, "integrationPriority"), false);
+  assert.equal(select(120_000).scheduling.stage, "closeout_assessment");
   assert.equal(select(120_000).role, null);
 });
 

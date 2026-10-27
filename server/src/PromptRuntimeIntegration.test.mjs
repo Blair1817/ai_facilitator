@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { FakeGame, FakeRound, FakeStage, FakeScope, makeFakePlayer } from "../test/participant_sim/fakes/fakeStore.mjs";
 import { buildCanonicalMessage } from "./ExperimentPolicies.mjs";
 import { readAppendOnlyAttribute } from "./AppendOnlyAttribute.mjs";
+import { toDetectorOutput } from "../test/participant_sim/fakes/detectorOutput.mjs";
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 process.argv[1] = path.join(dirname, "fake-entry.js");
 const { getOfflineHandleChat } = await import("../test/participant_sim/fakes/loadCallbacks.mjs");
@@ -50,7 +51,7 @@ async function run(w, { invalidComparison = false, skipDuringValidation = false,
   globalThis.fetch = async (_url, options) => {
     const body = JSON.parse(options.body);requests.push(body);
     const system = body.messages[0].content;let data;
-    if (system.startsWith("# assessor.md")) data = assessment ?? factors(w, invalidComparison);
+    if (system.startsWith("# assessor.md")) data = toDetectorOutput(assessment ?? factors(w, invalidComparison));
     else if (system.startsWith("# validator.md")) {
       data = Object.fromEntries(VALIDATOR_CRITERIA.map(k => [k, false]));
       if (rejectSpecialist && body.messages[1].content.includes("[INTERVENTION_PLAN]")) data.requiredReasoningActMissing = true;

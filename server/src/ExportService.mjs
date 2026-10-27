@@ -311,6 +311,7 @@ export class ExportService {
       endedAt: attrs.endedAt || null,
       totalInterventions: numberOrZero(attrs.totalInterventions),
       totalFallbackMessages: numberOrZero(attrs.totalFallbackMessages),
+      totalParticipantRequestReplies: numberOrZero(attrs.totalParticipantRequestReplies),
       systemInfo: attrs.systemInfo || null,
       rounds: roundIDs,
       chat,
@@ -875,6 +876,7 @@ export function renderTranscriptMd(bundle) {
   lines.push(`- Players: ${players.map((p) => p.name || p.id).join(", ")}`);
   lines.push(`- Total interventions: ${game.totalInterventions || 0}`);
   lines.push(`- Total fallbacks: ${game.totalFallbackMessages || 0}`);
+  lines.push(`- Participant-requested replies (not interventions): ${game.totalParticipantRequestReplies || 0}`);
   lines.push("");
 
   if (transcript.game.testMode) lines.push("> TEST SESSION — excluded from primary analysis", "");
@@ -900,6 +902,7 @@ export function renderTranscriptMd(bundle) {
         lines.push(`- Role: \`${message.provenance.role}\``);
         lines.push(`- Trigger: \`${message.provenance.facilitatorTrigger}\``);
         lines.push(`- Origin: \`${message.provenance.facilitatorOrigin}\``);
+        lines.push(`- Counts as intervention: ${countsAsIntervention(message.provenance) ? "yes" : "no"}`);
         lines.push(`- Audit request ID: ${message.provenance.auditRequestId ? `\`${message.provenance.auditRequestId}\`` : "_(not recorded)_"}`);
         lines.push("");
       }
@@ -987,6 +990,14 @@ function collectRoundMessages(round, bundle, game) {
         : null,
     };
   });
+}
+
+// 2026-10-26: only LLM-generated automatic checkpoint messages are
+// interventions. Participant-requested replies, request fallbacks and fixed
+// messages (opening, silence nudges) are not. Derived from provenance so
+// historical transcripts are labelled consistently.
+export function countsAsIntervention(provenance) {
+  return provenance?.facilitatorOrigin === "LLM_GENERATED" && provenance?.facilitatorTrigger === "AUTOMATIC_CHECKPOINT";
 }
 
 export function resolveFacilitatorProvenance(message, round, llmLog = []) {

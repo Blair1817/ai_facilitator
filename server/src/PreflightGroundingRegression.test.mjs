@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { toDetectorOutput } from "../test/participant_sim/fakes/detectorOutput.mjs";
 
 process.argv[1] = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-entry.js");
 const { validateAgainstAssessorSchema } = await import("./SemanticAssessor.js");
@@ -34,7 +35,7 @@ test("schema-valid discrepancy with an unestablished criterion is stopped at act
     assert.equal(checked.need, "INTEGRATE", "exact quotation/author checks do not validate a criterion label");
     return compilePlan(checked.role, checked.checkedFactors, { eligibleMessageIds: ["m0", "m1"] });
   };
-  assert.equal(validateAgainstAssessorSchema(raw).ok, true);
+  assert.equal(validateAgainstAssessorSchema(toDetectorOutput(raw)).ok, true);
   const rejected = preflightPlan(compile(raw), context);
   assert.equal(rejected.status, "failed");
   assert.deepEqual(rejected.failureReasons, ["TARGET_UNSUPPORTED"]);
@@ -44,7 +45,7 @@ test("schema-valid discrepancy with an unestablished criterion is stopped at act
   // Remove only the unestablished label; preserve both reports and their units.
   const grounded = structuredClone(raw);
   grounded.target.criteria = [];
-  assert.equal(validateAgainstAssessorSchema(grounded).ok, true);
+  assert.equal(validateAgainstAssessorSchema(toDetectorOutput(grounded)).ok, true);
   const accepted = preflightPlan(compile(grounded), context);
   assert.equal(accepted.status, "passed");
   assert.deepEqual(accepted.failureReasons, []);

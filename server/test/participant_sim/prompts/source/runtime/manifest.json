@@ -91,18 +91,18 @@
   "assessor": {
     "promptFile": "specialist/assessor.md",
     "schemaFile": "specialist/assessor.schema.json",
-    "status": "categorical_need_detector_fewshot_v4_review_2026-10-23",
-    "note": "Branch review candidate: wider two-person option/issue engagement with a separate reasoning target, decision-relevant coverage gaps, genuinely unclear links, fixed priority and target-scoped exclusion. Sixteen task-adapted city/campus examples are generated from the v4 review data; A-17/A-18 remain review-only. EvidenceChecker.checkNeedAssessment() still verifies structural evidence only. No deployment or model effectiveness is claimed."
+    "status": "independent_need_candidates_2026-10-26",
+    "note": "Detector judges ELICIT/SCRUTINIZE/INTEGRATE independently (candidates); each candidate verified by EvidenceChecker.checkNeedAssessment(); runtime draws uniformly by role (AdaptiveEvidence.selectAdaptiveAssessment). Participation is decided by code."
   },
   "frozenControlScope": "Historical exact baseline and requested-Generalist route; Static/automatic Generalist use control_50 length-adapted policy.",
   "files": {
     "specialist/assessor.md": {
-      "sha256": "83ab502b4d93c94b598ead71b21153f4306d06deeccf00dc695391a3e2331fe0",
-      "bytes": 68690
+      "sha256": "be950f8d03fb2a424328f05d9b69cb1b9bdfbd8b735fb765f541c18662ebf870",
+      "bytes": 67060
     },
     "specialist/assessor.schema.json": {
-      "sha256": "cedc8c4a51806378a2335da93ef637587a133e37494fc4eee52dfecb5da6b0c6",
-      "bytes": 12230
+      "sha256": "edf05edd1b7c0aa657dd49f5d494a524399925fc30864374ef415e33a41c9d95",
+      "bytes": 9551
     },
     "specialist/challenger.md": {
       "sha256": "15f72b64440fd3c5fa45fdf4ae325ef02251360749b64accfbdc449c8134f5df",

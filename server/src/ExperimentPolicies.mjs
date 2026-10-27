@@ -110,6 +110,7 @@ export function buildCanonicalMessage({
   facilitatorOrigin,
   facilitatorTrigger,
   auditRequestId,
+  countsAsIntervention,
 }) {
   const canonicalSpeakerId = participantId ?? speakerId;
   if (typeof messageId !== "string" || !messageId) throw new Error("messageId is required");
@@ -148,6 +149,7 @@ export function buildCanonicalMessage({
     ...(facilitatorOrigin !== undefined ? { facilitatorOrigin } : {}),
     ...(facilitatorTrigger !== undefined ? { facilitatorTrigger } : {}),
     ...(auditRequestId !== undefined ? { auditRequestId } : {}),
+    ...(typeof countsAsIntervention === "boolean" ? { countsAsIntervention } : {}),
   };
 }
 

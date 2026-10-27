@@ -22,20 +22,24 @@ function chat() {
   ];
 }
 
-// 2026-10-21: categorical need detector output (replaces the 8-factor object).
+// 2026-10-26: independent need candidates (one slot per need, null = not supported).
+const TARGET = {
+  label: "Eldoron is best",
+  messageIds: ["m0", "m1"],
+  evidence: [{ messageId: "m0", span: "Eldoron is best" }, { messageId: "m1", span: "Eldoron is best" }],
+  optionLabels: [],
+  criteria: [],
+};
 const VALID_FACTORS = {
-  need: "SCRUTINIZE",
-  operation: "unsupported_claim",
-  target: {
-    label: "Eldoron is best",
-    messageIds: ["m0", "m1"],
-    evidence: [{ messageId: "m0", span: "Eldoron is best" }, { messageId: "m1", span: "Eldoron is best" }],
-    optionLabels: [],
-    criteria: [],
+  candidates: {
+    elicit: null,
+    scrutinize: { operation: "unsupported_claim", target: TARGET, rationale: "Two participants back Eldoron without stated reasons." },
+    integrate: null,
   },
   rationale: "Two participants back Eldoron without stated reasons.",
 };
-const VALID_NONE = { need: "NONE", operation: null, target: null, rationale: "No current need." };
+const VALID_NONE = { candidates: { elicit: null, scrutinize: null, integrate: null }, rationale: "No current need." };
+const withScrutinize = (patch) => ({ ...VALID_FACTORS, candidates: { ...VALID_FACTORS.candidates, scrutinize: { ...VALID_FACTORS.candidates.scrutinize, ...patch } } });
 
 // ── prompt bundle loading (real file on disk) ────────────────────────────────
 
@@ -59,8 +63,9 @@ test("validateAgainstAssessorSchema: rejects a missing required field", () => {
 });
 
 test("validateAgainstAssessorSchema: rejects an unknown need or operation", () => {
-  assert.equal(validateAgainstAssessorSchema({ ...VALID_FACTORS, need: "CHALLENGE" }).ok, false);
-  assert.equal(validateAgainstAssessorSchema({ ...VALID_FACTORS, operation: "vibes" }).ok, false);
+  assert.equal(validateAgainstAssessorSchema({ ...VALID_FACTORS, candidates: { ...VALID_FACTORS.candidates, challenge: null } }).ok, false);
+  assert.equal(validateAgainstAssessorSchema(withScrutinize({ operation: "vibes" })).ok, false);
+  assert.equal(validateAgainstAssessorSchema(withScrutinize({ operation: "coverage_gap" })).ok, false, "operation must belong to its need");
 });
 
 test("validateAgainstAssessorSchema: rejects legacy eight-factor output", () => {
@@ -70,31 +75,17 @@ test("validateAgainstAssessorSchema: rejects legacy eight-factor output", () => 
 
 test("validateAgainstAssessorSchema: rejects an unexpected extra top-level or target key", () => {
   assert.equal(validateAgainstAssessorSchema({ ...VALID_FACTORS, strength: 0.9 }).ok, false);
-  assert.equal(validateAgainstAssessorSchema({ ...VALID_FACTORS, target: { ...VALID_FACTORS.target, role: "challenger" } }).ok, false);
+  assert.equal(validateAgainstAssessorSchema(withScrutinize({ target: { ...TARGET, role: "challenger" } })).ok, false);
 });
 
-test("validateAgainstAssessorSchema: enforces participantName exactly for participation_gap", () => {
-  const participation = {
-    ...VALID_FACTORS,
-    need: "ELICIT",
-    operation: "participation_gap",
-    target: { ...VALID_FACTORS.target, participantName: "Blue" },
-  };
-  assert.equal(validateAgainstAssessorSchema(participation).ok, true);
-  const { participantName: _omitted, ...missingNameTarget } = participation.target;
-  const missing = validateAgainstAssessorSchema({ ...participation, target: missingNameTarget });
-  assert.equal(missing.ok, false);
-  assert.match(JSON.stringify(missing.errors), /must include participantName/);
-  const unexpected = validateAgainstAssessorSchema({
-    ...VALID_FACTORS,
-    target: { ...VALID_FACTORS.target, participantName: "Blue" },
-  });
-  assert.equal(unexpected.ok, false);
-  assert.match(JSON.stringify(unexpected.errors), /allowed only when operation is participation_gap/);
+test("validateAgainstAssessorSchema: participation is decided by code, so the detector cannot report it", () => {
+  assert.equal(validateAgainstAssessorSchema(withScrutinize({ target: { ...TARGET, participantName: "Blue" } })).ok, false);
+  const participation = { ...VALID_FACTORS, candidates: { ...VALID_FACTORS.candidates, elicit: { operation: "participation_gap", target: TARGET, rationale: "x" } } };
+  assert.equal(validateAgainstAssessorSchema(participation).ok, false);
 });
 
 test("validateAgainstAssessorSchema: a non-null target REQUIRES at least one messageId and one quotation", () => {
-  const noEvidence = { ...VALID_FACTORS, target: { ...VALID_FACTORS.target, messageIds: [], evidence: [] } };
+  const noEvidence = withScrutinize({ target: { ...TARGET, messageIds: [], evidence: [] } });
   const result = validateAgainstAssessorSchema(noEvidence);
   assert.equal(result.ok, false);
   const errStr = JSON.stringify(result.errors || []);
