@@ -1,6 +1,8 @@
 import { createAdaptiveBudget, ADAPTIVE_FLOOR_MS, runAdaptiveSelection } from "./AdaptiveRecovery.mjs";
 import { selectAdaptiveAssessment, redrawAdaptiveSelection } from "./AdaptiveEvidence.mjs";
 import { createCloseoutScheduler } from "./AdaptiveCloseoutScheduler.mjs";
+import { createStaticInterventionScheduler } from "./StaticInterventionScheduler.mjs";
+import { createFacilitatorPublicationCoordinator } from "./FacilitatorPublication.mjs";
 import { isPublicParticipantMessage, countPublicMessagesByName, quietParticipants, silentInWindow, countOptionMentions, SILENCE_WINDOW, PARTICIPATION_INVITE_CAP } from "./CognitiveOperations.mjs";
 import { acceptIndependentDecision, finalizeIndependentDecision } from "./FinalDecisionSubmission.mjs";
 import { DECISION_NUDGE } from "../../shared/decisionSubmission.mjs";
@@ -110,6 +112,7 @@ async function finalizeAuditLog(store, entry) {
   const formalRoundIndex = round?.get("taskIndex");
   const chat = round ? [...(store.get(`chat_round_${formalRoundIndex}`) || [])] : [];
   const completed = await finalizeAuditLogBase(store, entry, () => Empirica.flush());
+  staticInterventionScheduler.wake(store);
   if (!round) return;
   queueResearchMirror("intervention", async () => {
     const persistence = researchPersistence();
@@ -127,6 +130,8 @@ async function finalizeAuditLog(store, entry) {
 
 function canPublishFacilitatorResult(game, origin) {
   if (origin?.phase !== "practice") return canPublishTestResult(game, origin)
+    && !(origin.facilitation === "static" && !origin.participantRequested
+      && (!Number.isFinite(game.get("deadline")) || Date.now() >= game.get("deadline") || game.currentRound?.get("ended")))
     && !(origin.facilitation === "adaptive" && !origin.participantRequested
       && (!Number.isFinite(game.get("deadline")) || Date.now() >= game.get("deadline") || game.currentRound?.get("ended")));
   const stage = game.currentStage;
@@ -142,20 +147,36 @@ function canPublishFacilitatorResult(game, origin) {
 
 async function whileFacilitatorPublishesVisibleResponse(game, logEntry, task) {
   const stillCurrent = () => canPublishFacilitatorResult(game, logEntry)
-    && (logEntry.participantRequested === true || automaticContextStillUsable(game, logEntry));
+    && (logEntry.participantRequested === true || automaticContextStillUsable(game, logEntry))
+    && (!logEntry.opportunityId || staticInterventionScheduler.canCommit(game, logEntry));
   const rejectStale = () => {
-    logEntry.reason = "Discarded stale AI result before publication because the originating Discussion stage or automatic discussion context changed";
+    logEntry.reasonCode = !canPublishFacilitatorResult(game, logEntry) ? "PHASE_ENDED"
+      : automaticContextReason(game, logEntry) || "DUPLICATE_SUPPRESSED";
+    logEntry.reason = `Discarded stale AI result before publication: ${logEntry.reasonCode}`;
     logEntry.outcome = "SILENT";
     return false;
   };
-  if (!stillCurrent()) return rejectStale();
-  await setVisibleResponsePending(game, logEntry.auditRequestId, true, () => Empirica.flush());
-  try {
+  return facilitatorPublication.commit(game, async () => {
+    if (logEntry.messageAdded) return false;
     if (!stillCurrent()) return rejectStale();
-    return await task();
-  } finally {
-    await setVisibleResponsePending(game, logEntry.auditRequestId, false, () => Empirica.flush());
-  }
+    try {
+      await setVisibleResponsePending(game, logEntry.auditRequestId, true, () => Empirica.flush());
+      if (!stillCurrent()) return rejectStale();
+      const posted = await task();
+      if (posted) {
+        logEntry.reasonCode = "PUBLISHED";
+        if (logEntry.opportunityId) {
+          recordStaticPublication(game, { messageId: logEntry.publishedMessageId, timestamp: Date.now() });
+          staticInterventionScheduler.published(game, logEntry);
+        }
+        if (logEntry.facilitation === "static" && logEntry.participantRequested)
+          staticInterventionScheduler.requestedPublished(game, logEntry.publishedMessageId);
+      }
+      return posted;
+    } finally {
+      await setVisibleResponsePending(game, logEntry.auditRequestId, false, () => Empirica.flush());
+    }
+  });
 }
 
 // The participant client does not reliably receive ParticipantChange events
@@ -211,12 +232,42 @@ function staticMatchedDelayMs() {
 }
 const CALLBACKS_INSTANCE_ID = randomUUID();
 const AUTOMATIC_PIPELINE_GROUP = "AUTOMATIC_INTERVENTION";
+const facilitatorPublication = createFacilitatorPublicationCoordinator();
+function recordStaticPublication(game, message) {
+  if ((game.get("interventionHistory") || []).some(item => item.messageId === message.messageId)) return;
+  recordPublish(game, { role: "STATIC", messageId: message.messageId, now: message.timestamp });
+  // A committed transcript entry is authoritative after a restart between
+  // append and bookkeeping. Restore counters without counting it twice.
+  const transcript = game.get(`chat_round_${game.currentRound?.get("taskIndex")}`) || [];
+  const publishedIndex = transcript.findIndex(item => item.messageId === message.messageId);
+  game.set("messagesSinceLastPublish", transcript.slice(publishedIndex + 1).filter(isFormalHumanMessage).length);
+  game.set("messagesSinceLastIntervention", game.get("messagesSinceLastPublish"));
+  game.set("publishedThisRound", Math.max(game.get("publishedThisRound") || 0,
+    transcript.filter(item => item.countsAsIntervention === true).length));
+  const allAutomatic = [0, 1].flatMap(index => game.get(`chat_round_${index}`) || []).filter(item => item.countsAsIntervention === true);
+  game.set("totalInterventions", Math.max(game.get("totalInterventions") || 0, allAutomatic.length));
+}
+export const staticInterventionScheduler = createStaticInterventionScheduler({
+  instanceId: CALLBACKS_INSTANCE_ID,
+  run: (game, staticRetry) => handleChat(undefined, { game, staticRetry }),
+  hasRequestedResponse: game => facilitatorPublication.hasRequested(game),
+  onPublicationRecovered: recordStaticPublication,
+  flush: () => Empirica.flush(),
+  onError: error => console.warn("Static scheduling callback failed", { message: error.message }),
+});
 export const adaptiveCloseoutScheduler = createCloseoutScheduler({
   run: (game, adaptiveTrigger) => handleChat(undefined, { game, adaptiveTrigger }),
   flush: () => Empirica.flush(),
   onError: error => console.warn("Adaptive closeout callback failed", { message: error.message }),
 });
 Empirica.on("game", "deadline", (_ctx, { game }) => adaptiveCloseoutScheduler.register(game));
+Empirica.on("game", "deadline", (_ctx, { game }) => staticInterventionScheduler.wake(game));
+Empirica.on("ready", async ctx => {
+  for (const game of ctx.scopesByKind("game").values()) {
+    await recoverInterruptedInFlight(game, CALLBACKS_INSTANCE_ID, Date.now(), () => Empirica.flush());
+    staticInterventionScheduler.wake(game);
+  }
+});
 
 function publicContextEntries(chat) {
   return chat.filter(isFormalContextMessage).map(m => [m.messageId, m.text ?? m.content]);
@@ -237,21 +288,33 @@ const STALE_TOLERANCE_HUMAN_MESSAGES = 2;
 // closeout runs started by the scheduler (180s/120s/early-closeout probe) keep
 // the strict rule (no new message at all): they are intent-sensitive and the
 // scheduler already defers and retries them.
-function automaticContextStillUsable(game, logEntry) {
+function automaticContextReason(game, logEntry) {
   const tolerance = logEntry.facilitation === "adaptive" && logEntry.triggerSource && logEntry.triggerSource !== "message"
     ? 0 : STALE_TOLERANCE_HUMAN_MESSAGES;
   const newHuman = (game.get("humanMessageCount") || 0) - (logEntry.humanMessageCount || 0);
-  if (newHuman < 0 || newHuman > tolerance) return false;
-  if (!logEntry.publicContextFingerprint) return newHuman === 0;
+  if (logEntry.facilitation === "static" && facilitatorPublication.hasRequested(game)) return "REQUEST_SUPERSEDED";
+  if (!logEntry.publicContextFingerprint) return newHuman === 0 ? null : "STALE_CONTEXT";
   let snapshot;
-  try { snapshot = JSON.parse(logEntry.publicContextFingerprint); } catch { return false; }
+  try { snapshot = JSON.parse(logEntry.publicContextFingerprint); } catch { return "STALE_CONTEXT"; }
   const formal = (game.get(`chat_round_${logEntry.roundIndex}`) || []).filter(isFormalContextMessage);
-  if (JSON.stringify(publicContextEntries(formal.slice(0, snapshot.length))) !== logEntry.publicContextFingerprint) return false;
+  if (JSON.stringify(publicContextEntries(formal.slice(0, snapshot.length))) !== logEntry.publicContextFingerprint) return "STALE_CONTEXT";
   // 2026-10-26: fixed, non-LLM Facilitator messages (silence nudges, opening)
   // are not interventions and neither supersede nor count toward tolerance.
   const added = formal.slice(snapshot.length).filter(m => m.facilitatorOrigin !== "DETERMINISTIC_FIXED");
-  return added.length <= tolerance
-    && added.every(m => (m.messageType ?? (m.sender?.id === "ai" ? "facilitator" : "human")) === "human");
+  if (added.some(m => (m.messageType ?? (m.sender?.id === "ai" ? "facilitator" : "human")) !== "human"
+    || (logEntry.facilitation === "static" && containsFacilitatorMention(m.text ?? m.content)))) return "REQUEST_SUPERSEDED";
+  return newHuman < 0 || newHuman > tolerance || added.length > tolerance ? "STALE_CONTEXT" : null;
+}
+function automaticContextStillUsable(game, logEntry) {
+  return automaticContextReason(game, logEntry) === null;
+}
+function staticCandidateStillCurrent(game, logEntry) {
+  if (!logEntry.opportunityId) return true;
+  const reason = !canPublishFacilitatorResult(game, logEntry) ? "PHASE_ENDED" : automaticContextReason(game, logEntry);
+  if (!reason) return true;
+  logEntry.reasonCode = reason;
+  logEntry.reason = `Static candidate discarded: ${reason}`;
+  return false;
 }
 
 
@@ -577,7 +640,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
         },
       ];
     }
-    if (!isOriginatingStageActive()) return { discarded: true };
+    if (!isOriginatingStageActive() || !staticCandidateStillCurrent(game, logEntry)) return { discarded: true };
     if (!llmResponse.success) {
       logEntry.failureStage = "generator_api";
       return { silent: true, reason: `API Error: ${llmResponse.error}` };
@@ -695,6 +758,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   // the unavailable case, so no repair is triggered. The caller logs
   // this strongly and goes silent.
   async function runValidator(candidate, priorFailedCriteria = null, priorCandidate = null) {
+    if (logEntry.opportunityId) staticInterventionScheduler.progress(game, logEntry, "VALIDATING");
     const validatorStartedAt = Date.now();
     const result = await validateCandidate({
       chat: built.metadata.condition === "static" ? chat : chat.filter(isFormalContextMessage),
@@ -740,7 +804,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   // ── Attempt 1: Generator + Validator ──────────────────────────────────
   let a1 = await attemptGeneration();
   if (a1.discarded) {
-    logEntry.reason = "Discarded stale AI result after the originating Discussion stage ended";
+    logEntry.reason ||= "Discarded stale AI result after the originating Discussion stage ended";
     logEntry.outcome = "SILENT";
     return { published: false, attempts: generatorAttempts };
   }
@@ -759,7 +823,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     const wordLimitRepair = await attemptGeneration(repairContent);
     logEntry.wordLimitRepairAttempted &&= generatorAttempts > beforeRepair;
     if (wordLimitRepair.discarded) {
-      logEntry.reason = "Discarded stale AI result after the originating Discussion stage ended";
+      logEntry.reason ||= "Discarded stale AI result after the originating Discussion stage ended";
       logEntry.outcome = "SILENT";
       return { published: false, attempts: generatorAttempts };
     }
@@ -774,8 +838,8 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   }
 
   const v1 = await runValidator(a1.candidate);
-  if (!isOriginatingStageActive()) {
-    logEntry.reason = "Discarded stale Validator result after the originating Discussion stage ended";
+  if (!isOriginatingStageActive() || !staticCandidateStillCurrent(game, logEntry)) {
+    logEntry.reason ||= "Discarded stale Validator result after the originating Discussion stage ended";
     logEntry.outcome = "SILENT";
     return { published: false, attempts: generatorAttempts };
   }
@@ -787,6 +851,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   }
   logEntry.validator = v1.verdict;
   if (v1.verdict.passed) {
+    if (logEntry.opportunityId) staticInterventionScheduler.progress(game, logEntry, "READY_TO_PUBLISH");
     logEntry.llmAction = a1.candidate;
     logEntry.visibleWordCount = a1.candidate.message.trim().split(/\s+/).filter(Boolean).length;
     const posted = await postGeneratorResultIfValid(game, chatKey, a1.candidate, built.metadata.generationRole, logEntry);
@@ -811,7 +876,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   // ── Attempt 2: repair Generator (with Validator feedback) + re-audit ─
   const a2 = await attemptGeneration(buildRepairUserContent(v1.verdict.failedCriteria, a1.candidate));
   if (a2.discarded) {
-    logEntry.reason = "Discarded stale AI result during repair (originating Discussion stage ended)";
+    logEntry.reason ||= "Discarded stale AI result during repair (originating Discussion stage ended)";
     logEntry.outcome = "SILENT";
     return { published: false, attempts: generatorAttempts };
   }
@@ -823,8 +888,8 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   }
 
   const v2 = await runValidator(a2.candidate, v1.verdict.failedCriteria, a1.candidate);
-  if (!isOriginatingStageActive()) {
-    logEntry.reason = "Discarded stale repair Validator result after the originating Discussion stage ended";
+  if (!isOriginatingStageActive() || !staticCandidateStillCurrent(game, logEntry)) {
+    logEntry.reason ||= "Discarded stale repair Validator result after the originating Discussion stage ended";
     logEntry.outcome = "SILENT";
     return { published: false, attempts: generatorAttempts };
   }
@@ -837,6 +902,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   logEntry.validatorRepair = v2.verdict;
   logEntry.attempts = 2;
   if (v2.verdict.passed) {
+    if (logEntry.opportunityId) staticInterventionScheduler.progress(game, logEntry, "READY_TO_PUBLISH");
     logEntry.llmAction = a2.candidate;
     logEntry.visibleWordCount = a2.candidate.message.trim().split(/\s+/).filter(Boolean).length;
     const posted = await postGeneratorResultIfValid(game, chatKey, a2.candidate, built.metadata.generationRole, logEntry);
@@ -1103,6 +1169,7 @@ Empirica.onGameStart(({ game }) => {
 Empirica.onRoundStart(({ round }) => {
   const game = round.currentGame;
   adaptiveCloseoutScheduler.cancel(game, "round_started");
+  staticInterventionScheduler.cancel(game, "PHASE_ENDED");
   round.set("callbacksInitializedAt", Date.now());
   round.set("callbacksInstanceId", CALLBACKS_INSTANCE_ID);
   if (round.get("isPractice") === true) {
@@ -1409,7 +1476,7 @@ export function handleFormalStageStart(stage) {
   const game = stage.currentGame;
   const stageName = stage.get("name");
   if (stage.round.get("isPractice") && stageName !== "FinalDecision") return;
-  if (stage.get("formalStageStartHandled")) { adaptiveCloseoutScheduler.register(game); return; }
+  if (stage.get("formalStageStartHandled")) { adaptiveCloseoutScheduler.register(game); staticInterventionScheduler.wake(game); return; }
   stage.set("formalStageStartHandled", true);
   stage.set("callbacksInitializedAt", Date.now());
   stage.set("callbacksInstanceId", CALLBACKS_INSTANCE_ID);
@@ -1694,7 +1761,7 @@ async function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole
     const publishedAt = Date.now();
     const practice = logEntry.phase === "practice";
     const publishedMessage = appendCanonicalMessage(game, chatKey, {
-      messageId: `facilitator-${game.currentRound?.id}-${publishedAt}`,
+      messageId: logEntry.opportunityId ? `facilitator-${logEntry.opportunityId}` : `facilitator-${game.currentRound?.id}-${publishedAt}`,
       groupId: game.id,
       speakerId: "ai",
       roundIndex: practice ? game.currentRound?.get("index") : game.currentRound?.get("taskIndex"),
@@ -1872,7 +1939,7 @@ async function handlePracticeFacilitatorRequest(game, requestMessage) {
   }
 }
 
-async function handleChat(env, { game, adaptiveTrigger = null }) {
+async function handleChat(env, { game, adaptiveTrigger = null, staticRetry = null }) {
   if (game.currentRound?.get("isPractice")) return;
   await recoverInterruptedInFlight(
     game,
@@ -1903,6 +1970,7 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
   // the current Round, never from game.get("treatment") -- treatment-level
   // metadata must never override the Round-level facilitation assignment.
   const facilitation = currentRound?.get("facilitation");
+  if (staticRetry && (facilitation !== "static" || !staticInterventionScheduler.ready(game, staticRetry.opportunityId))) return;
   if (!facilitation) {
     recordOperationalEvent(game, { type: "MISSING_ROUND_FACILITATION", roundId: currentRound?.id ?? null });
     Empirica.flush();
@@ -1911,10 +1979,10 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
 
   const players = game.players;
   const chat = game.get(chatKey) || [];
-  if (!chat.length && !adaptiveTrigger) return;
+  if (!chat.length && !adaptiveTrigger && !staticRetry) return;
 
   const lastMessage = chat[chat.length - 1];
-  if (!adaptiveTrigger && !isFormalHumanMessage(lastMessage)) return;
+  if (!adaptiveTrigger && !staticRetry && !isFormalHumanMessage(lastMessage)) return;
 
   const currentStageName = game.currentStage?.get("name");
   if (currentStageName !== "Task") return;
@@ -1931,7 +1999,7 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
   // canonical final human message synchronously after the stage/timing guards
   // so a duplicate callback cannot increment pacing counters or start a
   // second pipeline, while a transiently incomplete stage can still retry.
-  if (!adaptiveTrigger && typeof lastMessage.messageId === "string" && lastMessage.messageId.length > 0) {
+  if (!adaptiveTrigger && !staticRetry && typeof lastMessage.messageId === "string" && lastMessage.messageId.length > 0) {
     if (game.get("lastProcessedHumanMessageId") === lastMessage.messageId) return;
     game.set("lastProcessedHumanMessageId", lastMessage.messageId);
   }
@@ -1940,19 +2008,19 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
 
   // ── Count the new human message (AI messages do not count, and
   // we already early-returned above if the last message is from AI). ──
-  const humanMessageCount = (game.get("humanMessageCount") || 0) + (adaptiveTrigger ? 0 : 1);
+  const humanMessageCount = (game.get("humanMessageCount") || 0) + (adaptiveTrigger || staticRetry ? 0 : 1);
   game.set("humanMessageCount", humanMessageCount);
 
   // A real human message breaks any silence -- rearm the watchdog so a
   // LATER lull (the group goes quiet again after this) can still be
   // caught, same delay as the opening case.
-  if (!adaptiveTrigger) armSilenceWatchdog(game.currentStage, chatKey);
+  if (!adaptiveTrigger && !staticRetry) armSilenceWatchdog(game.currentStage, chatKey);
 
   // ── Increment the opportunity counter (Phase 3: also tracked as
   // messagesSinceLastPublish; the legacy messagesSinceLastIntervention
   // field is kept as a derived/legacy alias so existing logs / tests
   // that reference it don't break). ──
-  const messagesSinceLastPublish = (game.get("messagesSinceLastPublish") ?? 0) + (adaptiveTrigger ? 0 : 1);
+  const messagesSinceLastPublish = (game.get("messagesSinceLastPublish") ?? 0) + (adaptiveTrigger || staticRetry ? 0 : 1);
   game.set("messagesSinceLastPublish", messagesSinceLastPublish);
   // Legacy alias (was reset to 0 on every attempt in the v1 code; now
   // it tracks the same counter as messagesSinceLastPublish, so old
@@ -1983,7 +2051,9 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
   const latestHumanText = latestHumanMessages.length > 0
     ? latestHumanMessages[latestHumanMessages.length - 1].text
     : "";
-  const isMentionCheckpoint = !adaptiveTrigger && containsFacilitatorMention(latestHumanText);
+  const isMentionCheckpoint = !adaptiveTrigger && !staticRetry && containsFacilitatorMention(latestHumanText);
+  const staticAutomatic = facilitation === "static" && !isMentionCheckpoint;
+  const opportunity = staticAutomatic ? staticInterventionScheduler.observe(game) : null;
 
   let trigger = shouldEvaluateCheckpoint({
     store: game,
@@ -1995,6 +2065,11 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
     isMentionCheckpoint,
     config: facilitation === "adaptive" ? { ...CHECKPOINT_DEFAULTS, minTimeForInterventionMs: ADAPTIVE_FLOOR_MS } : CHECKPOINT_DEFAULTS,
   });
+  if (staticRetry) trigger = { trigger: staticInterventionScheduler.ready(game, staticRetry.opportunityId), reason: "static_retry" };
+  if (staticAutomatic && opportunity?.status === "PENDING") {
+    const blocked = staticInterventionScheduler.blockReason(game);
+    if (blocked && blocked !== "LOCK_BUSY") trigger = { trigger: false, reason: blocked };
+  }
   let triggerSource = "message";
   if (facilitation === "adaptive" && !isMentionCheckpoint) {
     adaptiveCloseoutScheduler.register(game);
@@ -2014,7 +2089,7 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
   // non-trigger outcomes (opportunity/cooldown/time-floor/dedup). Keep the
   // same id for a later beginInFlight/finalize lifecycle when the checkpoint
   // does trigger.
-  const auditRequestId = `${game.id}:${roundIndex}:${humanMessageCount}:${now}${adaptiveTrigger ? `:${randomUUID()}` : ""}`;
+  const auditRequestId = `${game.id}:${roundIndex}:${humanMessageCount}:${now}${adaptiveTrigger || staticRetry ? `:${randomUUID()}` : ""}`;
   let logEntry = {
     stageId: originatingStageId, roundId: currentRound.id,
     auditRequestId,
@@ -2045,6 +2120,8 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
     originatingRoundId,
     originatingStageId,
   };
+  if (staticAutomatic && opportunity) logEntry.opportunityId = opportunity.opportunityId;
+  if (staticAutomatic && trigger.trigger) staticInterventionScheduler.decorate(game, logEntry);
 
   // Phase 3: capture the full AgentState snapshot for the audit log
   // (architecture doc §6 节点 13: "记录 features, evidence-use relations,
@@ -2057,6 +2134,11 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
   logEntry.agentState = buildAgentState(game, currentRound, chat, { now });
 
   if (!trigger.trigger) {
+    if (staticAutomatic) {
+      logEntry.reasonCode = trigger.reason.startsWith("cooldown") ? "COOLDOWN_ACTIVE"
+        : /^[A-Z_]+$/.test(trigger.reason) ? trigger.reason : "DUPLICATE_SUPPRESSED";
+      staticInterventionScheduler.defer(game, logEntry.reasonCode);
+    }
     // Not an error -- just "not yet" / "this round is full" / etc.
     // Still log so the audit can see the trigger conditions per
     // human message.
@@ -2065,13 +2147,39 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
   }
 
   logEntry.serverInstanceId = CALLBACKS_INSTANCE_ID;
-  const beganInFlight = await beginInFlight(
-    game,
-    { ...logEntry, outcome: "PENDING" },
-    () => Empirica.flush(),
-    isMentionCheckpoint ? undefined : { exclusiveGroup: AUTOMATIC_PIPELINE_GROUP },
-  );
+  if (isMentionCheckpoint) facilitatorPublication.requestedStarted(game, logEntry);
+  let beganInFlight;
+  try {
+    beganInFlight = await beginInFlight(
+      game,
+      { ...logEntry, outcome: "PENDING" },
+      () => Empirica.flush(),
+      isMentionCheckpoint ? undefined : { exclusiveGroup: AUTOMATIC_PIPELINE_GROUP },
+    );
+  } catch (error) {
+    logEntry.reasonCode = "STATE_COMMIT_ERROR";
+    logEntry.reason = `In-flight state commit failed: ${error.message}`;
+    logEntry.outcome = "SILENT_ERROR";
+    if (staticAutomatic && staticInterventionScheduler.started(game, logEntry)) {
+      recordAttempt(game, humanMessageCount, now);
+      staticInterventionScheduler.complete(game, logEntry);
+    }
+    try {
+      if (isMentionCheckpoint && canPublishFacilitatorResult(game, logEntry)) {
+        recordParticipantRequest(game, humanMessageCount);
+        logEntry.triggerType = "PARTICIPANT_REQUEST";
+        await postParticipantRequestFallback(game, chatKey, logEntry);
+      }
+    } finally {
+      try { await finalizeAuditLog(game, logEntry); }
+      finally { facilitatorPublication.requestedFinished(game, logEntry); staticInterventionScheduler.wake(game); }
+    }
+    return;
+  }
   if (!beganInFlight) {
+    if (isMentionCheckpoint) facilitatorPublication.requestedFinished(game, logEntry);
+    logEntry.reasonCode = "LOCK_BUSY";
+    if (staticAutomatic) staticInterventionScheduler.defer(game, "LOCK_BUSY");
     if (facilitation === "adaptive" && !isMentionCheckpoint && !adaptiveTrigger) adaptiveCloseoutScheduler.request(game);
     logEntry.outcome = "SILENT_AUTOMATIC_IN_FLIGHT";
     logEntry.reason = "Skipped automatic checkpoint because an earlier automatic intervention pipeline is still in flight";
@@ -2085,49 +2193,59 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
   // accounted separately so it cannot alter Static/Adaptive opportunity
   // matching or automatic intervention caps.
   if (isMentionCheckpoint) {
-    recordParticipantRequest(game, humanMessageCount);
-    logEntry.triggerType = "PARTICIPANT_REQUEST";
-    logEntry.routingDecision = "REQUESTED_GENERALIST";
-    logEntry.selectedRole = "REQUESTED_GENERALIST";
+    try {
+      recordParticipantRequest(game, humanMessageCount);
+      logEntry.triggerType = "PARTICIPANT_REQUEST";
+      logEntry.routingDecision = "REQUESTED_GENERALIST";
+      logEntry.selectedRole = "REQUESTED_GENERALIST";
 
-    const requestedPrompt = getRequestedGeneralistPromptBundle();
-    const requestedBuilt = buildGeneratorContext(
-      game,
-      players,
-      chat,
-      remainingTime,
-      timeElapsed,
-      "adaptive",
-      "generalist",
-      null,
-      requestedPrompt,
-    );
-    const requestedResult = await runSharedGeneration(
-      game,
-      chatKey,
-      requestedBuilt,
-      logEntry,
-      originatingRoundId,
-      originatingStageId,
-      chat,
-    );
+      const requestedPrompt = getRequestedGeneralistPromptBundle();
+      const requestedBuilt = buildGeneratorContext(
+        game,
+        players,
+        chat,
+        remainingTime,
+        timeElapsed,
+        "adaptive",
+        "generalist",
+        null,
+        requestedPrompt,
+      );
+      const requestedResult = await runSharedGeneration(
+        game,
+        chatKey,
+        requestedBuilt,
+        logEntry,
+        originatingRoundId,
+        originatingStageId,
+        chat,
+      );
 
-    if (
-      !requestedResult.published &&
-      game.currentRound?.id === originatingRoundId &&
-      game.currentStage?.id === originatingStageId &&
-      game.currentStage?.get("name") === "Task"
-    ) {
-      await postParticipantRequestFallback(game, chatKey, logEntry);
+      if (
+        !requestedResult.published &&
+        game.currentRound?.id === originatingRoundId &&
+        game.currentStage?.id === originatingStageId &&
+        game.currentStage?.get("name") === "Task"
+      ) {
+        await postParticipantRequestFallback(game, chatKey, logEntry);
+      }
+      if (requestedResult.published) {
+        recordParticipantRequestedPublish(game, {
+          role: "REQUESTED_GENERALIST",
+          messageId: logEntry.publishedMessageId ?? requestedResult.candidate?.messageId ?? null,
+          now,
+        });
+      }
+    } catch (error) {
+      logEntry.reasonCode = logEntry.messageAdded ? "PUBLISHED" : "STATE_COMMIT_ERROR";
+      logEntry.coordinationError = error.message;
+      logEntry.reason = `Requested response pipeline failed: ${error.message}`;
+      if (logEntry.messageAdded) logEntry.outcome = logEntry.fallbackUsed ? "PUBLISHED_REQUEST_FALLBACK" : "PUBLISHED";
+      else if (canPublishFacilitatorResult(game, logEntry)) await postParticipantRequestFallback(game, chatKey, logEntry);
+    } finally {
+      try { await finalizeAuditLog(game, logEntry); }
+      finally { facilitatorPublication.requestedFinished(game, logEntry); staticInterventionScheduler.wake(game); }
     }
-    if (requestedResult.published) {
-      recordParticipantRequestedPublish(game, {
-        role: "REQUESTED_GENERALIST",
-        messageId: logEntry.publishedMessageId ?? requestedResult.candidate?.messageId ?? null,
-        now,
-      });
-    }
-    await finalizeAuditLog(game, logEntry);
     return;
   }
 
@@ -2143,51 +2261,63 @@ async function handleChat(env, { game, adaptiveTrigger = null }) {
   // and logged; it is not a discussion-state ABSTAIN and never fabricates a
   // fallback participant-facing message.
   if (facilitation === "static") {
-    logEntry.routingDecision = "STATIC_REQUIRED_MESSAGE";
-    logEntry.publicContextFingerprint = publicContextFingerprint(chat);
-    // 2026-10-21: matched-latency delay (see staticMatchedDelayMs()).
-    const matchedDelayMs = staticMatchedDelayMs();
-    if (matchedDelayMs > 0) {
-      logEntry.staticMatchedDelayMs = matchedDelayMs;
-      await new Promise((resolve) => setTimeout(resolve, matchedDelayMs));
-      if (
-        game.currentRound?.id !== originatingRoundId ||
-        game.currentStage?.id !== originatingStageId ||
-        game.currentStage?.get("name") !== "Task"
-      ) {
-        logEntry.reason = "Discarded Static checkpoint: the originating Discussion stage ended during the matched delay";
-        await finalizeAuditLog(game, logEntry);
+    try {
+      if (!staticInterventionScheduler.started(game, logEntry)) {
+        logEntry.reasonCode = "DUPLICATE_SUPPRESSED";
         return;
       }
+      // Persist the attempt budget before the first long model call so a
+      // callbacks restart cannot reset this opportunity's bounded retry count.
+      await Empirica.flush();
+      logEntry.routingDecision = "STATIC_REQUIRED_MESSAGE";
+      logEntry.publicContextFingerprint = publicContextFingerprint(chat);
+      // 2026-10-21: matched-latency delay (see staticMatchedDelayMs()).
+      const matchedDelayMs = staticMatchedDelayMs();
+      if (matchedDelayMs > 0) {
+        logEntry.staticMatchedDelayMs = matchedDelayMs;
+        await new Promise((resolve) => setTimeout(resolve, matchedDelayMs));
+        if (
+          game.currentRound?.id !== originatingRoundId ||
+          game.currentStage?.id !== originatingStageId ||
+          game.currentStage?.get("name") !== "Task"
+        ) {
+          logEntry.reason = "Discarded Static checkpoint: the originating Discussion stage ended during the matched delay";
+          logEntry.reasonCode = "PHASE_ENDED";
+          return;
+        }
+      }
+      if (!staticCandidateStillCurrent(game, logEntry)) return;
+      const built = buildGeneratorContext(
+        game,
+        players,
+        chat,
+        remainingTime,
+        timeElapsed,
+        "static",
+        null,
+        null,
+      );
+      await runSharedGeneration(
+        game,
+        chatKey,
+        built,
+        logEntry,
+        originatingRoundId,
+        originatingStageId,
+        chat,
+      );
+      // Static publication accounting is committed with the opportunity under
+      // the short publication mutex, not after releasing that mutex.
+    } catch (error) {
+      logEntry.reasonCode = logEntry.messageAdded ? "PUBLISHED" : "STATE_COMMIT_ERROR";
+      logEntry.reason = `Static pipeline failed: ${error.message}`;
+      logEntry.coordinationError = error.message;
+      logEntry.outcome = logEntry.messageAdded ? "PUBLISHED" : "SILENT_ERROR";
+    } finally {
+      if (!logEntry.messageAdded && !canPublishFacilitatorResult(game, logEntry)) logEntry.reasonCode = "PHASE_ENDED";
+      staticInterventionScheduler.complete(game, logEntry);
+      await finalizeAuditLog(game, logEntry);
     }
-    const built = buildGeneratorContext(
-      game,
-      players,
-      chat,
-      remainingTime,
-      timeElapsed,
-      "static",
-      null,
-      null,
-    );
-    const result = await runSharedGeneration(
-      game,
-      chatKey,
-      built,
-      logEntry,
-      originatingRoundId,
-      originatingStageId,
-      chat,
-    );
-    // Phase 3: record a publish so Static's opportunity gate resets for the
-    // next paced checkpoint. Phase 2 made Static AI's role "STATIC" instead
-    // of "generalist"; the publish is recorded with that role so
-    // interventionHistory, lastRole, publishedThisRound all stay
-    // consistent across both conditions.
-    if (result.published) {
-      recordPublish(game, { role: "STATIC", messageId: logEntry.publishedMessageId ?? result.candidate?.messageId ?? null, now });
-    }
-    await finalizeAuditLog(game, logEntry);
     return;
   }
 
@@ -2404,6 +2534,7 @@ Empirica.on("game", "chat_round_1", handleChat);
 
 Empirica.onStageEnded(({ stage }) => {
   if (stage.get("name") === "Task") adaptiveCloseoutScheduler.cancel(stage.currentGame, "stage_ended");
+  if (stage.get("name") === "Task") staticInterventionScheduler.cancel(stage.currentGame, "PHASE_ENDED");
   const round = stage.round;
   const game = stage.currentGame;
   const stageName = stage.get("name");
@@ -2461,6 +2592,7 @@ Empirica.onStageEnded(({ stage }) => {
 
 Empirica.onRoundEnded(({ round }) => {
   const game = round.currentGame;
+  staticInterventionScheduler.cancel(game, "PHASE_ENDED");
   if (round.get("isPractice") === true) return;
   const endedAt = new Date().toISOString();
   queueResearchMirror("round_ended", async () => {
@@ -2485,6 +2617,7 @@ Empirica.onRoundEnded(({ round }) => {
 
 Empirica.onGameEnded(({ game }) => {
   adaptiveCloseoutScheduler.cancel(game, "game_ended");
+  staticInterventionScheduler.cancel(game, "PHASE_ENDED");
   const storedEndedAt = game.get("endedAt");
   const endedAt = typeof storedEndedAt === "string" && storedEndedAt.trim()
     ? storedEndedAt

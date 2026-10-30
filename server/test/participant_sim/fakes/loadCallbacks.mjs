@@ -84,6 +84,7 @@ export async function getOfflineCallbacksHarness() {
         handleChat: findAttributeListener(mod.Empirica, "game", "chat_round_0"),
         handleFormalStageStart: mod.handleFormalStageStart,
         adaptiveCloseoutScheduler: mod.adaptiveCloseoutScheduler,
+        staticInterventionScheduler: mod.staticInterventionScheduler,
         Empirica: mod.Empirica,
       };
     })();

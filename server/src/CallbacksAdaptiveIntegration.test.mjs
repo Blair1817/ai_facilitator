@@ -139,12 +139,13 @@ test("every in-flight lifecycle mutation is awaited and committed through the se
   );
 
   const finalizations = [
-    ...handleChatBody.matchAll(/(^|\n)\s*(await\s+)?finalizeAuditLog\(game, logEntry\);/g),
+    ...handleChatBody.matchAll(/(await\s+)?finalizeAuditLog\(game, logEntry\);/g),
   ];
-  // 2026-10-21: +1 terminal path for the Static matched-delay stale discard.
-  assert.equal(finalizations.length, 7, "Adaptive paths share one finally commit; all other terminal paths retain awaited commits");
+  // Static delay/exception exits now share its finally; requested replies
+  // also finalise in finally before releasing their publication reservation.
+  assert.equal(finalizations.length, 7, "Every terminal route, including a failed initial commit, retains an awaited lifecycle commit");
   assert.ok(
-    finalizations.every((match) => match[2] === "await "),
+    finalizations.every((match) => match[1] === "await "),
     "no terminal callback path may release its lifecycle commit without awaiting it",
   );
 
@@ -210,7 +211,7 @@ test("validated publication sets typing immediately around append and always cle
   );
   assert.match(
     helperBody,
-    /try\s*\{[\s\S]*?return await task\(\);[\s\S]*?\}\s*finally\s*\{[\s\S]*?await setVisibleResponsePending\(game, logEntry\.auditRequestId, false, \(\) => Empirica\.flush\(\)\)/,
+    /try\s*\{[\s\S]*?const posted = await task\(\);[\s\S]*?return posted;[\s\S]*?\}\s*finally\s*\{[\s\S]*?await setVisibleResponsePending\(game, logEntry\.auditRequestId, false, \(\) => Empirica\.flush\(\)\)/,
   );
 
   const publishStart = callbacksSource.indexOf("function postGeneratorResultIfValid");
@@ -277,10 +278,10 @@ test("stale Validator results are rejected before either publication path", () =
     callbacksSource.indexOf("// ── S1-S4 sequence definitions"),
   );
   const firstValidator = sharedFnBody.indexOf("const v1 = await runValidator(");
-  const firstStaleGuard = sharedFnBody.indexOf("if (!isOriginatingStageActive())", firstValidator);
+  const firstStaleGuard = sharedFnBody.indexOf("if (!isOriginatingStageActive()", firstValidator);
   const firstPublish = sharedFnBody.indexOf("postGeneratorResultIfValid(", firstValidator);
   const repairValidator = sharedFnBody.indexOf("const v2 = await runValidator(");
-  const repairStaleGuard = sharedFnBody.indexOf("if (!isOriginatingStageActive())", repairValidator);
+  const repairStaleGuard = sharedFnBody.indexOf("if (!isOriginatingStageActive()", repairValidator);
   const repairPublish = sharedFnBody.indexOf("postGeneratorResultIfValid(", repairValidator);
 
   assert.ok(firstValidator !== -1 && firstValidator < firstStaleGuard && firstStaleGuard < firstPublish);
