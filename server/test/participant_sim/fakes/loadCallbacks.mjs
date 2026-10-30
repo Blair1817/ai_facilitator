@@ -81,7 +81,10 @@ export async function getOfflineCallbacksHarness() {
       process.env.STATIC_MATCHED_DELAY_MS = process.env.STATIC_MATCHED_DELAY_MS ?? "0";
       const mod = await buildAndImport("offline");
       return {
-        handleChat: findAttributeListener(mod.Empirica, "game", "chat_round_0"),
+        handleChat: mod.handleChat,
+        dispatchChat: mod.dispatchChat,
+        facilitatorTasks: mod.facilitatorTasks,
+        discussionDeadline: mod.discussionDeadline,
         handleFormalStageStart: mod.handleFormalStageStart,
         adaptiveCloseoutScheduler: mod.adaptiveCloseoutScheduler,
         Empirica: mod.Empirica,
@@ -126,7 +129,7 @@ export async function getLiveHandleChat() {
       delete process.env.OPENAI_API_KEY;
       delete process.env.OPENAI_MODEL;
       const mod = await buildAndImport("live");
-      return findAttributeListener(mod.Empirica, "game", "chat_round_0");
+      return mod.handleChat;
     })();
   }
   return livePromise;

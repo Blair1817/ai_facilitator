@@ -275,7 +275,7 @@ export function recordParticipantRequestedPublish(store, { role, messageId, now 
  * the next opportunity), updates role/uptake bookkeeping, and appends
  * to the intervention history.
  */
-export function recordPublish(store, { role, messageId, now = Date.now() }) {
+export function recordPublish(store, { role, messageId, humanMessageCountAtPublish, now = Date.now() }) {
   const state = readCheckpointState(store);
   const intervention = {
     timestamp: now,
@@ -285,7 +285,8 @@ export function recordPublish(store, { role, messageId, now = Date.now() }) {
     // here we just keep the per-round slice.
   };
   const updates = {
-    messagesSinceLastPublish: 0,
+    messagesSinceLastPublish: Number.isFinite(humanMessageCountAtPublish)
+      ? Math.max(0, state.humanMessageCount - humanMessageCountAtPublish) : 0,
     publishedThisRound: state.publishedThisRound + 1,
     lastRole: role,
     postInterventionUptake: 0,   // reset; will be re-classified by Phase 4 uptake tracking

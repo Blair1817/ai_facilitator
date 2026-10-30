@@ -1,3 +1,14 @@
+// SDK 1.12 stop() drops graphql-ws dispose()'s Promise. Observe it explicitly
+// before invoking stop, including the throwaway registration connection.
+function stopSafely(client, onError) {
+  if (!client) return;
+  const socket = client._wsClient;
+  if (socket) {
+    delete client._wsClient;
+    try { Promise.resolve(socket.dispose()).catch(onError); } catch (error) { onError(error); }
+  }
+  client.stop();
+}
 function reportTransportError(error) {
   // Do not log ErrorEvent objects: they contain sockets and auth headers.
   const code = error?.error?.code ?? error?.code;
@@ -28,12 +39,19 @@ export async function connectExportAdmin({
     admin.useHTTP = true;
     admin.on("error", onTransportError);
     await admin.connectAndAwait();
+    const stop = admin.stop.bind(admin);
+    admin.stop = () => {
+      const socket = admin._wsClient;
+      delete admin._wsClient;
+      try { Promise.resolve(socket?.dispose()).catch(onTransportError); } catch (error) { onTransportError(error); }
+      stop();
+    };
     return admin;
   } catch (error) {
-    admin?.stop();
+    stopSafely(admin, onTransportError);
     throw error;
   } finally {
     // Registration is only needed at startup; keep the authenticated client.
-    registration.stop();
+    stopSafely(registration, onTransportError);
   }
 }

@@ -142,7 +142,7 @@ test("every in-flight lifecycle mutation is awaited and committed through the se
     ...handleChatBody.matchAll(/(^|\n)\s*(await\s+)?finalizeAuditLog\(game, logEntry\);/g),
   ];
   // 2026-10-21: +1 terminal path for the Static matched-delay stale discard.
-  assert.equal(finalizations.length, 7, "Adaptive paths share one finally commit; all other terminal paths retain awaited commits");
+  assert.equal(finalizations.length, 6, "Static, requested, and Adaptive paths each finalize in finally; short terminal paths retain awaited commits");
   assert.ok(
     finalizations.every((match) => match[2] === "await "),
     "no terminal callback path may release its lifecycle commit without awaiting it",

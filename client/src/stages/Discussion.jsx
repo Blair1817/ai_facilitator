@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   useGame,
   usePlayer,
@@ -101,38 +101,30 @@ export function Discussion() {
 // This guard only recovers a missed deadline transition; it never advances
 // the client by itself. Unanimous readiness remains exclusively on Empirica's
 // native Step transition so two paths cannot race to end the same stage.
-function DiscussionAdvanceGuard() {
+export function DiscussionAdvanceGuard() {
   const game = useGame();
   const player = usePlayer();
-  const players = usePlayers();
   const round = useRound();
   const stage = useStage();
-  const lastRequestKey = useRef(null);
   const deadline = game.get("deadline");
-  const allReady = players.length > 0
-    && players.every((participant) => Boolean(participant.stage?.get("submit")));
 
   useEffect(() => {
+    if (!Number.isFinite(deadline) || stage.get("ended")) return undefined;
+    let retry;
     const requestAdvance = (reason) => {
-      const requestKey = `${stage.id}:${reason}`;
-      if (lastRequestKey.current === requestKey) return;
-      lastRequestKey.current = requestKey;
+      if (stage.get("ended")) return;
       player.set("discussionAdvanceRequest", {
         requestId: globalThis.crypto?.randomUUID?.() ?? `${player.id}-${Date.now()}`,
-        roundId: round?.id ?? null,
-        stageId: stage.id,
-        reason,
-        requestedAt: Date.now(),
+        roundId: round?.id ?? null, stageId: stage.id,
+        reason, requestedAt: Date.now(),
       });
     };
-
-    if (allReady) return undefined;
-    if (!Number.isFinite(deadline)) return undefined;
-
-    const delay = Math.max(0, deadline - Date.now()) + 100;
-    const timeout = setTimeout(() => requestAdvance("deadline_reached"), delay);
-    return () => clearTimeout(timeout);
-  }, [allReady, deadline, player, round?.id, stage.id]);
+    const timeout = setTimeout(() => {
+      requestAdvance("deadline_reached");
+      retry = setInterval(() => requestAdvance("deadline_reached"), 2000);
+    }, Math.max(0, deadline - Date.now()) + 100);
+    return () => { clearTimeout(timeout); clearInterval(retry); };
+  }, [deadline, player, round?.id, stage]);
 
   return null;
 }
