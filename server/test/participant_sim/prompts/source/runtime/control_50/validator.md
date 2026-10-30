@@ -165,8 +165,11 @@ additions (2026-08-11).
      same-criterion comparison / relationship / trade-off explicitly
      established by participants. A tagged question that asks the
      participant to perform the synthesis fails this.
-   - `STATIC` — perform a balanced contribution prompt. Pure
-     summarisation, opinion, or steering fail this. A tasteful
+   - `STATIC` — perform a balanced contribution prompt OR provide a
+     grounded, neutral scoreboard summary of publicly shared pros
+     and cons. Either function is sufficient; a summary need not
+     include a question or invitation to contribute. Opinion,
+     steering, or recommendation still fail this. A tasteful
      `@[Name]` is allowed; flag only when the tagged message becomes
      steering / opinion / recommendation.
    - `GENERALIST` — perform one process move and end with a question
@@ -183,13 +186,20 @@ additions (2026-08-11).
     would prefer…"). *(Separate from `unsupportedInformationDetected`;
     that one is citing info without evidence; this one is inferring
     from a private source the AI should not have used.)*
-12. **repetition** — When prior AI messages are supplied, a
-    candidate that substantially repeats one (same reasoning act /
-    target in rephrased wording, or another request for information
-    already requested). Minor rephrasing is not repetition. If
-    prior AI messages are not supplied, set to `false` (the
-    deterministic validator has already checked exact-normalised
-    duplication).
+12. **repetition** —
+    - `STATIC`: Set `repetition` to `false`. Semantic similarity to
+      prior AI messages is not a publication veto: revisiting an
+      information gap or requesting information already requested is
+      allowed. Exact-normalised duplicates are still checked by the
+      deterministic validator. Continue to audit all other criteria
+      independently.
+    - All other roles: When prior AI messages are supplied, a
+      candidate that substantially repeats one (same reasoning act /
+      target in rephrased wording, or another request for information
+      already requested). Minor rephrasing is not repetition. If
+      prior AI messages are not supplied, set to `false` (the
+      deterministic validator has already checked exact-normalised
+      duplication).
 13. **length** — Exceeds the runtime maximum of 50 English words (<=50)
     across all visible text, including titles and list numbers. Do not impose
     other length or layout limits or reject detail merely for being detailed.

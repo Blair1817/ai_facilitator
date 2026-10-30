@@ -13,8 +13,8 @@
       "generationSchema": "control_50/generation.schema.json",
       "validationSchema": "control_50/validation.schema.json",
       "planRequired": false,
-      "generatorSha256": "ed9ec306b94e18bb49f707632332da0a233ffeadb7f74515335d5dc95c923fec",
-      "validatorSha256": "fb4b842ea4df5fc68974b7364006bfb0540cdac990aba37fc653b596e5beb1ea",
+      "generatorSha256": "c9b514e282e13140e7e0e7d8ff23a9aea1ff398f4ca0e67c87da85d4274ed1f4",
+      "validatorSha256": "77f91a5bad0a1c7e0dc9516d36de05528867040d7577973ef11178c572339b56",
       "maxWords": 50
     },
     "generalist": {
@@ -27,7 +27,7 @@
       "validationSchema": "control_50/validation.schema.json",
       "planRequired": false,
       "generatorSha256": "5770378ac67f8fc935cc992389f042aaee21d60cda2a63ee4a2b9f51ae1bdc52",
-      "validatorSha256": "fb4b842ea4df5fc68974b7364006bfb0540cdac990aba37fc653b596e5beb1ea",
+      "validatorSha256": "77f91a5bad0a1c7e0dc9516d36de05528867040d7577973ef11178c572339b56",
       "maxWords": 50
     },
     "requested_generalist": {
@@ -153,16 +153,16 @@
       "bytes": 2848
     },
     "control_50/static.md": {
-      "sha256": "88f4877b3862412ab37f8c33720920698d3a0c319599918399c0afa2118e3dfb",
-      "bytes": 2758
+      "sha256": "92b206de164cf71d69a6a90238862208ea91646e7d6566c0f57209ee8557443a",
+      "bytes": 2902
     },
     "control_50/validation.schema.json": {
       "sha256": "0a05e67d2285c8598d519f595f51ceaf3819201a8c1c4520e157ac487c565611",
       "bytes": 5339
     },
     "control_50/validator.md": {
-      "sha256": "fb4b842ea4df5fc68974b7364006bfb0540cdac990aba37fc653b596e5beb1ea",
-      "bytes": 12263
+      "sha256": "77f91a5bad0a1c7e0dc9516d36de05528867040d7577973ef11178c572339b56",
+      "bytes": 12855
     },
     "frozen_control/base.md": {
       "sha256": "075deb1c9d1ddfc4d773e4b686079abc7e1a023957156fe4d4bd069e6b2c383e",

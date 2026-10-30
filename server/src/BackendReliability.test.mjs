@@ -247,7 +247,7 @@ test("a participant-requested timeout keeps the safe fallback and finalizes clea
   assert.deepEqual(w.game.get("llmInFlight"), {});
 });
 
-test("overlapping automatic callbacks do not start a second pipeline or publish stale context", async () => {
+test("overlapping automatic callbacks keep one pipeline and allow ordinary participant appends", async () => {
   const { handleChat } = await getOfflineCallbacksHarness();
   const w = world("static");
   let resolveFirst;
@@ -261,8 +261,7 @@ test("overlapping automatic callbacks do not start a second pipeline or publish 
     const first = handleChat(undefined, { game: w.game });
     await waitUntil(() => requests === 1);
     const chat = w.game.get("chat_round_0");
-    // 2026-10-25: up to two new human messages are tolerated; three make the
-    // older automatic result stale.
+    // Ordinary participant appends must not cause count-based invalidation.
     chat.push(humanMessage(w.game, w.players[0], "A later public fact.", 6));
     chat.push(humanMessage(w.game, w.players[1], "Another later fact.", 7));
     chat.push(humanMessage(w.game, w.players[2], "And one more.", 8));
@@ -274,8 +273,8 @@ test("overlapping automatic callbacks do not start a second pipeline or publish 
     await first;
   });
   assert.equal(w.game.get("attemptedThisRound"), 1);
-  assert.equal(w.game.get("publishedThisRound") || 0, 0);
-  assert.equal(published(w).length, 0, "the older automatic result is stale after more than two later human messages");
+  assert.equal(w.game.get("publishedThisRound"), 1);
+  assert.equal(published(w).length, 1, "three new human messages do not invalidate the otherwise valid result");
   assert.ok(readAppendOnlyAttribute(w.game, "llmLog").some((entry) => entry.outcome === "SILENT_AUTOMATIC_IN_FLIGHT"));
 });
 

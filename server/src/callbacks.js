@@ -5,6 +5,7 @@ import { createAdaptiveBudget, ADAPTIVE_FLOOR_MS, runAdaptiveSelection } from ".
 import { selectAdaptiveAssessment, redrawAdaptiveSelection } from "./AdaptiveEvidence.mjs";
 import { createCloseoutScheduler } from "./AdaptiveCloseoutScheduler.mjs";
 import { createStaticInterventionScheduler } from "./StaticInterventionScheduler.mjs";
+import { buildStaticRetryUserContent } from "./StaticRetryFeedback.mjs";
 import { createFacilitatorPublicationCoordinator } from "./FacilitatorPublication.mjs";
 import { isPublicParticipantMessage, countPublicMessagesByName, quietParticipants, silentInWindow, countOptionMentions, SILENCE_WINDOW, PARTICIPATION_INVITE_CAP } from "./CognitiveOperations.mjs";
 import { acceptIndependentDecision, finalizeIndependentDecision } from "./FinalDecisionSubmission.mjs";
@@ -324,34 +325,22 @@ function publicContextFingerprint(chat) {
   return JSON.stringify(publicContextEntries(chat));
 }
 
-// 2026-10-25: an automatic (Static or Adaptive) result may still be published
-// when at most STALE_TOLERANCE_HUMAN_MESSAGES new human messages arrived after
-// its context snapshot and the snapshot itself is unchanged. Previously ANY
-// new message discarded the result, so with realistic LLM latency in an
-// active 3-person chat Static almost never published. Same rule for both
-// conditions; participant requests are unaffected.
-const STALE_TOLERANCE_HUMAN_MESSAGES = 2;
-// A new Facilitator message (for example a participant-requested reply) since
-// the snapshot always makes the older automatic result stale. Adaptive
-// closeout runs started by the scheduler (180s/120s/early-closeout probe) keep
-// the strict rule (no new message at all): they are intent-sensitive and the
-// scheduler already defers and retries them.
+// Ordinary participant appends do not invalidate an automatic candidate,
+// regardless of their number or trigger source. Preserve snapshot integrity
+// and Facilitator/request supersession; stage validity is checked separately.
 function automaticContextReason(game, logEntry) {
-  const tolerance = logEntry.facilitation === "adaptive" && logEntry.triggerSource && logEntry.triggerSource !== "message"
-    ? 0 : STALE_TOLERANCE_HUMAN_MESSAGES;
-  const newHuman = (game.get("humanMessageCount") || 0) - (logEntry.humanMessageCount || 0);
   if (logEntry.facilitation === "static" && facilitatorPublication.hasRequested(game)) return "REQUEST_SUPERSEDED";
-  if (!logEntry.publicContextFingerprint) return newHuman === 0 ? null : "STALE_CONTEXT";
+  if (!logEntry.publicContextFingerprint) return null;
   let snapshot;
   try { snapshot = JSON.parse(logEntry.publicContextFingerprint); } catch { return "STALE_CONTEXT"; }
   const formal = (game.get(`chat_round_${logEntry.roundIndex}`) || []).filter(isFormalContextMessage);
   if (JSON.stringify(publicContextEntries(formal.slice(0, snapshot.length))) !== logEntry.publicContextFingerprint) return "STALE_CONTEXT";
   // 2026-10-26: fixed, non-LLM Facilitator messages (silence nudges, opening)
-  // are not interventions and neither supersede nor count toward tolerance.
+  // are not interventions and do not supersede the pending candidate.
   const added = formal.slice(snapshot.length).filter(m => m.facilitatorOrigin !== "DETERMINISTIC_FIXED");
   if (added.some(m => (m.messageType ?? (m.sender?.id === "ai" ? "facilitator" : "human")) !== "human"
     || (logEntry.facilitation === "static" && containsFacilitatorMention(m.text ?? m.content)))) return "REQUEST_SUPERSEDED";
-  return newHuman < 0 || newHuman > tolerance || added.length > tolerance ? "STALE_CONTEXT" : null;
+  return null;
 }
 function automaticContextStillUsable(game, logEntry) {
   return automaticContextReason(game, logEntry) === null;
@@ -628,6 +617,13 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   }
 
   let generatorAttempts = 0;
+  function retainContentFailure(stage, candidate, failedCriteria, feedback) {
+    if (!logEntry.opportunityId || candidate == null || !failedCriteria?.length) return;
+    logEntry.staticContentFailures = [...(logEntry.staticContentFailures || []), structuredClone({
+      attemptId: logEntry.attemptId, generationAttempt: generatorAttempts,
+      stage, candidate, failedCriteria, feedback,
+    })];
+  }
   // Returns false if the originating round/stage has changed (a later
   // attempt would be responding to a stale world). True if the same
   // stage is still active.
@@ -703,6 +699,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     const parseResult = parseGeneratorOutputStrict(llmResponse.rawText);
     if (!parseResult.ok) {
       logEntry.failureStage = "parse";
+      retainContentFailure("parse", { rawText: llmResponse.rawText }, [parseResult.code], parseResult);
       return { silent: true, reason: `Invalid Generator output: ${parseResult.error}` };
     }
 
@@ -718,6 +715,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     const schemaResult = validateAgainstGenerationSchema(parseResult.parsed, built.metadata.generationRole, built.metadata.triggerType);
     if (!schemaResult.ok) {
       logEntry.failureStage = "schema";
+      retainContentFailure("schema", parseResult.parsed, [schemaResult.code], schemaResult);
       return {
         silent: true,
         reason: "Generator output failed generation.schema.json",
@@ -751,6 +749,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     logEntry.deterministic = deterministicResult;
     if (!deterministicResult.passed) {
       logEntry.failureStage = "deterministic";
+      retainContentFailure("deterministic", candidate, deterministicResult.failedCriteria, deterministicResult);
       return {
         silent: true,
         reason: `Generator output failed validation: ${deterministicResult.failedCriteria.join(", ")}`,
@@ -908,6 +907,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     logEntry.outcome = posted ? "PUBLISHED" : "SILENT";
     return { published: posted, candidate: a1.candidate, attempts: generatorAttempts, validator: v1.verdict };
   }
+  retainContentFailure("semantic", a1.candidate, v1.verdict.failedCriteria, v1.verdict);
 
   // Repetition is a selection failure, not a request to paraphrase. Other
   // semantic failures may repair the same plan once under the shared budget.
@@ -958,6 +958,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     logEntry.outcome = posted ? "PUBLISHED" : "SILENT";
     return { published: posted, candidate: a2.candidate, attempts: 2, validator: v2.verdict };
   }
+  retainContentFailure("semantic", a2.candidate, v2.verdict.failedCriteria, v2.verdict);
 
   // Persistent failure: both attempts failed the Validator. Silent +
   // strong log marker. Never a fallback stub message -- participants
@@ -2357,16 +2358,24 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
         }
       }
       if (!staticCandidateStillCurrent(game, logEntry)) return;
+      // Re-read after persistence/matched-delay awaits. A retry must generate
+      // and validate against the latest public transcript, not the old draft's
+      // context or a snapshot captured before those awaits.
+      const generationChat = game.get(chatKey) || [];
+      const generationNow = Date.now();
+      logEntry.publicContextFingerprint = publicContextFingerprint(generationChat);
       const built = buildGeneratorContext(
         game,
         players,
-        chat,
-        remainingTime,
-        timeElapsed,
+        generationChat,
+        Math.max(0, game.get("deadline") - generationNow),
+        generationNow - game.get("taskStartTime"),
         "static",
         null,
         null,
       );
+      built.userContent = buildStaticRetryUserContent(built.userContent,
+        staticInterventionScheduler.failureFeedback(game, logEntry));
       await runSharedGeneration(
         game,
         chatKey,
@@ -2374,7 +2383,7 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
         logEntry,
         originatingRoundId,
         originatingStageId,
-        chat,
+        generationChat,
       );
       // Static publication accounting is committed with the opportunity under
       // the short publication mutex, not after releasing that mutex.

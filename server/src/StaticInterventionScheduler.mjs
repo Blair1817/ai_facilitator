@@ -3,6 +3,7 @@ import { appendToAttribute } from "./AppendOnlyAttribute.mjs";
 import { CHECKPOINT_DEFAULTS, containsFacilitatorMention } from "./CheckpointManager.mjs";
 
 export const STATIC_OPPORTUNITY_KEY = "staticInterventionOpportunity";
+export const STATIC_REQUEST_RESUMPTION_KEY = "staticRequestResumption";
 export const STATIC_MAX_ATTEMPTS = 3;
 const terminal = state => !state || ["PUBLISHED", "CANCELLED"].includes(state.status);
 const human = m => m?.sender?.id !== "ai" && (m.stage ?? "Discussion") === "Discussion"
@@ -24,6 +25,7 @@ export function createStaticInterventionScheduler({ run, instanceId, flush = () 
   const read = e => e.round.get(STATIC_OPPORTUNITY_KEY);
   function save(e, state, reasonCode, extra = {}) {
     const next = { ...state, ...extra, reasonCode, updatedAt: now(), eventSequence: (state.eventSequence || 0) + 1 };
+    if (terminal(next)) next.failureFeedback = [];
     e.round.set(STATIC_OPPORTUNITY_KEY, next);
     appendToAttribute(e.round, "staticInterventionEvents", {
       id: `${next.opportunityId}:${next.eventSequence}`, sessionId: e.game.id, phaseId: e.stage.id,
@@ -38,17 +40,26 @@ export function createStaticInterventionScheduler({ run, instanceId, flush = () 
   }
   function cancel(game, reasonCode = "PHASE_ENDED") {
     const e = entries.get(game.id);
+    if (reasonCode === "PHASE_ENDED") {
+      const round = e?.round ?? game.currentRound;
+      if (round?.get(STATIC_REQUEST_RESUMPTION_KEY)) round.set(STATIC_REQUEST_RESUMPTION_KEY, null);
+    }
     if (!e) return;
     clearTimer(e.timer); e.timer = null;
     const state = read(e);
     if (!terminal(state)) save(e, state, reasonCode, { status: "CANCELLED", closedAtHumanCount: game.get("humanMessageCount") || 0 });
-    entries.delete(game.id);
+    // Opportunity cancellation must not erase a round-level request barrier.
+    // Keep its phase registration so a later phase/round change can clear it.
+    if (reasonCode === "PHASE_ENDED" || !e.round.get(STATIC_REQUEST_RESUMPTION_KEY)) entries.delete(game.id);
     Promise.resolve(flush()).catch(onError);
   }
   function register(game) {
     const old = entries.get(game.id), round = game.currentRound, stage = game.currentStage;
     if (old && (old.round.id !== round?.id || old.stage.id !== stage?.id)) cancel(game);
-    if (!round || !stage || round.get("facilitation") !== "static" || round.get("isPractice") || stage.get("name") !== "Task") return null;
+    if (!round || !stage || round.get("facilitation") !== "static" || round.get("isPractice") || stage.get("name") !== "Task") {
+      if (round?.get(STATIC_REQUEST_RESUMPTION_KEY)) round.set(STATIC_REQUEST_RESUMPTION_KEY, null);
+      return null;
+    }
     let e = entries.get(game.id);
     if (!e) { e = { game, round, stage, timer: null, busy: false }; entries.set(game.id, e); }
     if (!current(e)) { cancel(game); return null; }
@@ -61,35 +72,54 @@ export function createStaticInterventionScheduler({ run, instanceId, flush = () 
     if (committed && state.status !== "PUBLISHED") state = save(e, state, "PUBLISHED", {
       status: "PUBLISHED", publishedMessageId: committed.messageId,
     });
-    // A restart can occur after a requested reply was appended but before
-    // its suppression barrier was saved. Recover that barrier from public
-    // transcript order, never from a new timer opportunity.
-    if (!terminal(state)) {
-      const transcript = chat(game);
-      const replies = transcript.slice(state.createdPublicBoundary ?? transcript.length)
-        .filter(m => m.facilitatorTrigger === "PARTICIPANT_REQUEST" && m.sender?.id === "ai");
-      const latest = replies.at(-1);
-      if (latest && state.requestBarrier?.messageId !== latest.messageId) state = save(e, state, "REQUEST_SUPERSEDED", {
-        requestBarrier: { publicBoundary: transcript.indexOf(latest) + 1, messageId: latest.messageId },
-      });
-    }
+    // Recover even when the old opportunity is terminal or absent. The latest
+    // published reply, not a delayed callback for an older reply, owns the wait.
+    if (syncRequestResumption(e) && !terminal(state)) state = save(e, state, "REQUEST_SUPERSEDED");
+    discussionResumed(e); // Satisfaction is round-scoped, even before a new opportunity is eligible.
     if (!terminal(state) && state.ownerInstanceId && state.ownerInstanceId !== instanceId) {
       state = save(e, state, "RETRY_SCHEDULED", { status: "PENDING", ownerInstanceId: instanceId });
     }
     return e;
   }
-  function discussionResumed(game, barrier) {
-    if (!barrier) return true;
-    const messages = chat(game).slice(barrier.publicBoundary).filter(m => human(m)
+  function syncRequestResumption(e) {
+    let barrier = e.round.get(STATIC_REQUEST_RESUMPTION_KEY);
+    if (barrier && barrier.stageId !== e.stage.id) {
+      e.round.set(STATIC_REQUEST_RESUMPTION_KEY, null); barrier = null;
+    }
+    const transcript = chat(e.game);
+    const startedAt = e.round.get("TaskStartedAt") ?? e.game.get("taskStartTime");
+    const index = transcript.findLastIndex(m => m.facilitatorTrigger === "PARTICIPANT_REQUEST"
+      && m.sender?.id === "ai" && (m.stage ?? "Discussion") === "Discussion"
+      && !(Number.isFinite(startedAt) && Number.isFinite(m.timestamp ?? m.ts) && (m.timestamp ?? m.ts) < startedAt));
+    if (index < 0 || barrier?.messageId === transcript[index].messageId) return false;
+    e.round.set(STATIC_REQUEST_RESUMPTION_KEY, {
+      stageId: e.stage.id, publicBoundary: index + 1,
+      messageId: transcript[index].messageId, satisfied: false,
+    });
+    return true;
+  }
+  function discussionResumed(e) {
+    const barrier = e.round.get(STATIC_REQUEST_RESUMPTION_KEY);
+    if (!barrier || barrier.satisfied) return true;
+    const messages = chat(e.game).slice(barrier.publicBoundary).filter(m => human(m)
+      && typeof m.sender?.id === "string" && m.sender.id.length > 0
       && String(m.text ?? m.content ?? "").trim()
       && !containsFacilitatorMention(m.text ?? m.content));
-    return messages.length >= 2 && new Set(messages.map(m => m.sender?.id)).size >= 2;
+    if (new Set(messages.map(m => m.sender.id)).size < 2) return false;
+    // Retain the reply cursor after satisfaction so replay/recovery cannot
+    // reinstate an old wait. A newer published reply replaces it; phase end
+    // clears it. This record never contains an opportunity's failure feedback.
+    e.round.set(STATIC_REQUEST_RESUMPTION_KEY, { ...barrier, satisfied: true, satisfiedAt: now() });
+    return true;
+  }
+  function requestBlocksAutomatic(e) {
+    return hasRequestedResponse(e.game) || !discussionResumed(e);
   }
   function eligibility(e, state) {
     if (!current(e)) return "PHASE_ENDED";
     if (terminal(state)) return "DUPLICATE_SUPPRESSED";
     if (state.attemptCount >= STATIC_MAX_ATTEMPTS) return "RETRY_EXHAUSTED";
-    if (hasRequestedResponse(e.game) || !discussionResumed(e.game, state.requestBarrier)) return "REQUEST_SUPERSEDED";
+    if (requestBlocksAutomatic(e)) return "REQUEST_SUPERSEDED";
     if (state.waitingAfterHumanCount != null && (e.game.get("humanMessageCount") || 0) <= state.waitingAfterHumanCount) return "VALIDATION_REJECTED";
     if ((e.game.get("messagesSinceLastPublish") || 0) < CHECKPOINT_DEFAULTS.messagesBetweenInterventions) return "DUPLICATE_SUPPRESSED";
     if (e.game.get("deadline") - now() <= CHECKPOINT_DEFAULTS.minTimeForInterventionMs) return "TIME_FLOOR";
@@ -146,7 +176,7 @@ export function createStaticInterventionScheduler({ run, instanceId, flush = () 
         || (state && count <= (state.closedAtHumanCount ?? state.latestHumanMessageCount))) return state;
       state = save(e, { opportunityId: `static:${randomUUID()}`, trigger: "message", status: "PENDING",
         createdAt: now(), createdPublicBoundary: chat(game).length,
-        attemptCount: 0, latestHumanMessageCount: count, ownerInstanceId: instanceId }, "PENDING");
+        attemptCount: 0, latestHumanMessageCount: count, ownerInstanceId: instanceId, failureFeedback: [] }, "PENDING");
     } else if (state.latestHumanMessageCount !== count) {
       state = { ...state, latestHumanMessageCount: count };
       e.round.set(STATIC_OPPORTUNITY_KEY, state);
@@ -168,6 +198,7 @@ export function createStaticInterventionScheduler({ run, instanceId, flush = () 
   function started(game, entry) {
     const e = register(game), state = e && read(e);
     if (!e || terminal(state) || state.opportunityId !== entry.opportunityId || state.status !== "PENDING") return false;
+    if (requestBlocksAutomatic(e)) return false;
     save(e, state, "GENERATING", { status: "GENERATING", attemptCount: state.attemptCount + 1,
       attemptId: entry.attemptId, ownerInstanceId: instanceId, waitingAfterHumanCount: null,
       notBefore: now() + CHECKPOINT_DEFAULTS.cooldownMs });
@@ -181,7 +212,7 @@ export function createStaticInterventionScheduler({ run, instanceId, flush = () 
   function canCommit(game, entry) {
     const e = register(game), state = e && read(e);
     return !!e && !terminal(state) && state.opportunityId === entry.opportunityId && state.attemptId === entry.attemptId
-      && !hasRequestedResponse(game) && discussionResumed(game, state.requestBarrier);
+      && !requestBlocksAutomatic(e);
   }
   function published(game, entry) {
     const e = register(game), state = e && read(e);
@@ -189,10 +220,15 @@ export function createStaticInterventionScheduler({ run, instanceId, flush = () 
     if (state.status !== "PUBLISHED") save(e, state, "PUBLISHED", { status: "PUBLISHED", publishedMessageId: entry.publishedMessageId });
     clearTimer(e.timer); e.timer = null;
   }
-  function requestedPublished(game, messageId) {
+  function requestedPublished(game) {
+    // register synchronizes the latest canonical reply even if there is no
+    // pending opportunity. Requested replies themselves never use this gate.
+    register(game);
+  }
+  function failureFeedback(game, entry) {
     const e = register(game), state = e && read(e);
-    if (terminal(state) || state.requestBarrier?.messageId === messageId) return;
-    save(e, state, "REQUEST_SUPERSEDED", { requestBarrier: { publicBoundary: chat(game).length, messageId } });
+    return !terminal(state) && state.opportunityId === entry.opportunityId
+      ? structuredClone(state.failureFeedback || []) : [];
   }
   function complete(game, entry) {
     const e = register(game), state = e && read(e);
@@ -203,7 +239,16 @@ export function createStaticInterventionScheduler({ run, instanceId, flush = () 
     if (reason === "PHASE_ENDED" || state.attemptCount >= STATIC_MAX_ATTEMPTS) {
       save(e, state, reason === "PHASE_ENDED" ? reason : "RETRY_EXHAUSTED", { status: "CANCELLED", closedAtHumanCount: game.get("humanMessageCount") || 0 });
     } else {
+      // Keep real content failures (including a failure before a later API
+      // error), but never label an interrupted/cancelled draft as invalid.
+      // At most two Generator outputs per pipeline and three pipelines per
+      // opportunity; retaining six records therefore preserves the full budget.
+      const failures = ["PHASE_ENDED", "REQUEST_SUPERSEDED", "STALE_CONTEXT"].includes(reason)
+        ? [] : entry.staticContentFailures || [];
+      const history = new Map([...(state.failureFeedback || []), ...failures].map(failure =>
+        [`${failure.attemptId}:${failure.generationAttempt}:${failure.stage}`, failure]));
       save(e, state, "RETRY_SCHEDULED", { status: "PENDING", lastAttemptReason: reason,
+        failureFeedback: [...history.values()].slice(-STATIC_MAX_ATTEMPTS * 2),
         waitingAfterHumanCount: reason === "VALIDATION_REJECTED" ? game.get("humanMessageCount") || 0 : null });
     }
     wake(game);
@@ -219,5 +264,5 @@ export function createStaticInterventionScheduler({ run, instanceId, flush = () 
     const e = register(game);
     return e ? eligibility(e, read(e)) : "PHASE_ENDED";
   }
-  return { register, observe, ready, decorate, started, progress, canCommit, published, requestedPublished, complete, defer, wake, cancel, blockReason };
+  return { register, observe, ready, decorate, started, progress, canCommit, published, requestedPublished, failureFeedback, complete, defer, wake, cancel, blockReason };
 }

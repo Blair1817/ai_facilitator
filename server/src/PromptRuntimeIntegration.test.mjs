@@ -121,6 +121,29 @@ test("Static real callbacks bypass the Adaptive Assessor and use the 50-word con
   assert.match(r.requests[0].messages[0].content, /50 English words/);
   assert.doesNotMatch(r.requests[0].messages[0].content, /# specialist_common.md/);
 });
+test("Static real callbacks can publish grounded scoreboard-only messages without a closing question (mock LLM)", async () => {
+  // Real schema, grounding-ID and publication checks; semantic audits are mocked.
+  const messages = [
+    "City A transport is 12 minutes and cost is 25000. City B transport is 18 minutes and cost is 32000.",
+    { summary: "Here are the publicly shared figures.", sections: [
+      { title: "City A", body: "Transport: 12 minutes. Cost: 25000." },
+      { title: "City B", body: "Transport: 18 minutes. Cost: 32000." },
+    ], question: "" },
+  ];
+  for (const message of messages) {
+    const output = { role: "STATIC", message, groundingMessageIds: ["m1", "m2", "m3", "m4"] };
+    const r = await run(world("static"), { output });
+    assert.equal(r.requests.length, 2, "Generator + Validator, without repair or Assessor");
+    assert.equal(r.published.length, 1);
+    assert.match(r.requests[0].messages[0].content, /neutral scoreboard summary can stand alone without a question/);
+    assert.match(r.requests[1].messages[0].content, /summary need not\s+include a question or invitation to contribute/);
+    assert.doesNotMatch(r.published[0].content, /\?/);
+    for (const fact of ["12 minutes", "25000", "18 minutes", "32000"]) {
+      assert.ok(r.published[0].content.includes(fact));
+    }
+    if (typeof message === "object") assert.deepEqual(r.published[0].presentation, message);
+  }
+});
 test("Static Validator excludes timer reminders from participant-authored context", async () => {
   const w = world("static");
   const chat = w.game.get("chat_round_0");

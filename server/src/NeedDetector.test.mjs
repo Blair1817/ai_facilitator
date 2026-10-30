@@ -519,6 +519,10 @@ test("end-to-end: an @Facilitator reply is not an intervention and does not rese
   assert.equal(w.game.get("messagesSinceLastPublish"), 6, "the six-message gate is untouched");
 
   appendHuman(w, "Alex", "Thanks, that helps.");
+  const waiting = await runCheckpoint(w, null, () => STATIC_REPLY);
+  assert.deepEqual(waiting.calls, [], "One post-reply speaker cannot bypass the round-level recovery condition");
+  assert.equal(w.game.get("messagesSinceLastPublish"), 7, "Waiting preserves the already satisfied six-message gate");
+  appendHuman(w, "Casey", "I can add another public point.");
   const next = await runCheckpoint(w, null, () => STATIC_REPLY);
   assert.deepEqual(next.calls, ["static", "validator"]);
   assert.equal(published(w.game).at(-1).countsAsIntervention, true);
