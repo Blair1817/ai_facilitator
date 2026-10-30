@@ -1,6 +1,10 @@
 # Static intervention scheduling and publication
 
-Implemented on `fix/static-20261030`, based on `93ee969`.
+Implemented on `fix/static-20261030`, based on `93ee969` and integrated with
+the subsequent `main` repair `07c9b48`. Background dispatch, pipeline cancellation,
+batch human-message accounting, unique requested-reply IDs, and discussion
+deadline recovery from that repair are retained. Timer retries do not advance
+the human-message cursor or count already-dispatched messages again.
 
 ## Stage 1: opportunity and attempt lifecycle
 
@@ -151,3 +155,8 @@ expiry, validation/API budgets, restart recovery, commit-flush exceptions,
 canonical-message reconciliation, and fixed-message exclusions. Existing tests
 are retained; source-shape assertions were adapted to the new guards/finally
 blocks without dropping their assertions about behavior.
+
+After integration with `07c9b48`, all 875 server tests passed, including the
+94-test focused scheduling/dispatch/integration suite. Both server and client
+production builds and the twelve-file prompt startup check passed. These are
+offline validations, not a live-session replay or a deployment verification.

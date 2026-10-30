@@ -23,10 +23,16 @@ export class LLMRequestTimeoutError extends Error {
  * Promise race still enforces the deadline if a provider or test double
  * ignores AbortSignal.
  */
-export async function withLLMRequestTimeout(operation, timeoutMs = DEFAULT_LLM_REQUEST_TIMEOUT_MS) {
+export async function withLLMRequestTimeout(operation, timeoutMs = DEFAULT_LLM_REQUEST_TIMEOUT_MS, parentSignal) {
   const effectiveTimeoutMs = resolveLLMRequestTimeoutMs(timeoutMs);
   const controller = new AbortController();
   let timer;
+  let abortParent;
+  const cancelled = new Promise((_, reject) => {
+    abortParent = () => { controller.abort(); reject(new LLMRequestTimeoutError(0)); };
+    if (parentSignal?.aborted) abortParent();
+    else parentSignal?.addEventListener("abort", abortParent, { once: true });
+  });
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
       controller.abort();
@@ -34,9 +40,13 @@ export async function withLLMRequestTimeout(operation, timeoutMs = DEFAULT_LLM_R
     }, effectiveTimeoutMs);
   });
   try {
-    return await Promise.race([operation(controller.signal), timeout]);
+    return await Promise.race([Promise.resolve().then(() => {
+      if (controller.signal.aborted) throw new LLMRequestTimeoutError(0);
+      return operation(controller.signal);
+    }), timeout, cancelled]);
   } finally {
     clearTimeout(timer);
+    parentSignal?.removeEventListener("abort", abortParent);
   }
 }
 

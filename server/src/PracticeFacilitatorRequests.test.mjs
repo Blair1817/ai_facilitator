@@ -57,6 +57,7 @@ async function withFetch(fetchImpl, task) {
   try {
     return await task();
   } finally {
+    await (await getOfflineCallbacksHarness()).facilitatorTasks.drain();
     globalThis.fetch = prior;
   }
 }

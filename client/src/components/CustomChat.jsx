@@ -54,15 +54,12 @@ export function Chat({
 
 
 
-    const handleNewMessage = (text) => {
-        const requestId = globalThis.crypto?.randomUUID?.() ?? `${player.id}-${Date.now()}`;
-        player.set("humanMessageRequest", {
-            requestId,
-            roundId: round?.id ?? null,
-            stageId: stage.id,
-            content: text,
-        });
-        return requestId;
+    const handleNewMessage = (text, pending = null) => {
+        const requestId = pending?.requestId ?? globalThis.crypto?.randomUUID?.() ?? `${player.id}-${Date.now()}`;
+        const request = pending ?? { requestId, roundId: round?.id ?? null, stageId: stage.id, content: text };
+        player.set("humanMessageRequest", { ...request, attemptAt: Date.now() });
+        return request;
+
     };
 
     return (
@@ -76,7 +73,7 @@ export function Chat({
             {player.stage.get("newMessages") && <div className="text-center bg-red-500 text-white py-1 px-4 rounded shadow-lg">
                 <p>Scroll to bottom to see latest messages...</p>
             </div>}
-            <Input onNewMessage={handleNewMessage} requestResult={requestResult} disabled={disabled} />
+            <Input key={`${round?.id}:${stage.id}`} onNewMessage={handleNewMessage} requestResult={requestResult} disabled={disabled} />
         </div>
     );
 }
@@ -262,7 +259,15 @@ function Input({ onNewMessage, requestResult, disabled = false }) {
     const stage = useStage();
     const messageDraftKey = draftKey({ playerId: player.id, roundId: round?.id, form: "chat", field: "message" });
     const [text, setText] = usePersistentDraft(messageDraftKey, "");
-    const [pendingRequestId, setPendingRequestId] = useState(null);
+    const pendingKey = `${messageDraftKey}:pending:${stage.id}`;
+    const [pendingRequest, setPendingRequest] = usePersistentDraft(pendingKey, null);
+    const pendingRequestId = pendingRequest?.requestId;
+    const [deliveryUnconfirmed, setDeliveryUnconfirmed] = useState(false);
+    const [deliveryAttempt, setDeliveryAttempt] = useState(0);
+    const pendingRef = useRef(null);
+    pendingRef.current = pendingRequest;
+    const textRef = useRef(text);
+    textRef.current = text;
     const [requestError, setRequestError] = useState("");
     const typingTimerRef = useRef(null);
     const playerRef = useRef(player);
@@ -304,13 +309,27 @@ function Input({ onNewMessage, requestResult, disabled = false }) {
     useEffect(() => {
         if (!pendingRequestId || requestResult?.requestId !== pendingRequestId) return;
         if (requestResult.status === "accepted") {
-            setText("");
+            if (textRef.current.trim() === pendingRef.current?.content) setText("");
             setRequestError("");
         } else {
             setRequestError("Your message was not sent because this chat stage is no longer accepting messages.");
         }
-        setPendingRequestId(null);
-    }, [pendingRequestId, requestResult]);
+        setPendingRequest(null);
+        setDeliveryUnconfirmed(false);
+    }, [pendingRequestId, requestResult, setPendingRequest, setText]);
+
+    useEffect(() => {
+        if (!pendingRequestId) return undefined;
+        setDeliveryUnconfirmed(false);
+        const timer = setTimeout(() => setDeliveryUnconfirmed(true), 10_000);
+        return () => clearTimeout(timer);
+    }, [pendingRequestId, deliveryAttempt]);
+
+    const retryPending = () => {
+        if (!pendingRef.current || disabled) return;
+        onNewMessage(pendingRef.current.content, pendingRef.current);
+        setDeliveryAttempt(attempt => attempt + 1);
+    };
 
     const mentionUsers = buildChatMentionUsers(usePlayers(), player.id, {
         isPractice: round?.get("isPractice"),
@@ -342,9 +361,11 @@ function Input({ onNewMessage, requestResult, disabled = false }) {
             return;
         }
 
-        if (pendingRequestId) return;
+        if (pendingRef.current) return;
         setRequestError("");
-        setPendingRequestId(onNewMessage(txt));
+        const request = onNewMessage(txt);
+        pendingRef.current = request;
+        setPendingRequest(request);
         stopTyping();
     };
 
@@ -410,6 +431,11 @@ function Input({ onNewMessage, requestResult, disabled = false }) {
                         markup={CHAT_MENTION_MARKUP}
                     />
                 </MentionsInput>
+                {pendingRequestId && <p className="text-sm text-gray-600" role="status">
+                    {deliveryUnconfirmed ? "Sending has not been confirmed. Your draft is saved." : "Sending…"}
+                </p>}
+                {pendingRequestId && deliveryUnconfirmed && <button type="button" disabled={disabled}
+                    className="rounded border px-3 py-1 text-sm" onClick={retryPending}>Retry sending</button>}
                 {requestError && <p className="text-sm text-red-600" role="alert">{requestError}</p>}
             </div>
 

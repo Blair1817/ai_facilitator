@@ -441,8 +441,6 @@ function appendHuman(w, name, text) {
   chat.push(buildCanonicalMessage({ messageId: `extra-${appended++}`, groupId: w.game.id, participantId: player.id, roundIndex: 0,
     stage: "Discussion", messageType: "human", speakerType: "human", timestamp: Date.now(), sequencePosition: 1000 + appended,
     content: text, sender: { id: player.id, name } }));
-  w.game.set("humanMessageCount", (w.game.get("humanMessageCount") || 0) + 1);
-  w.game.set("messagesSinceLastPublish", (w.game.get("messagesSinceLastPublish") || 0) + 1);
 }
 // Jordan speaks once, then Alex and Casey post twelve messages.
 const SILENT_JORDAN = [msg("Jordan", "I have a couple of notes."),
@@ -521,8 +519,6 @@ test("end-to-end: an @Facilitator reply is not an intervention and does not rese
   assert.equal(w.game.get("messagesSinceLastPublish"), 6, "the six-message gate is untouched");
 
   appendHuman(w, "Alex", "Thanks, that helps.");
-  w.game.set("messagesSinceLastPublish", w.game.get("messagesSinceLastPublish") - 1); // runCheckpoint re-counts the last message
-  w.game.set("humanMessageCount", w.game.get("humanMessageCount") - 1);
   const next = await runCheckpoint(w, null, () => STATIC_REPLY);
   assert.deepEqual(next.calls, ["static", "validator"]);
   assert.equal(published(w.game).at(-1).countsAsIntervention, true);

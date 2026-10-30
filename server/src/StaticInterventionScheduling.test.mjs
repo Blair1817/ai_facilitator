@@ -306,11 +306,55 @@ test("the ready listener recovers interrupted work and retries without a partici
       eventSequence: f.state().eventSequence });
     f.game.set("llmInFlight", { interrupted: { auditRequestId: "interrupted", serverInstanceId: "dead-process", outcome: "PENDING" } });
     for (const listener of f.h.Empirica.readys) await listener.callback({ scopesByKind: () => new Map([[f.game.id, f.game]]) });
+    await f.h.facilitatorTasks.drain();
     assert.ok(f.logs().some(e => e.outcome === "INTERRUPTED_CALLBACKS_RESTART"));
     assert.equal(f.state().status, "PENDING"); await f.advance(30_000);
     assert.equal(f.messages().length, 1); assert.equal(f.state().opportunityId, stored.opportunityId);
     assert.equal(f.state().attemptCount, 2); assert.equal(f.game.get("humanMessageCount"), 6);
   } finally { await f.close(); }
+});
+
+test("background dispatch coalesces new humans and a silent Static retry preserves the message cursor", async () => {
+  const held = gate(); let started = false;
+  const f = await fixture({ hook: async call => {
+    if (call.kind === "generator" && !started) { started = true; await held.promise; }
+  } });
+  try {
+    f.h.dispatchChat(undefined, { game: f.game }); await until(() => started);
+    for (let i = 0; i < 3; i++) f.add(`Batched public fact ${i}.`);
+    f.h.dispatchChat(undefined, { game: f.game });
+    await until(() => f.game.get("humanMessageCount") === 9);
+    held.release(); await f.h.facilitatorTasks.drain();
+    assert.equal(f.messages().length, 0); assert.equal(f.state().status, "PENDING");
+    const cursor = { ...f.game.get("humanMessageCursor") };
+    await f.advance(30_000);
+    assert.equal(f.messages().length, 1); assert.equal(f.state().attemptCount, 2);
+    assert.equal(f.game.get("humanMessageCount"), 9);
+    assert.deepEqual(f.game.get("humanMessageCursor"), cursor);
+    f.h.dispatchChat(undefined, { game: f.game }); await f.h.facilitatorTasks.drain();
+    assert.equal(f.messages().length, 1); assert.equal(f.calls.length, 3);
+  } finally { held.release(); await f.h.facilitatorTasks.drain(); await f.close(); }
+});
+
+test("a request followed by an ordinary message in one dispatched batch still supersedes Static", async () => {
+  const automaticGate = gate(), requestedGate = gate(); let automaticStarted = false, requestedStarted = false;
+  const f = await fixture({ hook: async call => {
+    if (call.kind !== "generator") return;
+    if (call.requested) { requestedStarted = true; await requestedGate.promise; }
+    else if (!automaticStarted) { automaticStarted = true; await automaticGate.promise; }
+  } });
+  try {
+    f.h.dispatchChat(undefined, { game: f.game }); await until(() => automaticStarted);
+    f.add("@[Facilitator] What information can we compare?", f.players[0]);
+    f.add("Here is another public fact.", f.players[1]);
+    f.h.dispatchChat(undefined, { game: f.game }); await until(() => requestedStarted);
+    automaticGate.release(); await settle(); assert.equal(f.messages().length, 0);
+    requestedGate.release(); await f.h.facilitatorTasks.drain();
+    assert.equal(f.messages().length, 1); assert.equal(f.messages()[0].facilitatorTrigger, "PARTICIPANT_REQUEST");
+    assert.equal(f.game.get("humanMessageCount"), 8); assert.equal(f.state().status, "PENDING");
+    await f.advance(31_000); assert.equal(f.messages().length, 1);
+    assert.equal(f.calls.filter(c => c.kind === "validator").length, 1);
+  } finally { automaticGate.release(); requestedGate.release(); await f.h.facilitatorTasks.drain(); await f.close(); }
 });
 
 test("phase changes at the final publication boundary cancel without committing a candidate", async () => {

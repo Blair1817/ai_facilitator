@@ -220,8 +220,8 @@ test("the active Practice transcript is isolated from both formal round transcri
     assert.doesNotMatch(source, /practice_icebreaker_chat|PRACTICE_ICEBREAKER_TRANSCRIPT_KEY|PracticeIcebreaker|handleIcebreakerChat/);
   }
   for (const source of [game, policies, callbacks]) assert.doesNotMatch(source, /intro_round_[01]|`intro_round_/);
-  assert.match(callbacks, /Empirica\.on\("game", "chat_round_0", handleChat\)/);
-  assert.match(callbacks, /Empirica\.on\("game", "chat_round_1", handleChat\)/);
+  assert.match(callbacks, /Empirica\.on\("game", "chat_round_0", dispatchChat\)/);
+  assert.match(callbacks, /Empirica\.on\("game", "chat_round_1", dispatchChat\)/);
 });
 
 test("TLX and SubjectiveSurvey use the same incomplete-survey warning", () => {
@@ -415,8 +415,7 @@ test("Discussion uses native unanimous readiness and an idempotent deadline-only
   assert.match(discussion, /requestAdvance\("deadline_reached"\)/);
   assert.match(callbacks, /Empirica\.on\("player", "discussionAdvanceRequest"/);
   assert.match(callbacks, /discussionAdvanceRequest\.reason !== "deadline_reached"/);
-  assert.match(callbacks, /discussionAdvanceCommittedStageId/);
-  assert.match(callbacks, /Date\.now\(\) >= deadline/);
+  assert.match(callbacks, /discussionDeadline\.recover\(game, round.id, stage.id\)/);
   assert.match(callbacks, /stage\.set\("ended", true\)/);
 });
 

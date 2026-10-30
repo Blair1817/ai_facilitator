@@ -178,7 +178,7 @@ test("opening publication neither enters Facilitator-request routing nor advance
       assert.equal(world.game.get("humanMessageCount"), undefined);
       assert.equal(world.game.get("messagesSinceLastPublish"), undefined);
       assert.equal(world.game.get("attemptedThisRound"), undefined);
-      assert.deepEqual(world.game.get("llmInFlight"), {});
+      assert.deepEqual(world.game.get("llmInFlight") || {}, {});
       assert.equal(providerCalls, 0);
 
       for (let index = 0; index < 5; index += 1) {

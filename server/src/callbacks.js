@@ -1,3 +1,6 @@
+import { withPipelineLifetime, pipelineOptions, cancelStagePipelines, delayWithinPipeline } from "./PipelineLifetime.mjs";
+import { createBackgroundTasks } from "./BackgroundTasks.mjs";
+import { createDiscussionDeadline } from "./DiscussionDeadline.mjs";
 import { createAdaptiveBudget, ADAPTIVE_FLOOR_MS, runAdaptiveSelection } from "./AdaptiveRecovery.mjs";
 import { selectAdaptiveAssessment, redrawAdaptiveSelection } from "./AdaptiveEvidence.mjs";
 import { createCloseoutScheduler } from "./AdaptiveCloseoutScheduler.mjs";
@@ -109,30 +112,31 @@ function queueResearchMirror(operation, task) {
 
 async function finalizeAuditLog(store, entry) {
   const round = store.currentRound;
-  const formalRoundIndex = round?.get("taskIndex");
-  const chat = round ? [...(store.get(`chat_round_${formalRoundIndex}`) || [])] : [];
+  const originRoundId = entry.originatingRoundId ?? entry.roundId;
+  const auditRound = !originRoundId || round?.id === originRoundId ? round
+    : store.rounds?.find(candidate => candidate.id === originRoundId);
+  const formalRoundIndex = auditRound?.get("taskIndex") ?? entry.roundIndex;
+  const chat = Number.isInteger(formalRoundIndex) ? [...(store.get(`chat_round_${formalRoundIndex}`) || [])] : [];
   const completed = await finalizeAuditLogBase(store, entry, () => Empirica.flush());
   staticInterventionScheduler.wake(store);
-  if (!round) return;
+  if (!auditRound) return;
   queueResearchMirror("intervention", async () => {
     const persistence = researchPersistence();
     for (const message of chat) {
       await persistence.upsertMessage(buildMessageRow({
-        gameId: store.id, roundId: round.id,
+        gameId: store.id, roundId: auditRound.id,
         transcriptKey: `chat_round_${formalRoundIndex}`, message,
       }));
     }
     await persistence.mirrorIntervention(buildInterventionMirror({
-      gameId: store.id, roundId: round.id, facilitation: round.get("facilitation"), chat, entry: completed,
+      gameId: store.id, roundId: auditRound.id, facilitation: auditRound.get("facilitation"), chat, entry: completed,
     }));
   });
 }
 
 function canPublishFacilitatorResult(game, origin) {
   if (origin?.phase !== "practice") return canPublishTestResult(game, origin)
-    && !(origin.facilitation === "static" && !origin.participantRequested
-      && (!Number.isFinite(game.get("deadline")) || Date.now() >= game.get("deadline") || game.currentRound?.get("ended")))
-    && !(origin.facilitation === "adaptive" && !origin.participantRequested
+    && !(!origin.participantRequested
       && (!Number.isFinite(game.get("deadline")) || Date.now() >= game.get("deadline") || game.currentRound?.get("ended")));
   const stage = game.currentStage;
   return game.currentRound?.id === origin.originatingRoundId
@@ -235,7 +239,7 @@ const AUTOMATIC_PIPELINE_GROUP = "AUTOMATIC_INTERVENTION";
 const facilitatorPublication = createFacilitatorPublicationCoordinator();
 function recordStaticPublication(game, message) {
   if ((game.get("interventionHistory") || []).some(item => item.messageId === message.messageId)) return;
-  recordPublish(game, { role: "STATIC", messageId: message.messageId, now: message.timestamp });
+  recordPublish(game, { role: "STATIC", humanMessageCountAtPublish: game.get("humanMessageCount") || 0, messageId: message.messageId, now: message.timestamp });
   // A committed transcript entry is authoritative after a restart between
   // append and bookkeeping. Restore counters without counting it twice.
   const transcript = game.get(`chat_round_${game.currentRound?.get("taskIndex")}`) || [];
@@ -255,18 +259,62 @@ export const staticInterventionScheduler = createStaticInterventionScheduler({
   flush: () => Empirica.flush(),
   onError: error => console.warn("Static scheduling callback failed", { message: error.message }),
 });
+export const discussionDeadline = createDiscussionDeadline({ flush: () => Empirica.flush(), onEnd: stage => cancelStagePipelines(stage.id) });
+export const facilitatorTasks = createBackgroundTasks({ onError: (error, key) => {
+  console.warn("Facilitator background task failed", { key, message: error?.message || String(error) });
+} });
+export function dispatchChat(env, props) {
+  const game = props.game;
+  const round = game.currentRound;
+  const humans = (game.get(`chat_round_${round?.get("taskIndex")}`) || []).filter(isFormalHumanMessage);
+  const last = humans.at(-1);
+  const cursor = game.get("humanMessageCursor");
+  const previousId = cursor?.roundId === round?.id ? cursor.messageId : game.get("lastProcessedHumanMessageId");
+  const index = previousId ? humans.findIndex(m => m.messageId === previousId) : -1;
+  const baseline = index >= 0 ? index + 1 : Math.min(game.get("humanMessageCount") || 0, humans.length);
+  const requests = humans.slice(baseline).filter(m => containsFacilitatorMention(m.text ?? m.content));
+  // A coalesced transcript may contain several explicit requests. Each gets
+  // its own identity; the first call counts all new humans synchronously.
+  if (requests.length) {
+    for (const requestedMessage of requests) facilitatorTasks.launch(
+      `${game.id}:${round?.id}:request:${requestedMessage.messageId}`,
+      () => handleChat(env, { ...props, requestedMessage }));
+  } else {
+    const key = `${game.id}:${round?.id}:${last?.messageId ?? "empty"}`;
+    facilitatorTasks.launch(key, () => handleChat(env, props));
+  }
+}
+
 export const adaptiveCloseoutScheduler = createCloseoutScheduler({
   run: (game, adaptiveTrigger) => handleChat(undefined, { game, adaptiveTrigger }),
   flush: () => Empirica.flush(),
   onError: error => console.warn("Adaptive closeout callback failed", { message: error.message }),
 });
-Empirica.on("game", "deadline", (_ctx, { game }) => adaptiveCloseoutScheduler.register(game));
-Empirica.on("game", "deadline", (_ctx, { game }) => staticInterventionScheduler.wake(game));
-Empirica.on("ready", async ctx => {
-  for (const game of ctx.scopesByKind("game").values()) {
+Empirica.on("game", "deadline", (_ctx, { game }) => {
+  discussionDeadline.register(game);
+  adaptiveCloseoutScheduler.register(game);
+  staticInterventionScheduler.wake(game);
+});
+// Kind listeners replay loaded scopes, unlike onStageStart which may already
+// have a persisted ran flag after a callbacks restart.
+const loadedGames = new Map();
+function restoreGameRuntime(game) {
+  if (game.get("ended") || game.get("endedAt")) { loadedGames.delete(game.id); return; }
+  loadedGames.set(game.id, game);
+  discussionDeadline.register(game);
+  adaptiveCloseoutScheduler.register(game);
+  facilitatorTasks.launch(`${game.id}:restore`, async () => {
     await recoverInterruptedInFlight(game, CALLBACKS_INSTANCE_ID, Date.now(), () => Empirica.flush());
     staticInterventionScheduler.wake(game);
-  }
+  });
+}
+Empirica.on("game", (_ctx, { game }) => restoreGameRuntime(game));
+Empirica.on("stage", (_ctx, { stage }) => {
+  if (stage.currentGame) restoreGameRuntime(stage.currentGame);
+});
+Empirica.on("ready", ctx => {
+  for (const game of ctx?.scopesByKind?.("game")?.values() || []) loadedGames.set(game.id, game);
+  for (const game of loadedGames.values()) restoreGameRuntime(game);
 });
 
 function publicContextEntries(chat) {
@@ -321,6 +369,7 @@ function staticCandidateStillCurrent(game, logEntry) {
 // ── LLM API call ──────────────────────────────────────────────────────────────
 
 async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens, options = {}) {
+  options = pipelineOptions(options);
   const data = buildChatCompletionPayload({
     model: openaiModel,
     maxTokens,
@@ -378,7 +427,7 @@ async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens, o
       // rejecting that here would bypass the Generator/Assessor/Validator
       // parsers that explicitly and safely support the envelope.
       return buildSuccessfulLLMResult(text, responseMetadata);
-    }, Math.min(options.timeoutMs ?? Infinity, resolveLLMRequestTimeoutMs(process.env.LLM_REQUEST_TIMEOUT_MS)));
+    }, Math.min(options.timeoutMs ?? Infinity, resolveLLMRequestTimeoutMs(process.env.LLM_REQUEST_TIMEOUT_MS)), options.signal);
   } catch (error) {
     console.error("LLM endpoint error:", { code: error?.code || "LLM_REQUEST_ERROR", message: error?.message || String(error) });
     return { success: false, error: error.message };
@@ -1199,6 +1248,8 @@ Empirica.onRoundStart(({ round }) => {
   // lastHandledCheckpoint, interventionHistory, postInterventionUptake,
   // unresolvedNeed, lastCheckedFactors). See CheckpointManager.emptyCheckpointState.
   resetRoundState(game);
+  game.set("humanMessageCursor", null);
+  game.set("lastProcessedHumanMessageId", null);
 
   // Set task content for this round
   // MIGRATED from old 2nd (TEMP-BE-006 there): round-scoped, not game-level.
@@ -1458,6 +1509,7 @@ function armSilenceWatchdog(stage, chatKey) {
     // again) is allowed to post another nudge later in the same round.
     appendFacilitatorNudge(stage, chatKey, content, null, "SILENCE_NUDGE");
   }, SILENCE_NUDGE_DELAY_MS);
+  handle.unref?.();
   silenceWatchdogTimers.set(timerKey, handle);
 }
 
@@ -1476,7 +1528,7 @@ export function handleFormalStageStart(stage) {
   const game = stage.currentGame;
   const stageName = stage.get("name");
   if (stage.round.get("isPractice") && stageName !== "FinalDecision") return;
-  if (stage.get("formalStageStartHandled")) { adaptiveCloseoutScheduler.register(game); staticInterventionScheduler.wake(game); return; }
+  if (stage.get("formalStageStartHandled")) { discussionDeadline.register(game); adaptiveCloseoutScheduler.register(game); staticInterventionScheduler.wake(game); return; }
   stage.set("formalStageStartHandled", true);
   stage.set("callbacksInitializedAt", Date.now());
   stage.set("callbacksInstanceId", CALLBACKS_INSTANCE_ID);
@@ -1494,6 +1546,7 @@ export function handleFormalStageStart(stage) {
     }
     game.set("taskStartTime", now);
     game.set("deadline",      now + gameDuration * 60 * 1000);
+    discussionDeadline.register(game);
     adaptiveCloseoutScheduler.register(game);
     const chatKey = `chat_round_${stage.round.get("taskIndex")}`;
     const durationMs = gameDuration * 60 * 1000;
@@ -1569,16 +1622,7 @@ Empirica.on("player", "discussionAdvanceRequest", (_ctx, { player, discussionAdv
   // transition and can produce "from state mismatch" warnings. This recovery
   // listener is therefore reserved for a missed deadline transition only.
   if (discussionAdvanceRequest.reason !== "deadline_reached") return;
-  if (game.get("discussionAdvanceCommittedStageId") === stage.id) return;
-  const deadline = game.get("deadline");
-  const deadlineReached = Number.isFinite(deadline) && Date.now() >= deadline;
-  if (!deadlineReached) return;
-
-  // Claim the recovery before writing `ended`, making repeated client timer
-  // requests idempotent within the single callbacks process.
-  game.set("discussionAdvanceCommittedStageId", stage.id);
-  stage.set("ended", true);
-  Empirica.flush();
+  discussionDeadline.recover(game, round.id, stage.id);
 });
 
 Empirica.on("player", "finalDecisionSubmitRequest", (_ctx, { player, finalDecisionSubmitRequest: request }) => {
@@ -1676,26 +1720,17 @@ Empirica.on("player", "humanMessageRequest", async (_ctx, { player, humanMessage
   const game = player.currentGame;
   const round = game?.currentRound;
   const stage = game?.currentStage;
-  if (!game || !round || !stage) return;
+  if (!game || !round || !stage) {
+    player.set("humanMessageRequestResult", { requestId: request?.requestId, status: "rejected", reason: "no_active_stage" });
+    await Empirica.flush();
+    return;
+  }
   if (round.get("isPractice")) {
     const practiceResult = handlePracticeMessage(player, request, appendCanonicalMessage, Empirica);
     Empirica.flush();
     if (practiceResult?.status === "accepted" && containsFacilitatorMention(practiceResult.content)) {
-      try {
-        await handlePracticeFacilitatorRequest(game, {
-          ...practiceResult,
-          participantId: player.id,
-        });
-      } catch (error) {
-        recordOperationalEvent(game, {
-          type: "PRACTICE_FACILITATOR_REQUEST_FAILED",
-          roundId: round.id,
-          stageId: stage.id,
-          messageId: practiceResult.messageId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        Empirica.flush();
-      }
+      facilitatorTasks.launch(`${game.id}:practice:${practiceResult.messageId}`, () =>
+        withPipelineLifetime(game, () => handlePracticeFacilitatorRequest(game, { ...practiceResult, participantId: player.id })));
     }
     return;
   }
@@ -1703,6 +1738,17 @@ Empirica.on("player", "humanMessageRequest", async (_ctx, { player, humanMessage
   const processed = { ...(game.get("processedHumanMessageRequests") || {}) };
   if (processed[dedupeKey]) {
     player.set("humanMessageRequestResult", processed[dedupeKey]);
+    await Empirica.flush();
+    return;
+  }
+  const existing = (game.get(`chat_round_${request?.roundId === round.id ? round.get("taskIndex") : -1}`) || [])
+    .find(m => m.messageId === `${player.id}-${request?.requestId}` && m.participantId === player.id);
+  if (existing) {
+    const result = { requestId: request.requestId, status: "accepted", reason: "accepted" };
+    processed[dedupeKey] = result;
+    game.set("processedHumanMessageRequests", processed);
+    player.set("humanMessageRequestResult", result);
+    await Empirica.flush();
     return;
   }
   const now = Date.now();
@@ -1739,6 +1785,7 @@ Empirica.on("player", "humanMessageRequest", async (_ctx, { player, humanMessage
   processed[dedupeKey] = result;
   game.set("processedHumanMessageRequests", processed);
   player.set("humanMessageRequestResult", result);
+  await Empirica.flush();
 });
 
 // ── on("game", "chat_round_N") ────────────────────────────────────────────────
@@ -1759,9 +1806,10 @@ async function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole
   }
   return whileFacilitatorPublishesVisibleResponse(game, logEntry, () => {
     const publishedAt = Date.now();
+    logEntry.publishedHumanMessageCount = game.get("humanMessageCount") || 0;
     const practice = logEntry.phase === "practice";
     const publishedMessage = appendCanonicalMessage(game, chatKey, {
-      messageId: logEntry.opportunityId ? `facilitator-${logEntry.opportunityId}` : `facilitator-${game.currentRound?.id}-${publishedAt}`,
+      messageId: logEntry.opportunityId ? `facilitator-${logEntry.opportunityId}` : `facilitator-${game.currentRound?.id}-${publishedAt}-${randomUUID()}`,
       groupId: game.id,
       speakerId: "ai",
       roundIndex: practice ? game.currentRound?.get("index") : game.currentRound?.get("taskIndex"),
@@ -1801,7 +1849,7 @@ async function postParticipantRequestFallback(game, chatKey, logEntry) {
     const publishedAt = Date.now();
     const practice = logEntry.phase === "practice";
     const publishedMessage = appendCanonicalMessage(game, chatKey, {
-      messageId: `facilitator-fallback-${game.currentRound?.id}-${publishedAt}`,
+      messageId: `facilitator-fallback-${game.currentRound?.id}-${publishedAt}-${randomUUID()}`,
       groupId: game.id,
       speakerId: "ai",
       roundIndex: practice ? game.currentRound?.get("index") : game.currentRound?.get("taskIndex"),
@@ -1939,14 +1987,12 @@ async function handlePracticeFacilitatorRequest(game, requestMessage) {
   }
 }
 
-async function handleChat(env, { game, adaptiveTrigger = null, staticRetry = null }) {
+export async function handleChat(env, props) {
+  return withPipelineLifetime(props.game, () => processChat(env, props));
+}
+async function processChat(env, { game, adaptiveTrigger = null, staticRetry = null, requestedMessage = null }) {
   if (game.currentRound?.get("isPractice")) return;
-  await recoverInterruptedInFlight(
-    game,
-    CALLBACKS_INSTANCE_ID,
-    Date.now(),
-    () => Empirica.flush(),
-  );
+
   const previousCallbacksInstanceId = game.get("activeCallbacksInstanceId");
   if (previousCallbacksInstanceId && previousCallbacksInstanceId !== CALLBACKS_INSTANCE_ID) {
     recordOperationalEvent(game, {
@@ -1981,8 +2027,13 @@ async function handleChat(env, { game, adaptiveTrigger = null, staticRetry = nul
   const chat = game.get(chatKey) || [];
   if (!chat.length && !adaptiveTrigger && !staticRetry) return;
 
-  const lastMessage = chat[chat.length - 1];
+  const humans = chat.filter(isFormalHumanMessage);
+  const lastMessage = humans.at(-1);
   if (!adaptiveTrigger && !staticRetry && !isFormalHumanMessage(lastMessage)) return;
+  // Non-human append events cannot consume a checkpoint. A real new human
+  // tail or a replay of its transcript is handled idempotently below.
+  if (!adaptiveTrigger && !staticRetry && !requestedMessage && !isFormalHumanMessage(chat.at(-1))
+    && (game.get("humanMessageCount") || 0) >= humans.length) return;
 
   const currentStageName = game.currentStage?.get("name");
   if (currentStageName !== "Task") return;
@@ -1999,8 +2050,22 @@ async function handleChat(env, { game, adaptiveTrigger = null, staticRetry = nul
   // canonical final human message synchronously after the stage/timing guards
   // so a duplicate callback cannot increment pacing counters or start a
   // second pipeline, while a transiently incomplete stage can still retry.
-  if (!adaptiveTrigger && !staticRetry && typeof lastMessage.messageId === "string" && lastMessage.messageId.length > 0) {
-    if (game.get("lastProcessedHumanMessageId") === lastMessage.messageId) return;
+  let newHumanCount = 0;
+  if (requestedMessage) {
+    const handled = currentRound.get("handledFacilitatorRequests") || [];
+    if (handled.includes(requestedMessage.messageId)) return;
+    if (!humans.some(m => m.messageId === requestedMessage.messageId)) return;
+    currentRound.set("handledFacilitatorRequests", [...handled, requestedMessage.messageId]);
+  }
+  if (!adaptiveTrigger && !staticRetry) {
+    const cursor = game.get("humanMessageCursor");
+    const previousId = cursor?.roundId === currentRound.id ? cursor.messageId : game.get("lastProcessedHumanMessageId");
+    if (previousId === lastMessage.messageId && previousId && !requestedMessage) return;
+    const previousIndex = previousId ? humans.findIndex(m => m.messageId === previousId) : -1;
+    const baseline = previousId === lastMessage.messageId ? humans.length : previousIndex >= 0 ? previousIndex + 1
+      : Math.min(game.get("humanMessageCount") || 0, Math.max(0, humans.length - 1));
+    newHumanCount = humans.length - baseline;
+    game.set("humanMessageCursor", { roundId: currentRound.id, messageId: lastMessage.messageId });
     game.set("lastProcessedHumanMessageId", lastMessage.messageId);
   }
   const originatingRoundId = currentRound.id;
@@ -2008,7 +2073,7 @@ async function handleChat(env, { game, adaptiveTrigger = null, staticRetry = nul
 
   // ── Count the new human message (AI messages do not count, and
   // we already early-returned above if the last message is from AI). ──
-  const humanMessageCount = (game.get("humanMessageCount") || 0) + (adaptiveTrigger || staticRetry ? 0 : 1);
+  const humanMessageCount = (game.get("humanMessageCount") || 0) + newHumanCount;
   game.set("humanMessageCount", humanMessageCount);
 
   // A real human message breaks any silence -- rearm the watchdog so a
@@ -2020,7 +2085,7 @@ async function handleChat(env, { game, adaptiveTrigger = null, staticRetry = nul
   // messagesSinceLastPublish; the legacy messagesSinceLastIntervention
   // field is kept as a derived/legacy alias so existing logs / tests
   // that reference it don't break). ──
-  const messagesSinceLastPublish = (game.get("messagesSinceLastPublish") ?? 0) + (adaptiveTrigger || staticRetry ? 0 : 1);
+  const messagesSinceLastPublish = (game.get("messagesSinceLastPublish") ?? 0) + newHumanCount;
   game.set("messagesSinceLastPublish", messagesSinceLastPublish);
   // Legacy alias (was reset to 0 on every attempt in the v1 code; now
   // it tracks the same counter as messagesSinceLastPublish, so old
@@ -2048,7 +2113,7 @@ async function handleChat(env, { game, adaptiveTrigger = null, staticRetry = nul
   // Facilitator after a Facilitator reply still triggers a fresh
   // checkpoint. ──
   const latestHumanMessages = getHumanMessages(chat);
-  const latestHumanText = latestHumanMessages.length > 0
+  const latestHumanText = requestedMessage ? (requestedMessage.text ?? requestedMessage.content ?? "") : latestHumanMessages.length > 0
     ? latestHumanMessages[latestHumanMessages.length - 1].text
     : "";
   const isMentionCheckpoint = !adaptiveTrigger && !staticRetry && containsFacilitatorMention(latestHumanText);
@@ -2070,6 +2135,9 @@ async function handleChat(env, { game, adaptiveTrigger = null, staticRetry = nul
     const blocked = staticInterventionScheduler.blockReason(game);
     if (blocked && blocked !== "LOCK_BUSY") trigger = { trigger: false, reason: blocked };
   }
+  // Explicit IDs, claimed above, replace the count-based dedup when two
+  // requests share one batch-delivered human-count boundary.
+  if (requestedMessage && isMentionCheckpoint) trigger = { trigger: true, reason: "participant_request" };
   let triggerSource = "message";
   if (facilitation === "adaptive" && !isMentionCheckpoint) {
     adaptiveCloseoutScheduler.register(game);
@@ -2089,7 +2157,7 @@ async function handleChat(env, { game, adaptiveTrigger = null, staticRetry = nul
   // non-trigger outcomes (opportunity/cooldown/time-floor/dedup). Keep the
   // same id for a later beginInFlight/finalize lifecycle when the checkpoint
   // does trigger.
-  const auditRequestId = `${game.id}:${roundIndex}:${humanMessageCount}:${now}${adaptiveTrigger || staticRetry ? `:${randomUUID()}` : ""}`;
+  const auditRequestId = `${game.id}:${roundIndex}:${humanMessageCount}:${now}${adaptiveTrigger || staticRetry || requestedMessage ? `:${randomUUID()}` : ""}`;
   let logEntry = {
     stageId: originatingStageId, roundId: currentRound.id,
     auditRequestId,
@@ -2132,6 +2200,8 @@ async function handleChat(env, { game, adaptiveTrigger = null, staticRetry = nul
   // single canonical shape; downstream readers do not need to chase
   // individual game.get calls.
   logEntry.agentState = buildAgentState(game, currentRound, chat, { now });
+
+  await recoverInterruptedInFlight(game, CALLBACKS_INSTANCE_ID, Date.now(), () => Empirica.flush());
 
   if (!trigger.trigger) {
     if (staticAutomatic) {
@@ -2275,7 +2345,7 @@ async function handleChat(env, { game, adaptiveTrigger = null, staticRetry = nul
       const matchedDelayMs = staticMatchedDelayMs();
       if (matchedDelayMs > 0) {
         logEntry.staticMatchedDelayMs = matchedDelayMs;
-        await new Promise((resolve) => setTimeout(resolve, matchedDelayMs));
+        await delayWithinPipeline(matchedDelayMs);
         if (
           game.currentRound?.id !== originatingRoundId ||
           game.currentStage?.id !== originatingStageId ||
@@ -2500,7 +2570,7 @@ async function handleChat(env, { game, adaptiveTrigger = null, staticRetry = nul
     logEntry.totalGeneratorAttempts = budget.calls.filter(c => c.kind === "generator").length;
     logEntry.modelCallCount = budget.calls.length;
     if (result.published) {
-      recordPublish(game, { role: result.role, messageId: logEntry.publishedMessageId, now: Date.now() });
+      recordPublish(game, { role: result.role, humanMessageCountAtPublish: logEntry.publishedHumanMessageCount, messageId: logEntry.publishedMessageId, now: Date.now() });
       const invited = publishedPlan?.requiredReasoningAct === "PARTICIPATION_ELICITATION" ? publishedPlan.target?.participantName : null;
       if (invited) {
         const previous = participationInvites[invited] || {};
@@ -2529,12 +2599,16 @@ async function handleChat(env, { game, adaptiveTrigger = null, staticRetry = nul
 
 }
 
-Empirica.on("game", "chat_round_0", handleChat);
-Empirica.on("game", "chat_round_1", handleChat);
+Empirica.on("game", "chat_round_0", dispatchChat);
+Empirica.on("game", "chat_round_1", dispatchChat);
 
 Empirica.onStageEnded(({ stage }) => {
-  if (stage.get("name") === "Task") adaptiveCloseoutScheduler.cancel(stage.currentGame, "stage_ended");
-  if (stage.get("name") === "Task") staticInterventionScheduler.cancel(stage.currentGame, "PHASE_ENDED");
+  if (stage.get("name") === "Task") {
+    cancelStagePipelines(stage.id);
+    discussionDeadline.cancel(stage.currentGame);
+    adaptiveCloseoutScheduler.cancel(stage.currentGame, "stage_ended");
+    staticInterventionScheduler.cancel(stage.currentGame, "PHASE_ENDED");
+  }
   const round = stage.round;
   const game = stage.currentGame;
   const stageName = stage.get("name");
@@ -2616,6 +2690,10 @@ Empirica.onRoundEnded(({ round }) => {
 });
 
 Empirica.onGameEnded(({ game }) => {
+  cancelStagePipelines(game.currentStage?.id);
+  discussionDeadline.cancel(game);
+  adaptiveCloseoutScheduler.cancel(game, "game_ended");
+  loadedGames.delete(game.id);
   adaptiveCloseoutScheduler.cancel(game, "game_ended");
   staticInterventionScheduler.cancel(game, "PHASE_ENDED");
   const storedEndedAt = game.get("endedAt");
