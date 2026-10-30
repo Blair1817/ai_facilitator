@@ -65,8 +65,8 @@ export function verifySemanticTarget(review, { chat, references = [] }) {
 
 // 2026-10-26: the detector judges ELICIT / SCRUTINIZE / INTEGRATE
 // independently. Each reported candidate is verified on its own; the runtime
-// then draws uniformly among roles present in the verified pool (and uniformly
-// within a role). There is no priority between needs.
+// then prioritises evidenced current blockers and longest-waiting targets.
+// Uniform role/candidate draws are used only for remaining ties.
 export const CANDIDATE_KEYS = Object.freeze({ elicit: "ELICIT", scrutinize: "SCRUTINIZE", integrate: "INTEGRATE" });
 export const MAX_CONSECUTIVE_SAME_ROLE = 2;
 
@@ -75,6 +75,7 @@ export function candidateRaws(raw) {
   const candidates = raw?.candidates || {};
   return Object.entries(CANDIDATE_KEYS).filter(([key]) => candidates[key]).map(([key, need]) => ({
     need, operation: candidates[key].operation, target: candidates[key].target, rationale: candidates[key].rationale,
+    ...(candidates[key].blocking ? { blocking: candidates[key].blocking } : {}),
     ...(candidates[key].semanticReview ? { semanticReview: candidates[key].semanticReview } : {}),
   }));
 }
@@ -82,25 +83,70 @@ export function candidateRaws(raw) {
 const summarise = c => ({ need: c.need, operation: c.operation, role: c.role, label: c.target?.label ?? null,
   participantName: c.target?.participantName ?? null, source: c.source ?? "detector" });
 
-/** Uniform draw: first a role among roles present, then a candidate within that role.
- * A role that already filled the last MAX_CONSECUTIVE_SAME_ROLE turns is skipped
- * when another role is available. Returns the exact selection probability. */
+/** Stable issue identity, independent of new evidence-message IDs. The detector
+ * supplies semantic identity; legacy/no-review candidates use operation + scope
+ * + label. Labels alone must never pool unrelated issues about the same option. */
+export function adaptiveCandidateKey(candidate) {
+  const t = candidate.target || {};
+  return JSON.stringify([candidate.operation, key(candidate.semanticReview?.key ?? t.label),
+    [...(t.optionLabels || [])].map(key).sort(), [...(t.criteria || [])].map(key).sort()]);
+}
+
+/** This verifies public sources and recency, not the model's semantic inference.
+ * Unsupported blocker annotations lose priority without discarding a valid need. */
+export function verifyBlocking(candidate, chat) {
+  const signal = candidate.blocking;
+  if (!signal) return { priority: 0, reason: "ordinary_need" };
+  const expected = { ELICIT: "missing_comparison_information", SCRUTINIZE: "decision_reasoning_risk" };
+  const messages = publicChat(chat), byId = new Map(messages.map(m => [m.messageId, m]));
+  const recentIds = new Set(messages.slice(-6).map(m => m.messageId));
+  const valid = expected[candidate.need] === signal.kind && Array.isArray(signal.evidence) && signal.evidence.length > 0
+    && signal.evidence.every(q => quoteValid(q, byId))
+    && signal.evidence.some(q => recentIds.has(q.messageId))
+    && signal.evidence.some(q => candidate.target?.messageIds?.includes(q.messageId));
+  return { priority: valid ? 1 : 0, reason: valid ? signal.kind : "blocking_evidence_rejected",
+    priorityEvidence: valid ? signal.evidence : [] };
+}
+
+/** Only continuously eligible observations accrue waiting time. No wall clock,
+ * failed-attempt count, or stale/disappeared need can manufacture urgency. */
+export function prepareCandidateQueue(pool, { pending = {}, humanMessageCount = 0 } = {}) {
+  const next = {};
+  const candidates = pool.map(candidate => {
+    const selectionKey = adaptiveCandidateKey(candidate);
+    const previous = pending[selectionKey];
+    const firstSeen = Number.isFinite(previous?.firstSeenHumanMessageCount)
+      ? Math.min(previous.firstSeenHumanMessageCount, humanMessageCount) : humanMessageCount;
+    next[selectionKey] = { firstSeenHumanMessageCount: firstSeen };
+    return { ...candidate, selectionKey, waitingMessages: Math.max(0, humanMessageCount - firstSeen) };
+  });
+  return { candidates, pending: next };
+}
+
+/** Current blocker > ordinary need; longest waiting within that tier; role
+ * rotation within that tie; then uniform role and candidate draw. All verified
+ * candidates remain available for a bounded redraw if generation is rejected. */
 export function drawCandidate(pool, { random = Math.random, recentRoles = [] } = {}) {
   if (!pool?.length) return null;
-  let roles = [...new Set(pool.map(c => c.role))];
+  const priority = Math.max(...pool.map(c => c.priority ?? 0));
+  const priorityPool = pool.filter(c => (c.priority ?? 0) === priority);
+  const waitingMessages = Math.max(...priorityPool.map(c => c.waitingMessages ?? 0));
+  const waitingPool = priorityPool.filter(c => (c.waitingMessages ?? 0) === waitingMessages);
+  let roles = [...new Set(waitingPool.map(c => c.role))];
   const last = recentRoles.slice(-MAX_CONSECUTIVE_SAME_ROLE);
   if (last.length === MAX_CONSECUTIVE_SAME_ROLE && last.every(r => r === last[0]) && roles.some(r => r !== last[0])) {
     roles = roles.filter(r => r !== last[0]);
   }
   const pick = list => list[Math.min(list.length - 1, Math.floor(random() * list.length))];
   const role = pick(roles);
-  const within = pool.filter(c => c.role === role);
+  const within = waitingPool.filter(c => c.role === role);
   const picked = pick(within);
   return { picked, probability: 1 / (roles.length * within.length), eligibleRoles: roles,
+    reason: { priority, waitingMessages, tiedCandidates: waitingPool.length, tieBreak: "role_rotation_then_uniform" },
     remaining: pool.filter(c => c !== picked) };
 }
 
-export function selectAdaptiveAssessment(raw, { chat, roster, optionLabels = [], remainingTimeMs, triggerSource = "message", history = [], excluded = [], validateIntegration = null, extraCandidates = [], random = Math.random, recentRoles = [] }) {
+export function selectAdaptiveAssessment(raw, { chat, roster, optionLabels = [], remainingTimeMs, triggerSource = "message", history = [], excluded = [], validateIntegration = null, extraCandidates = [], random = Math.random, recentRoles = [], pendingCandidates = {}, humanMessageCount = publicChat(chat).length }) {
   const early = verifyEarlyCloseout(raw?.closeout, { chat, roster, optionLabels });
   const stage = remainingTimeMs <= 180_000 ? "closeout_assessment" : early.active ? "early_closeout" : "ordinary";
   const scheduling = { stage, remainingTimeMs, triggerSource };
@@ -120,7 +166,7 @@ export function selectAdaptiveAssessment(raw, { chat, roster, optionLabels = [],
       if (preflight.status !== "passed") return { ...checked, need: "NONE", role: null, checkedFactors: null,
         downgradedReason: preflight.failureReasons.join(","), integrationPreflight: preflight };
     }
-    return { ...checked, semanticReview: candidate.semanticReview, semantic };
+    return { ...checked, semanticReview: candidate.semanticReview, semantic, ...verifyBlocking(candidate, chat) };
   };
   // A verified explicit participant summary always pauses the checkpoint.
   if (raw?.defer != null) {
@@ -138,14 +184,18 @@ export function selectAdaptiveAssessment(raw, { chat, roster, optionLabels = [],
   // Scheduler-triggered closeout checks keep their existing integration-only scope.
   const closeoutOnly = triggerSource !== "message" && excluded.length === 0;
   const mayGenerate = triggerSource !== "early_closeout_probe" || early.active;
-  const pool = closeoutOnly ? (mayGenerate && integration ? [integration] : []) : [...verified, ...extraCandidates];
+  const rawPool = closeoutOnly ? (mayGenerate && integration ? [integration] : []) : [...verified, ...extraCandidates];
+  const queue = prepareCandidateQueue(rawPool, { pending: pendingCandidates, humanMessageCount });
+  const pool = queue.candidates;
   const draw = drawCandidate(pool, { random, recentRoles });
   // With no verified candidate, keep the rejection reasons so the gate records
   // evidence_check_failed (not no_need) when the detector did report needs.
   const selected = draw?.picked ?? { need: "NONE", role: null, checkedFactors: null,
     ...(rejected.length && !closeoutOnly ? { rawNeed: rejected.map(r => r.need).join(","), downgradedReason: rejected.map(r => r.reason).join(",") } : {}) };
   return { ...selected, early, scheduling,
-    selection: { mode: closeoutOnly ? "closeout" : "randomized", pool: pool.map(summarise), rejected,
+    selection: { mode: closeoutOnly ? "closeout" : "prioritized", pool: pool.map(c => ({ ...summarise(c),
+      selectionKey: c.selectionKey, priority: c.priority ?? 0, priorityReason: c.reason, priorityEvidence: c.priorityEvidence ?? [], waitingMessages: c.waitingMessages })), rejected,
+      pending: queue.pending, reason: draw?.reason ?? null,
       probability: draw?.probability ?? null, eligibleRoles: draw?.eligibleRoles ?? [],
       remaining: draw?.remaining ?? [], recentRoles: recentRoles.slice(-MAX_CONSECUTIVE_SAME_ROLE) },
     integrationObservation: { evaluated: Boolean(raw?.candidates), qualified: Boolean(integration),
@@ -160,5 +210,5 @@ export function redrawAdaptiveSelection(previous, { random = Math.random, recent
   const selected = draw?.picked ?? { need: "NONE", role: null, checkedFactors: null };
   return { ...selected, early: previous?.early, scheduling: previous?.scheduling,
     selection: { ...previous?.selection, mode: "redraw", probability: draw?.probability ?? null,
-      eligibleRoles: draw?.eligibleRoles ?? [], remaining: draw?.remaining ?? [] } };
+      eligibleRoles: draw?.eligibleRoles ?? [], reason: draw?.reason ?? null, remaining: draw?.remaining ?? [] } };
 }

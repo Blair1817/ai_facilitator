@@ -1,17 +1,37 @@
 diff --git a/node_modules/@empirica/tajriba/dist/index.js b/node_modules/@empirica/tajriba/dist/index.js
-index 5e626c4..4575718 100644
 --- a/node_modules/@empirica/tajriba/dist/index.js
 +++ b/node_modules/@empirica/tajriba/dist/index.js
-@@ -8430,6 +8430,23 @@ var Tajriba = class extends events_default {
+@@ -8319,12 +8319,22 @@
+     const t = new TajribaParticipant(this.url, sessionToken, participant);
+     t.useHTTP = this.useHTTP;
+     const p = t.connectionStatus();
++    let timer;
++    const timeout = new Promise((_, reject) => {
++      timer = setTimeout(() => {
++        const err = new Error("Participant connection acknowledgement timed out");
++        err.code = "TAJRIBA_SESSION_CONNECT_TIMEOUT";
++        reject(err);
++      }, 30000);
++    });
+     t.connect();
+     try {
+-      await p;
++      await Promise.race([p, timeout]);
+     } catch (err) {
+       t.stop();
+       throw err;
++    } finally {
++      clearTimeout(timer);
+     }
+     return t;
+   }
+@@ -8430,24 +8440,48 @@
        lazy: false,
        shouldRetry: () => true,
        webSocketImpl: WebSocket,
-+      // DELIBRA-PATCH: keepAlive was 0 (default), which meant graphql-ws
-+      // never sent WS pings and the client could not detect a half-open
-+      // socket caused by the Tajriba v1.12.0 partial-freeze fault. 10 s is
-+      // well under Cloudflare's ~100 s idle-kill threshold, so a live Tajriba
-+      // process will keep the WS warm. During a freeze the ping will time out
-+      // on the WS layer and trigger a reconnect.
++      // Send transport heartbeats. keepAlive alone does not enforce a pong
++      // deadline; the application transport monitor supplies that deadline.
++      // Business subscription liveness is checked independently.
 +      keepAlive: 10000,
 +      // DELIBRA-PATCH: cap the exponential backoff at 15 s so a long outage
 +      // doesn't drift into multi-minute waits (after ~10 retries the upstream
@@ -26,19 +46,53 @@ index 5e626c4..4575718 100644
        on: {
          connecting: () => {
          },
-@@ -8444,8 +8461,15 @@ var Tajriba = class extends events_default {
-           this._connected = true;
+-        connected: () => {
+-        },
+-        opened: (sock) => {
++        // GraphQL connected means opened AND connection_ack received.
++        // A raw socket opening does not establish an authenticated session.
++        connected: (sock) => {
++          if (this._wsClient !== wsClient) return;
++          this._connected = true;
+           if (this._firstConnProm && sock.readyState === WebSocket.OPEN) {
+             this._firstConnProm.resolve();
+             delete this._firstConnProm;
+           }
+           this.emit("connected");
+-          this._connected = true;
          },
          closed: (event) => {
++          if (this._wsClient !== wsClient) return;
 +          // DELIBRA-PATCH: the upstream code emits "disconnected" here but
 +          // never "closed" is re-emitted on reconnect. Keep the original
 +          // emit to stay backwards compatible.
++          this._connected = false;
            this.emit("disconnected");
-           this._connected = false;
+-          this._connected = false;
 +          // DELIBRA-PATCH: surface "closed" so a wrapper layer (the Empirica
 +          // core TajribaConnection) can re-enter the connecting state if it
 +          // had prematurely marked the connection as terminated.
 +          this.emit("closed", event);
          },
          error: (err) => {
++          if (this._wsClient !== wsClient) return;
            this.emit("error", err);
+         }
+       },
+@@ -8490,9 +8524,15 @@
+   }
+   stop() {
+     if (this._wsClient) {
+-      this._wsClient.dispose();
++      const stoppedClient = this._wsClient;
+       delete this._wsClient;
++      // dispose() can reject when closed before ACK. Observe that rejection;
++      // stale socket events must not restart an intentionally stopped client.
++      stoppedClient.dispose().catch(() => {
++        console.warn("[delibra-recovery] stopped transport disposal failed");
++      });
+     }
++    this._connected = false;
+     if (this._client) {
+       delete this._client;
+     }

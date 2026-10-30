@@ -1,3 +1,4 @@
+import { CHECKPOINT_DEFAULTS } from "./CheckpointManager.mjs";
 import { ADAPTIVE_FLOOR_MS } from "./AdaptiveRecovery.mjs";
 
 /** Timers contain no model policy. The callback acquires the same durable
@@ -32,7 +33,7 @@ export function createCloseoutScheduler({ run, now = () => Date.now(), setTimer 
     if (e.busy) return;
     if (e.pending.size) {
       const lastAttempt = e.game.get("lastAttemptTimestamp") || 0;
-      const cooldown = lastAttempt > 0 ? Math.max(0, lastAttempt + 30_000 - now()) : 0;
+      const cooldown = lastAttempt > 0 ? Math.max(0, lastAttempt + CHECKPOINT_DEFAULTS.cooldownMs - now()) : 0;
       if (cooldown) { schedule(e, Math.min(cooldown, left - ADAPTIVE_FLOOR_MS)); return; }
       const sources = [...e.pending];
       // Remove only this snapshot: a new message during await stays pending.
@@ -59,7 +60,7 @@ export function createCloseoutScheduler({ run, now = () => Date.now(), setTimer 
     for (const seconds of [180, 120]) if (remaining <= seconds * 1000 && !e.state.completed?.[seconds]) e.pending.add(`time_${seconds}`);
     const delays = [remaining - ADAPTIVE_FLOOR_MS];
     for (const seconds of [180, 120]) if (!e.state.completed?.[seconds] && remaining > seconds * 1000) delays.push(remaining - seconds * 1000);
-    if (e.pending.size) delays.push(Math.max(1000, (e.game.get("lastAttemptTimestamp") || 0) + 30_000 - now()));
+    if (e.pending.size) delays.push(Math.max(1000, (e.game.get("lastAttemptTimestamp") || 0) + CHECKPOINT_DEFAULTS.cooldownMs - now()));
     schedule(e, Math.min(...delays));
   }
   function register(game) {

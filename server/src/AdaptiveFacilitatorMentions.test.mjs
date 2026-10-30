@@ -227,3 +227,15 @@ test("normal Adaptive Specialist message without a mention remains valid", () =>
   });
   assert.equal(result.passed, true, result.failedCriteria.join(", "));
 });
+
+
+test("participation invites must mention every target and no additional participant", () => {
+  const candidate = names => ({ role: FACILITATOR_ROLES.INFORMATION_EXPANDER,
+    message: `${names.map(n => `@[${n}]`).join(" and ")}, anything to share from your notes, good or bad? No worries if not.`, groundingMessageIds: [] });
+  const context = { selectedRole: FACILITATOR_ROLES.INFORMATION_EXPANDER, activeParticipantNames: ACTIVE_PARTICIPANTS,
+    participationTargetNames: ["Blue", "Green"], eligibleMessageIds: [], recentAiMessageTexts: [] };
+  assert.equal(runDeterministicValidation(candidate(["Blue", "Green"]), context).passed, true);
+  for (const names of [["Blue"], ["Blue", "Green", "Red"]]) {
+    assert.ok(runDeterministicValidation(candidate(names), context).failedCriteria.includes("PARTICIPATION_TARGET_MISMATCH"));
+  }
+});

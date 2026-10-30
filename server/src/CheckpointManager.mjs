@@ -4,7 +4,7 @@
  * Phase 3 (v2 design): the single source of truth for "should this
  * human message trigger a facilitation checkpoint right now?". Static
  * and Adaptive share the same automatic pacing policy: six human messages
- * since the last successful publication, a 30-second cooldown since the
+ * since the last successful publication, a 15-second cooldown since the
  * last automatic attempt, and the final time floor.
  *
  * v2 design invariants (audited in `audit-phase1.md` v3):
@@ -33,7 +33,7 @@
 // they are usable; until then they are conservative defaults.
 export const CHECKPOINT_DEFAULTS = Object.freeze({
   messagesBetweenInterventions: 6,   // 6 human messages between publishes
-  cooldownMs: 30_000,                 // 30 seconds between any two attempts
+  cooldownMs: 15_000,                 // 15 seconds between any two attempts
   minTimeForInterventionMs: 10_000,   // 10s before deadline
 });
 

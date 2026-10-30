@@ -22,6 +22,7 @@ export function compilePlan(role, checkedFactors, { score, threshold, eligibleMe
     label: observation?.label || (factors[0]?.factor.span ? `Public contribution: ${factors[0].factor.span}` : "Public target unavailable"),
     messageIds: ids, optionLabels: observation?.optionLabels || [], criteria: observation?.criteria || [],
     ...(observation?.participantName ? { participantName: observation.participantName } : {}),
+    ...(observation?.participantNames ? { participantNames: observation.participantNames } : {}),
     status: observation?.status || "open",
   };
   const signature = JSON.stringify([act, [...ids].sort(), target.label]);

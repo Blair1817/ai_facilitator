@@ -135,7 +135,9 @@ export function buildDynamicUserContext({ chat, checkpointDescriptor, selectedRo
   });
 
   return {
-    userContent,
+    userContent: plan?.synthesisCoverage
+      ? `${userContent}\n\n[SYNTHESIS_COVERAGE]\n${JSON.stringify(plan.synthesisCoverage)}\nCover all distinct public task information in this scope before shortening. Include every discussed alternative, concern and qualification. Do not omit facts to save words. Merge duplicates faithfully; keep one concise closing question.`
+      : userContent,
     participantSharedContext: cumulativePublicContext,
     eligibleMessageIds: allHumanWithIds.map((m) => m.messageId),
     aiOrSystemMessageIds: aiWithIds.map((m) => m.messageId),

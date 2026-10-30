@@ -19,13 +19,14 @@ export function preflightPlan(plan, { chat = [], taskGeneralContext = "", active
   let enough = sourceComplete;
   if (["EVIDENCE_CONSOLIDATION", "DISCREPANCY_REPRESENTATION", "CROSS_OPTION_COMPARISON"].includes(plan?.requiredReasoningAct)) enough &&= ids.length >= 2;
   if (plan?.requiredReasoningAct === "CROSS_OPTION_COMPARISON") enough &&= (target?.optionLabels?.length || 0) >= 2 && (target?.criteria?.length || 0) > 0;
-  const participant = target?.participantName;
+  const participants = target?.participantNames ?? [target?.participantName];
   // 2026-10-21: a participation target must be a roster participant who is
   // quiet under the deterministic QUIET_PARTICIPANT_RULE (a fully silent
   // participant still qualifies, as before).
   const participationValid = plan?.requiredReasoningAct !== "PARTICIPATION_ELICITATION" ||
-    (contextScope === "complete_current_round" && activeParticipantNames.includes(participant)
-      && verifiedParticipationTargets(publicMessages, activeParticipantNames).includes(participant));
+    (contextScope === "complete_current_round" && Array.isArray(participants) && participants.length > 0
+      && participants.every(name => activeParticipantNames.includes(name)
+        && verifiedParticipationTargets(publicMessages, activeParticipantNames).includes(name)));
   const targetVerified = !!target?.label && labels.every(label => typeof label === "string" && label.trim() && publicText.toLowerCase().includes(label.toLowerCase())) && participationValid;
   // Repetition uses delivered history only. Missing history never implies uptake.
   const semantic = plan?.semanticReview ? verifySemanticTarget(plan.semanticReview, { chat, references: semanticReferences(interventionHistory, plan.excludedTargets) }) : null;
@@ -36,7 +37,8 @@ export function preflightPlan(plan, { chat = [], taskGeneralContext = "", active
     publicTargetVerified: targetVerified,
     evidenceCoverageVerified: enough,
     // Compiler targets never assert global absence: generation must qualify scope.
-    scopePolicySatisfied: ["complete_current_round", "partial_recent_window", "unknown"].includes(contextScope) && participationValid,
+    scopePolicySatisfied: ["complete_current_round", "partial_recent_window", "unknown"].includes(contextScope) && participationValid
+      && (!plan?.synthesisCoverage || contextScope === "complete_current_round"),
     repetitionPolicySatisfied: target?.status !== "addressed" && plan?.historyStatus !== "addressed" && !repeated && semantic?.ok !== false,
   };
   const reasons = ["INPUT_INVALID", "TARGET_UNSUPPORTED", "EVIDENCE_INSUFFICIENT", "SCOPE_INSUFFICIENT", "TARGET_ALREADY_ADDRESSED"];

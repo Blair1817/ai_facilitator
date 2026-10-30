@@ -294,10 +294,11 @@ export function checkNeedAssessment(raw, { chat, activeParticipantNames = [], sc
 
   // N4
   if (raw.operation === "participation_gap") {
-    const name = target.participantName;
+    const names = target.participantNames ?? [target.participantName];
     // 2026-10-26: quiet overall OR silent across the recent window (code-verified).
-    if (typeof name !== "string" || !activeParticipantNames.includes(name)
-      || !verifiedParticipationTargets(publicMessages, activeParticipantNames).includes(name)) {
+    const verified = verifiedParticipationTargets(publicMessages, activeParticipantNames);
+    if (!Array.isArray(names) || !names.length || names.some(name => typeof name !== "string"
+      || !activeParticipantNames.includes(name) || !verified.includes(name))) {
       return none("PARTICIPANT_NOT_VERIFIED_QUIET");
     }
   }
@@ -309,7 +310,8 @@ export function checkNeedAssessment(raw, { chat, activeParticipantNames = [], sc
     evidence: evidence.map((q) => ({ messageId: q.messageId, span: q.span })),
     optionLabels: Array.isArray(target.optionLabels) ? target.optionLabels : [],
     criteria: Array.isArray(target.criteria) ? target.criteria : [],
-    ...(raw.operation === "participation_gap" ? { participantName: target.participantName } : {}),
+    ...(raw.operation === "participation_gap" ? { ...(target.participantName ? { participantName: target.participantName } : {}),
+      participantNames: [...new Set(target.participantNames ?? [target.participantName])] } : {}),
     status: "open",
   };
   const factorKey = definition[2];

@@ -26,7 +26,7 @@ for (const need of Object.keys(COGNITIVE_NEEDS)) test(`v3.2 compiles and validat
   const plan = compilePlan(role, checked, { eligibleMessageIds: ids });
   assert.equal(plan.requiredReasoningAct, act);
   assert.equal(plan.role, role);
-  assert.equal(plan.maxWords, role === "synthesiser" ? 55 : 50);
+  assert.equal(plan.maxWords, role === "synthesiser" ? null : 50);
   assert.equal(Object.hasOwn(plan, "maxSentences"), false);
   assert.deepEqual(plan.target.messageIds, ids);
   assert.equal(preflightPlan(plan, { chat, activeParticipantNames: ["Alex", "Casey", "Jordan"] }).status, "passed");

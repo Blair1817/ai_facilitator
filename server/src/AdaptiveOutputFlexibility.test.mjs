@@ -34,7 +34,7 @@ for (const file of ["expander.md", "challenger.md", "synthesiser.md"]) {
       eligibleMessageIds: input.CUMULATIVE_PUBLIC_CONTEXT.map(m => m.messageId),
       allowedGroundingIds: input.ALLOWED_GROUNDING_MESSAGE_IDS,
       activeParticipantNames: input.ACTIVE_PARTICIPANT_NAMES,
-      maxWords: input.SELECTED_ROLE === "INFORMATION_SYNTHESISER" ? 55 : 50,
+      maxWords: input.SELECTED_ROLE === "INFORMATION_SYNTHESISER" ? null : 50,
       enforcePlanGrounding: true, forbidInternalDisclosure: true,
     });
     assert.equal(result.passed, true, result.failedCriteria.join(", "));
@@ -52,7 +52,7 @@ for (const id of ["A-15"]) test(`${id}: ordinary fact-by-fact sharing without a 
   const plan = compilePlan(checked.role, checked.checkedFactors, { eligibleMessageIds: input.CUMULATIVE_PUBLIC_CONTEXT.map(m => m.messageId), interventionHistory: [] });
   const marker = preflightPlan(plan, { chat, taskGeneralContext: input.TASK_GENERAL_CONTEXT, activeParticipantNames: input.ACTIVE_PARTICIPANT_NAMES, interventionHistory: [], contextScope: input.CONTEXT_SCOPE });
   assert.equal(marker.status, "passed", marker.failureReasons.join(", "));
-  assert.equal(plan.maxWords, 55);
+  assert.equal(plan.maxWords, null);
   assert.equal(Object.hasOwn(plan, "maxSentences"), false);
 });
 test("A-08: explicit participant summary pauses automatic intervention, including Static fallback", () => {
@@ -69,7 +69,8 @@ test("G-08 uses the ordinary-sharing A-15 context, not the waiting A-08 context"
   const assessment = assessments.find(e => e.id === "A-15");
   const generator = examples("synthesiser.md").find(e => e.id === "G-08");
   assert.deepEqual(generator.input.CUMULATIVE_PUBLIC_CONTEXT, assessment.input.CUMULATIVE_PUBLIC_CONTEXT);
-  assert.deepEqual(generator.input.TARGET, assessment.output.candidates.integrate.target);
+  assert.ok(generator.input.TARGET.messageIds.length >= assessment.output.candidates.integrate.target.messageIds.length);
+  assert.equal(generator.input.SYNTHESIS_COVERAGE.scope, "all_public_task_information_this_round");
 });
 test("completed participant summary remains the authored NONE boundary (not a model evaluation)", () => {
   assert.deepEqual(assessments.find(e => e.id === "A-12").output.candidates, { elicit: null, scrutinize: null, integrate: null });
@@ -85,7 +86,7 @@ test("OpenAI point schema decodes three points, publishes numbering, and counts 
   assert.equal(decoded.ok, true);
   assert.equal(validateAgainstGenerationSchema(decoded.parsed, value.role).ok, true);
   const candidate = normalizeGeneratorCandidate(decoded.parsed);
-  const options = { selectedRole: value.role, eligibleMessageIds: ["m0", "m1", "m2"], allowedGroundingIds: ["m0", "m1", "m2"], enforcePlanGrounding: true, maxWords: 55 };
+  const options = { selectedRole: value.role, eligibleMessageIds: ["m0", "m1", "m2"], allowedGroundingIds: ["m0", "m1", "m2"], enforcePlanGrounding: true, maxWords: null };
   assert.equal(runDeterministicValidation(candidate, options).passed, true);
   assert.match(candidate.message, /\n3\. The app sends no schedule-change alerts\./);
   const words = candidate.message.trim().split(/\s+/).length;
@@ -93,7 +94,7 @@ test("OpenAI point schema decodes three points, publishes numbering, and counts 
   const atCap = normalizeGeneratorCandidate(decodeSynthesisPoints(value, contract).parsed);
   assert.equal(runDeterministicValidation(atCap, options).passed, true);
   value.question += " extra";
-  assert.deepEqual(runDeterministicValidation(normalizeGeneratorCandidate(decodeSynthesisPoints(value, contract).parsed), options).failedCriteria, ["MESSAGE_EXCEEDS_WORD_LIMIT"]);
+  assert.equal(runDeterministicValidation(normalizeGeneratorCandidate(decodeSynthesisPoints(value, contract).parsed), options).passed, true);
 });
 test("legacy string numbering is also preserved through parsing and validation", () => {
   const message = "1. Covered walkways.\n2. Rooms are 12 minutes away.\n3. No app alerts.\n\nHow do you weigh these points?";

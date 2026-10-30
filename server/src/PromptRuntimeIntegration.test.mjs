@@ -1,3 +1,4 @@
+import { mockSynthesisCoverage } from "../test/participant_sim/fakes/synthesisCoverage.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -53,7 +54,7 @@ async function run(w, { invalidComparison = false, skipDuringValidation = false,
     const system = body.messages[0].content;let data;
     if (system.startsWith("# assessor.md")) data = toDetectorOutput(assessment ?? factors(w, invalidComparison));
     else if (system.startsWith("# validator.md")) {
-      data = Object.fromEntries(VALIDATOR_CRITERIA.map(k => [k, false]));
+      data = mockSynthesisCoverage(Object.fromEntries(VALIDATOR_CRITERIA.map(k => [k, false])), body.messages[1].content);
       if (rejectSpecialist && body.messages[1].content.includes("[INTERVENTION_PLAN]")) data.requiredReasoningActMissing = true;
       if (skipDuringValidation) {
         const { handleTestControl } = await import("./TestControls.mjs");
@@ -182,7 +183,7 @@ test("automatic vs participant-requested Generalist have separate validator and 
   assert.equal(runtimeGeneratorBundle("synthesiser").metadata.maxWords, SYNTHESISER_MAX_WORDS);
   for (const count of [54, 55, 56]) {
     const result = runDeterministicValidation({ role: "INFORMATION_SYNTHESISER", message: Array(count).fill("word").join(" "), groundingMessageIds: [] }, { selectedRole: "INFORMATION_SYNTHESISER", maxWords: SYNTHESISER_MAX_WORDS });
-    assert.equal(result.passed, count <= 55);
+    assert.equal(result.passed, true);
   }
 });
 test("Specialist internal labels and out-of-plan IDs cannot pass mechanical publication checks", () => {

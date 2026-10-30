@@ -26,7 +26,7 @@ If evidence is insufficient, the target is already addressed, the operation does
 The Validator must not certify plan fidelity without a valid, executable plan. An already-addressed target is not made actionable by rephrasing.
 
 ## EXPRESSION
-Obey the word ceiling in the runtime plan and assigned role prompt; do not fill the budget. All visible titles, bodies and the question count.
+Obey any word ceiling in the runtime plan and assigned role prompt; do not fill the budget. Synthesiser has no hard word ceiling and must never omit required information to shorten. All visible titles, bodies and the question count.
 Use an observation only when it is supported and useful; it is not a mandatory preamble.
 Expander: a named under-discussed option (or participant) followed by one "good or bad" information question.
 Challenger: follow the assigned reasoning operation. For EVIDENCE_AUDIT with a public choice-preference target, ask for the strongest point anyone has already seen for the other established options; a previously voiced opposing point is not required. For an unsupported claim without a choice preference, name that specific claim and ask what points participants have already seen, if any, support it. Use exactly one applicable question, not both. Do not turn a claim into a preference or infer group support from two people discussing the same option. Do not demand source verification or proof of an ordinary reported task fact, or broadly solicit unrelated new topics. For COUNTEREVIDENCE_EXAMINATION, bring back and attribute the specific point already raised.

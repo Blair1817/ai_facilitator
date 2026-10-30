@@ -268,7 +268,7 @@ for (const condition of ["Static", "Adaptive"]) {
     assert.match(result.reason, /opportunity_gate/);
   });
 
-  test(`${condition} requires the 30-second automatic-attempt cooldown`, () => {
+  test(`${condition} requires the 15-second automatic-attempt cooldown`, () => {
     const store = makeStore({
       lastAttemptTimestamp: NOW - 1,
       messagesSinceLastPublish: 6,
@@ -452,4 +452,13 @@ test("isMentionCheckpoint=false (default): behaves exactly as before the Phase 6
   const r = shouldEvaluateCheckpoint({ ...baseArgs({ store, humanMessageCount: 1 }), store });
   assert.equal(r.trigger, false);
   assert.match(r.reason, /opportunity_gate/);
+});
+
+// Both conditions share the same pacing boundary.
+test("automatic cooldown opens at exactly 15 seconds", () => {
+  assert.equal(T_DEFAULTS.cooldownMs, 15_000);
+  const store = makeStore({ lastAttemptTimestamp: NOW - 14_999, messagesSinceLastPublish: 6 });
+  assert.equal(shouldEvaluateCheckpoint({ ...baseArgs({ store, humanMessageCount: 7 }), store }).trigger, false);
+  store.set("lastAttemptTimestamp", NOW - 15_000);
+  assert.equal(shouldEvaluateCheckpoint({ ...baseArgs({ store, humanMessageCount: 7 }), store }).trigger, true);
 });

@@ -299,6 +299,7 @@ export function runDeterministicValidation(
     // role's prompt. Omit to disable the check (only intended for
     // tests of the check itself, not for the live pipeline).
     activeParticipantNames = null,
+    participationTargetNames = null,
     // 2026-XX addition: hard word-count ceiling for the automatically
     // triggered facilitator paths (Static's fixed policy + Adaptive's
     // Generalist/Expander/Challenger/Synthesiser). Deliberately NOT
@@ -411,6 +412,13 @@ export function runDeterministicValidation(
         }
       }
     }
+  }
+
+  if (typeof message === "string" && Array.isArray(participationTargetNames)) {
+    const mentions = [...message.matchAll(MENTION_PATTERN)].map(m => String(m[1]).trim());
+    const expected = new Set(participationTargetNames);
+    if (participationTargetNames.some(name => !mentions.includes(name))
+      || mentions.some(name => !expected.has(name))) failedCriteria.push("PARTICIPATION_TARGET_MISMATCH");
   }
 
   if (typeof message === "string") {

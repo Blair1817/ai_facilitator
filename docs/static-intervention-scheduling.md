@@ -28,7 +28,7 @@ logged as `RETRY_EXHAUSTED`. A subsequent new eligible human checkpoint can
 supersede an exhausted opportunity; a timer or a replay cannot reset its budget.
 There is still no per-round automatic-attempt cap.
 
-The existing six-message threshold, thirty-second attempt cooldown, ten-second
+The existing six-message threshold, fifteen-second attempt cooldown (updated 2026-10-30), ten-second
 Static start floor, and one-automatic-pipeline lock remain in place. A blocked
 checkpoint preserves its opportunity. One replaceable timer handles cooldown
 expiry or phase expiry. Lock release and requested-response completion wake the

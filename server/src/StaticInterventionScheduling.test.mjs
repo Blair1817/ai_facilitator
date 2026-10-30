@@ -114,14 +114,14 @@ for (const phase of ["generator", "validator"]) test(`3 new messages during ${ph
     assert.equal(f.calls.length, 2); assert.equal(f.state().attemptCount, 1);
     assert.equal(f.game.get("humanMessageCount"), 9);
     assert.equal(f.game.get("messagesSinceLastPublish"), 0);
-    await f.advance(30_000); assert.equal(f.calls.length, 2);
+    await f.advance(15_000); assert.equal(f.calls.length, 2);
   } finally { await f.close(); }
 });
 
 test("a cooldown-blocked eligible checkpoint retries on the timer after participants go silent", async () => {
   const f = await fixture();
   try {
-    f.game.set("lastAttemptTimestamp", Date.now() - 20_000);
+    f.game.set("lastAttemptTimestamp", Date.now() - 5_000);
     await f.run(); assert.equal(f.calls.length, 0); assert.equal(f.state().status, "PENDING");
     assert.ok(f.events().some(e => e.reasonCode === "COOLDOWN_ACTIVE"));
     await f.advance(9_999); assert.equal(f.calls.length, 0);
@@ -175,7 +175,7 @@ test("concurrent timer retries cannot publish the same opportunity twice", async
   const f = await fixture();
   try {
     f.game.set("lastAttemptTimestamp", Date.now()); await f.run(); const id = f.state().opportunityId;
-    f.jump(30_000);
+    f.jump(15_000);
     await Promise.all([f.run({ staticRetry: { opportunityId: id } }), f.run({ staticRetry: { opportunityId: id } })]);
     await f.advance(0); assert.equal(f.messages().length, 1); assert.equal(f.state().attemptCount, 1);
     await f.run({ staticRetry: { opportunityId: id } }); assert.equal(f.messages().length, 1);
@@ -211,9 +211,9 @@ test("semantic rejection preserves safety, waits for new context, and exhausts t
   const f = await fixture({ hook: call => call.kind === "validator" ? response(flags("roleMisaligned")) : undefined });
   try {
     await f.run(); assert.equal(f.calls.length, 4); assert.equal(f.messages().length, 0);
-    assert.equal(f.state().status, "PENDING"); await f.advance(30_000); assert.equal(f.calls.length, 4);
+    assert.equal(f.state().status, "PENDING"); await f.advance(15_000); assert.equal(f.calls.length, 4);
     for (let i = 1; i < STATIC_MAX_ATTEMPTS; i++) {
-      await f.send(`New context for reconsideration ${i}.`); await f.advance(30_000);
+      await f.send(`New context for reconsideration ${i}.`); await f.advance(15_000);
     }
     assert.equal(f.state().status, "CANCELLED"); assert.equal(f.state().reasonCode, "RETRY_EXHAUSTED");
     assert.deepEqual(f.state().failureFeedback, [], "Terminal opportunities clear repair references");
@@ -222,11 +222,11 @@ test("semantic rejection preserves safety, waits for new context, and exhausts t
   } finally { await f.close(); }
 });
 
-test("API errors retry without new messages at 30s intervals and stop after three attempts", async () => {
+test("API errors retry without new messages at 15s intervals and stop after three attempts", async () => {
   const f = await fixture({ hook: () => response({ error: "temporary provider failure" }, 503) });
   try {
-    await f.run(); assert.equal(f.calls.length, 1); await f.advance(30_000); assert.equal(f.calls.length, 2);
-    await f.advance(30_000); assert.equal(f.calls.length, STATIC_MAX_ATTEMPTS);
+    await f.run(); assert.equal(f.calls.length, 1); await f.advance(15_000); assert.equal(f.calls.length, 2);
+    await f.advance(15_000); assert.equal(f.calls.length, STATIC_MAX_ATTEMPTS);
     assert.equal(f.state().reasonCode, "RETRY_EXHAUSTED"); assert.equal(f.messages().length, 0);
     assert.ok(f.logs().filter(l => l.requestMade).every(l => l.reasonCode === "API_ERROR"));
     await f.advance(100_000); assert.equal(f.calls.length, STATIC_MAX_ATTEMPTS);
@@ -245,7 +245,7 @@ test("outer retries send all real prior failures and corrections with fresh publ
     await f.run(); const id = f.state().opportunityId;
     assert.equal(f.state().failureFeedback.length, 2);
     assert.equal(f.state().attemptCount, 1);
-    await f.send("Latest public context for the second pipeline."); await f.advance(30_000);
+    await f.send("Latest public context for the second pipeline."); await f.advance(15_000);
     const second = f.calls.filter(c => c.kind === "generator")[2];
     const secondFeedback = retryFeedback(second);
     assert.deepEqual(secondFeedback.map(r => r.failedCriteria), [["notGrounded"], ["nonNeutral"]]);
@@ -260,13 +260,13 @@ test("outer retries send all real prior failures and corrections with fresh publ
     assert.doesNotMatch(secondContent.split("[STATIC_OPPORTUNITY_FAILURE_FEEDBACK]")[0], /Unpublished draft/);
     assert.equal(f.state().failureFeedback.length, 4);
 
-    await f.send("Latest public context for the third pipeline."); await f.advance(30_000);
+    await f.send("Latest public context for the third pipeline."); await f.advance(15_000);
     const third = f.calls.filter(c => c.kind === "generator")[4];
     assert.deepEqual(retryFeedback(third).map(r => r.failedCriteria[0]), criteria);
     assert.match(third.body.messages[1].content.split("[STATIC_OPPORTUNITY_FAILURE_FEEDBACK]")[0], /Latest public context for the third pipeline/);
     assert.equal(f.state().opportunityId, id); assert.equal(f.state().attemptCount, STATIC_MAX_ATTEMPTS);
     assert.equal(f.messages().length, 1); assert.deepEqual(f.state().failureFeedback, []);
-    await f.advance(30_000);
+    await f.advance(15_000);
     for (let i = 0; i < 6; i++) await f.send(`Next opportunity public point ${i}.`);
     const next = f.calls.filter(c => c.kind === "generator")[5];
     assert.deepEqual(retryFeedback(next), []);
@@ -294,7 +294,7 @@ for (const kind of ["parse", "schema", "grounding", "length"]) test(`outer retry
     assert.ok(failures.every(r => r.failedCriteria.includes(code)));
     if (kind === "parse") assert.match(failures[0].feedback.error, /invalid JSON/);
     if (kind === "schema") assert.equal(failures[0].feedback.errors[0].keyword, "additionalProperties");
-    await f.send("A new public point after the rejected draft."); await f.advance(30_000);
+    await f.send("A new public point after the rejected draft."); await f.advance(15_000);
     const retried = f.calls.find(c => c.kind === "generator" && retryFeedback(c).length);
     assert.deepEqual(retryFeedback(retried), failures);
     assert.match(retried.body.messages[1].content, new RegExp(`${code}: `));
@@ -314,7 +314,7 @@ for (const kind of ["generator-api", "validator-api", "validator-schema"]) test(
     assert.equal(f.state().lastAttemptReason, "API_ERROR");
     assert.deepEqual(f.state().failureFeedback, []);
     assert.equal(f.logs().find(e => e.attemptId).staticContentFailures, undefined);
-    await f.advance(30_000);
+    await f.advance(15_000);
     assert.equal(f.messages().length, 1);
     assert.ok(f.calls.filter(c => c.kind === "generator").every(c => retryFeedback(c).length === 0));
   } finally { await f.close(); }
@@ -331,7 +331,7 @@ test("a real content failure before a repair transport error is retained without
     assert.equal(f.state().lastAttemptReason, "API_ERROR");
     assert.equal(f.state().failureFeedback.length, 1);
     assert.deepEqual(f.state().failureFeedback[0].failedCriteria, ["optionSteering"]);
-    await f.advance(30_000);
+    await f.advance(15_000);
     assert.deepEqual(retryFeedback(f.calls.filter(c => c.kind === "generator")[2]).map(r => r.failedCriteria), [["optionSteering"]]);
     assert.equal(f.messages().length, 1);
   } finally { await f.close(); }
@@ -353,7 +353,7 @@ test("request interruption is not content rejection and the same six-message opp
     assert.equal(f.state().lastAttemptReason, "REQUEST_SUPERSEDED");
     assert.deepEqual(f.state().failureFeedback, []);
     assert.equal(f.game.get("messagesSinceLastPublish"), 7, "Request/reply did not reset the already eligible message window");
-    await f.advance(30_000); assert.equal(f.messages().length, 1);
+    await f.advance(15_000); assert.equal(f.messages().length, 1);
     await f.send("Another question for @[Facilitator].", f.players[0]);
     await f.send("One ordinary public point.", f.players[0]);
     assert.equal(f.messages().length, 2, "A renewed request does not count as an ordinary resumption message");
@@ -373,7 +373,7 @@ test("retry feedback never makes a rejected draft ID eligible evidence for the n
   } });
   try {
     await f.run(); assert.equal(f.state().failureFeedback.length, 2);
-    await f.send("Fresh public context does not include that draft ID."); await f.advance(30_000);
+    await f.send("Fresh public context does not include that draft ID."); await f.advance(15_000);
     const retry = f.calls.filter(c => c.kind === "generator")[2];
     assert.equal(retryFeedback(retry).length, 2);
     assert.equal(f.messages().length, 0);
@@ -393,8 +393,8 @@ test("third-attempt request interruption keeps the two-speaker recovery conditio
   } });
   try {
     await f.run(); const id = f.state().opportunityId;
-    await f.send("Public point for attempt two."); await f.advance(30_000);
-    await f.send("Public point for attempt three."); await f.advance(30_000);
+    await f.send("Public point for attempt two."); await f.advance(15_000);
+    await f.send("Public point for attempt three."); await f.advance(15_000);
     await until(() => waiting);
     await f.send("@[Facilitator] Please clarify the task."); held.release();
     await until(() => f.state().status === "CANCELLED");
@@ -410,10 +410,10 @@ test("third-attempt request interruption keeps the two-speaker recovery conditio
     const automaticCalls = () => f.calls.filter(c => c.kind === "generator" && !c.requested);
     const attemptsBeforeResumption = automaticCalls().length;
     await f.send("Only A resumes discussion.", f.players[0]);
-    await f.advance(30_000);
+    await f.advance(15_000);
     assert.equal(automaticCalls().length, attemptsBeforeResumption, "A alone must not restart automatic generation after the old opportunity closes");
     for (let i = 0; i < 3; i++) await f.send(`More messages from A ${i}.`, f.players[0]);
-    await f.advance(30_000);
+    await f.advance(15_000);
     assert.equal(automaticCalls().length, attemptsBeforeResumption);
     assert.notEqual(f.state().opportunityId, id); assert.equal(f.state().attemptCount, 0);
     assert.deepEqual(f.state().failureFeedback, []);
@@ -424,7 +424,7 @@ test("third-attempt request interruption keeps the two-speaker recovery conditio
     const nextId = f.state().opportunityId;
     await f.run({ staticRetry: { opportunityId: id } });
     await f.run({ staticRetry: { opportunityId: nextId } });
-    await f.advance(30_000);
+    await f.advance(15_000);
     assert.equal(f.game.get("totalInterventions"), 1, "Neither the exhausted opportunity nor the new one can publish twice");
   } finally { held.release(); await f.close(); }
 });
@@ -438,13 +438,13 @@ for (const attempt of [1, 2]) test(`request interruption of attempt ${attempt} p
   } });
   try {
     const initial = f.run();
-    if (attempt === 2) { await initial; await f.send("Fresh context for the second attempt."); await f.advance(30_000); }
+    if (attempt === 2) { await initial; await f.send("Fresh context for the second attempt."); await f.advance(15_000); }
     await until(() => waiting); const id = f.state().opportunityId;
     const feedback = structuredClone(f.state().failureFeedback);
     await f.send("@[Facilitator] Can you clarify?", f.players[0]); held.release();
     await until(() => f.state().status === "PENDING");
     assert.equal(f.state().opportunityId, id); assert.deepEqual(f.state().failureFeedback, feedback);
-    await f.advance(30_000);
+    await f.advance(15_000);
     const automaticCalls = () => f.calls.filter(c => c.kind === "generator" && !c.requested);
     const before = automaticCalls().length;
     await f.send("A resumes after asking the question.", f.players[0]);
@@ -468,7 +468,7 @@ test("only ordinary messages from distinct participants after the reply satisfy 
     await until(() => requested);
     await f.send("A spoke before the reply.", f.players[0]);
     await f.send("B also spoke before the reply.", f.players[1]);
-    held.release(); await reply; await f.advance(30_000);
+    held.release(); await reply; await f.advance(15_000);
     const barrier = f.round.get(STATIC_REQUEST_RESUMPTION_KEY);
     assert.equal(barrier.publicBoundary, f.game.get("chat_round_0").length);
     assert.equal(barrier.satisfied, false);
@@ -479,7 +479,7 @@ test("only ordinary messages from distinct participants after the reply satisfy 
       { sender: { id: "system" }, messageType: "system", speakerType: "system" },
     ].map((m, i) => ({ ...m, messageId: `resumption-system-${i}`, text: "A non-participant message.", stage: "Discussion" }));
     f.game.set("chat_round_0", [...f.game.get("chat_round_0"), ...additions]);
-    await f.send("Only A speaks after the reply.", f.players[0]); await f.advance(30_000);
+    await f.send("Only A speaks after the reply.", f.players[0]); await f.advance(15_000);
     assert.equal(f.calls.length, calls, "Pre-reply speakers, AI and system messages do not satisfy the wait");
     await f.send("B now speaks after the reply.", f.players[1]);
     assert.equal(f.game.get("totalInterventions"), 1);
@@ -506,7 +506,7 @@ test("a newer request resets recovery at its own reply and an older reply callba
     assert.notEqual(currentReply, oldReply);
     f.h.staticInterventionScheduler.requestedPublished(f.game, oldReply);
     assert.equal(f.round.get(STATIC_REQUEST_RESUMPTION_KEY).messageId, currentReply);
-    await f.advance(30_000);
+    await f.advance(15_000);
     assert.equal(f.calls.filter(c => c.kind === "generator" && !c.requested).length, 0);
     await f.send("A speaks after the second reply.", f.players[0]);
     assert.equal(f.calls.filter(c => c.kind === "generator" && !c.requested).length, 0);
@@ -529,7 +529,7 @@ for (const gateName of ["cooldown", "message-count", "time-floor"]) test(`two-sp
     const auto = () => f.calls.filter(c => c.kind === "generator" && !c.requested);
     assert.equal(auto().length, 0);
     if (gateName === "cooldown") {
-      await f.advance(29_999); assert.equal(auto().length, 0);
+      await f.advance(14_999); assert.equal(auto().length, 0);
       await f.advance(1); assert.equal(auto().length, 1);
     } else if (gateName === "message-count") {
       assert.equal(f.game.get("messagesSinceLastPublish"), 3);
@@ -559,7 +559,7 @@ for (const change of ["stage-end", "round-switch"]) test(`request resumption is 
       for (const listener of f.h.Empirica.attributeListeners.filter(l => l.kind === "stage" && l.key === "ended"))
         await listener.callback(undefined, { stage: f.stage, ended: true });
       assert.equal(f.round.get(STATIC_REQUEST_RESUMPTION_KEY), null);
-      const before = f.calls.length; await f.advance(30_000); assert.equal(f.calls.length, before);
+      const before = f.calls.length; await f.advance(15_000); assert.equal(f.calls.length, before);
     } else {
       const nextRound = new FakeRound({ taskIndex: 1, facilitation: "static", generalInfo: "Compare the public information." }, f.game);
       const nextStage = new FakeStage({ name: "Task" }, nextRound); nextStage.currentGame = f.game;
@@ -585,7 +585,7 @@ test("failure references survive owner recovery, but cannot cross a game or roun
     f.round.set(STATIC_OPPORTUNITY_KEY, { ...original, ownerInstanceId: "restarted-process" });
     f.h.staticInterventionScheduler.wake(f.game);
     assert.deepEqual(f.state().failureFeedback, original.failureFeedback);
-    await f.send("Fresh discussion after recovery."); await f.advance(30_000);
+    await f.send("Fresh discussion after recovery."); await f.advance(15_000);
     assert.deepEqual(retryFeedback(f.calls.filter(c => c.kind === "generator")[2]), original.failureFeedback);
 
     const other = new FakeGame({}, f.players);
@@ -612,10 +612,10 @@ test("an exhausted opportunity clears feedback before a new eligible opportunity
   const f = await fixture({ hook: call => call.kind === "validator" ? response(flags("optionSteering")) : undefined });
   try {
     await f.run(); const id = f.state().opportunityId;
-    for (let i = 1; i < STATIC_MAX_ATTEMPTS; i++) { await f.send(`New context ${i}.`); await f.advance(30_000); }
+    for (let i = 1; i < STATIC_MAX_ATTEMPTS; i++) { await f.send(`New context ${i}.`); await f.advance(15_000); }
     assert.equal(f.state().status, "CANCELLED"); assert.deepEqual(f.state().failureFeedback, []);
     const previousCalls = f.calls.length;
-    await f.send("A new message after retry exhaustion."); await f.advance(30_000);
+    await f.send("A new message after retry exhaustion."); await f.advance(15_000);
     assert.notEqual(f.state().opportunityId, id);
     assert.deepEqual(retryFeedback(f.calls.slice(previousCalls).find(c => c.kind === "generator")), []);
   } finally { await f.close(); }
@@ -733,7 +733,7 @@ test("the ready listener recovers interrupted work and retries without a partici
     for (const listener of f.h.Empirica.readys) await listener.callback({ scopesByKind: () => new Map([[f.game.id, f.game]]) });
     await f.h.facilitatorTasks.drain();
     assert.ok(f.logs().some(e => e.outcome === "INTERRUPTED_CALLBACKS_RESTART"));
-    assert.equal(f.state().status, "PENDING"); await f.advance(30_000);
+    assert.equal(f.state().status, "PENDING"); await f.advance(15_000);
     assert.equal(f.messages().length, 1); assert.equal(f.state().opportunityId, stored.opportunityId);
     assert.equal(f.state().attemptCount, 2); assert.equal(f.game.get("humanMessageCount"), 6);
   } finally { await f.close(); }
@@ -752,7 +752,7 @@ test("background dispatch coalesces new humans and publication preserves the mes
     held.release(); await f.h.facilitatorTasks.drain();
     assert.equal(f.messages().length, 1); assert.equal(f.state().status, "PUBLISHED");
     const cursor = { ...f.game.get("humanMessageCursor") };
-    await f.advance(30_000);
+    await f.advance(15_000);
     assert.equal(f.messages().length, 1); assert.equal(f.state().attemptCount, 1);
     assert.equal(f.game.get("humanMessageCount"), 9);
     assert.deepEqual(f.game.get("humanMessageCursor"), cursor);
@@ -803,13 +803,13 @@ test("durable opportunity recovery rearms cooldown, and a committed message reco
   try {
     f.game.set("lastAttemptTimestamp", Date.now()); await f.run();
     f.h.staticInterventionScheduler.cancel(f.game);
-    const stored = { ...f.state(), status: "GENERATING", ownerInstanceId: "old-callbacks", attemptCount: 1, notBefore: Date.now() + 30_000 };
+    const stored = { ...f.state(), status: "GENERATING", ownerInstanceId: "old-callbacks", attemptCount: 1, notBefore: Date.now() + 15_000 };
     f.round.set(STATIC_OPPORTUNITY_KEY, stored); recovered.wake(f.game);
     assert.equal(f.state().status, "PENDING"); assert.equal(f.state().attemptCount, 1);
-    await f.advance(29_999); assert.equal(runs, 0);
+    await f.advance(14_999); assert.equal(runs, 0);
     f.game.set("chat_round_0", [...f.game.get("chat_round_0"), { messageId: `facilitator-${stored.opportunityId}`, opportunityId: stored.opportunityId }]);
     recovered.wake(f.game); assert.equal(f.state().status, "PUBLISHED");
-    await f.advance(30_000); assert.equal(runs, 0);
+    await f.advance(15_000); assert.equal(runs, 0);
   } finally { recovered.cancel(f.game); await f.close(); }
 });
 
@@ -833,7 +833,7 @@ for (const boundary of ["initial-state", "before-append", "after-append"]) test(
   try {
     await f.run(); assert.equal(failed, true); assert.deepEqual(f.game.get("llmInFlight"), {});
     if (boundary === "after-append") assert.equal(f.state().status, "PUBLISHED");
-    else { assert.equal(f.state().status, "PENDING"); await f.advance(30_000); }
+    else { assert.equal(f.state().status, "PENDING"); await f.advance(15_000); }
     assert.equal(f.messages().length, 1); assert.equal(f.game.get("publishedThisRound"), 1);
     assert.equal(f.game.get("totalInterventions"), 1);
     await f.advance(31_000); assert.equal(f.messages().length, 1);
@@ -850,7 +850,7 @@ test("a requested reply committed before a crash restores its discussion barrier
       facilitatorTrigger: "PARTICIPANT_REQUEST", sender: { id: "ai", name: "Facilitator" }, text: "Earlier requested clarification." }]);
     f.h.staticInterventionScheduler.wake(f.game);
     assert.equal(f.round.get(STATIC_REQUEST_RESUMPTION_KEY).messageId, "recovered-request");
-    await f.advance(30_000); assert.equal(f.calls.length, 1);
+    await f.advance(15_000); assert.equal(f.calls.length, 1);
     await f.send("City A has a point to consider.", f.players[0]);
     await f.send("City B has another point.", f.players[1]);
     assert.equal(f.messages().length, 2); assert.equal(f.state().opportunityId, id);
@@ -878,7 +878,7 @@ test("recovery reconciles a real canonical message and partial publication accou
     f.h.staticInterventionScheduler.wake(f.game);
     assert.equal(f.state().status, "PUBLISHED"); assert.equal(f.game.get("publishedThisRound"), 1);
     assert.equal(f.game.get("totalInterventions"), 1); assert.equal(f.game.get("messagesSinceLastPublish"), 0);
-    f.h.staticInterventionScheduler.wake(f.game); await f.advance(30_000);
+    f.h.staticInterventionScheduler.wake(f.game); await f.advance(15_000);
     assert.equal(f.calls.length, 2); assert.equal(f.messages().length, 1);
     assert.equal(f.game.get("interventionHistory").filter(item => item.messageId === message.messageId).length, 1);
   } finally { await f.close(); }

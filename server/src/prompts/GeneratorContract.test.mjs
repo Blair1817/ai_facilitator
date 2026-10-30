@@ -22,7 +22,7 @@ const {
   stripMarkdownWrapper,
   getGenerationSchemaMaxLength,
 } = await import("./GeneratorContract.mjs");
-const { runtimeGeneratorBundle, verifyRuntimeSources } = await import("./PromptRuntime.mjs");
+const { runtimeGeneratorBundle, verifyRuntimeSources, SYNTHESISER_MAX_WORDS } = await import("./PromptRuntime.mjs");
 
 const VALID_CANDIDATE = { role: "INFORMATION_EXPANDER", message: "Is there anything else anyone has not shared yet?", groundingMessageIds: [] };
 
@@ -348,23 +348,23 @@ test("deterministic validation: multiple simultaneous failures are all reported,
   assert.ok(result.failedCriteria.includes("UNKNOWN_GROUNDING_ID"));
 });
 
-test("Synthesiser accepts four sentences but still rejects more than 55 words", () => {
+test("Synthesiser accepts four sentences but does not reject complete summaries above the old 55-word cap", () => {
   const context = {
     selectedRole: "INFORMATION_SYNTHESISER",
     eligibleMessageIds: ["m0"],
-    maxWords: 55,
+    maxWords: SYNTHESISER_MAX_WORDS,
   };
   const candidate = (message) => ({ role: "INFORMATION_SYNTHESISER", message, groundingMessageIds: ["m0"] });
   const fiftyFiveWords = Array.from({ length: 55 }, (_, index) => `word${index + 1}`).join(" ");
   const fiftySixWords = `${fiftyFiveWords} word56`;
 
   assert.equal(runDeterministicValidation(candidate(fiftyFiveWords), context).passed, true);
-  assert.deepEqual(runDeterministicValidation(candidate(fiftySixWords), context).failedCriteria, ["MESSAGE_EXCEEDS_WORD_LIMIT"]);
+  assert.equal(runDeterministicValidation(candidate(fiftySixWords), context).passed, true);
   assert.equal(runDeterministicValidation(candidate("First. Second. Third."), context).passed, true);
   assert.equal(runDeterministicValidation(candidate("First. Second. Third. Fourth."), context).passed, true);
 });
 
-test("Synthesiser schema, role and flattened structured output cannot bypass grounding or length checks", () => {
+test("Synthesiser schema and role checks remain enforced without a fixed word cap", () => {
   const structured = {
     role: "INFORMATION_SYNTHESISER",
     message: {
@@ -379,9 +379,9 @@ test("Synthesiser schema, role and flattened structured output cannot bypass gro
   const checked = runDeterministicValidation(normalized, {
     selectedRole: "INFORMATION_SYNTHESISER",
     eligibleMessageIds: ["m0"],
-    maxWords: 55,
+    maxWords: SYNTHESISER_MAX_WORDS,
   });
-  assert.ok(checked.failedCriteria.includes("MESSAGE_EXCEEDS_WORD_LIMIT"));
+  assert.equal(checked.passed, true);
 
   const { groundingMessageIds: _ids, ...missingGrounding } = structured;
   assert.equal(validateAgainstGenerationSchema(missingGrounding, "INFORMATION_SYNTHESISER").ok, false);
@@ -403,10 +403,10 @@ test("Synthesiser runtime prompt matches the simulator, manifest bytes and compo
 
   const bundle = runtimeGeneratorBundle("synthesiser");
   assert.equal(bundle.blocked, false);
-  assert.equal(bundle.metadata.maxWords, 55);
+  assert.equal(bundle.metadata.maxWords, null);
   assert.equal(bundle.metadata.promptHash, manifest.routes.synthesiser.generatorSha256);
   assert.doesNotMatch(bundle.content, /30–45|at most three sentences|at most two points per option/);
-  assert.match(bundle.content, /runtime ceiling is 55 English words/);
+  assert.match(bundle.content, /no fixed word ceiling/);
 });
 
 // ── deterministic @-mention hygiene (2026-08-13) ────────────────────────

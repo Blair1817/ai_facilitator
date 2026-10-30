@@ -30,14 +30,14 @@ in the candidate is grounded. Verify claims in the public sources.
 
 ## EXPANDER
 - COVERAGE_GAP_ELICITATION: ask for information good or bad about one or two
-  established under-discussed options. This is an invitation for concrete
+  established under-discussed options or an established under-covered aspect of the task. This is an invitation for concrete
   information even if the question does not say "concrete" or list criteria.
   A target mentioning several missing criteria does not require enumerating
   them; do not imply that unmentioned information exists for an option.
 - CONCRETE_EVIDENCE_ELICITATION: ask for specific things participants have read
   about the target option, good or bad, beyond its existing vague impression.
-- PARTICIPATION_ELICITATION: invite exactly one roster-confirmed quiet target
-  using @[Name], with an easy way out. No inferred private possession or motive.
+- PARTICIPATION_ELICITATION: invite every roster-confirmed quiet or silent target in TARGET.participantNames
+  (or the single legacy TARGET.participantName) together using @[Name] for each, with an easy way out. No inferred private possession or motive.
 No synthesis, option preference request, one-sided solicitation, fabricated
 missing topic, or @[Name] outside the participation operation.
 
@@ -76,9 +76,10 @@ solicit unrelated topics, or tag preference holders instead of a point's source.
   Timing does not authorise a final-choice declaration or an invented consensus.
 - Numbered lists, paragraphs, sections and more than two points per option are
   valid. Grounded explanation is allowed. Do not reject a candidate for these
-  forms. Authorised sources are not a requirement to repeat every fact; assess
-  whether the selected material faithfully performs the assigned operation.
-- Prefer points mentioned once and not taken up again; for tied points retain
+  forms. For Synthesiser, inspect the complete required synthesis scope and reject
+  any missing distinct task fact, condition, uncertainty, correction or unresolved
+  concern. Seed citations are not a licence for selective coverage.
+- Include points mentioned once and not taken up again; retain
   first-appearance order. Keep relevant units, scope, quantities and uncertainty.
 - Use authoritative option order from "Available alternatives:" in task context;
   otherwise an explicit task list, otherwise discussion first appearance. Apply
@@ -115,8 +116,9 @@ Set each independently; do not substitute roleMisaligned for other violations.
    neutral target. The permitted Challenger alternatives question is not steering.
 9. requiredReasoningActMissing: does not actually execute the assigned operation
    on the verified target, substitutes generic encouragement, or lacks exactly
-   one substantive answerable closing question. A faithful selection from more
-   cited facts is allowed. Invalid plan/preflight still forces true.
+   one substantive answerable closing question. Synthesiser must cover all relevant
+   public task facts in the required scope, faithfully merging duplicates. An
+   omitted point or misleading loss of scope forces true. Invalid plan/preflight still forces true.
 10. unanswerable: no actionable question, multiple independent questions,
     unsupported premise, presumed private holder or out-of-task demand.
     Asking for relevant not-yet-public contributions is answerable.
@@ -126,8 +128,9 @@ Set each independently; do not substitute roleMisaligned for other violations.
     or asks for work demonstrably completed. Different open targets may use the
     same operation. Do not treat rejected drafts as delivered AI history.
 13. length: exceeds the runtime word ceiling: Expander/Challenger 50 English
-    words, Synthesiser 55, counting all visible text including headings and list
-    numbers. Do not impose a target range, sentence, paragraph, section or point
+    words, counting all visible text including headings and list numbers. Synthesiser
+    has no fixed word ceiling; flag only avoidable repetition or filler that can be
+    removed without losing any required information. Never penalise detail needed for complete coverage. Do not impose a target range, sentence, paragraph, section or point
     count limit, or reject grounded explanation merely for being detailed.
 
 ## OUTPUT
@@ -139,4 +142,4 @@ Re-audit every criterion on retries; PRIOR_FAILED_CRITERIA is attention guidance
 not a verdict or permission to ignore the other flags.
 
 ## CLOSEOUT AND SEMANTIC RECOVERY
-The plan may carry scheduling stage and semanticReview. Time or two-person readiness never makes a candidate grounded or non-redundant. A two-person ending proposal is not unanimity; do not imply the silent person agreed or declare a final decision. Check all represented public objections and scope. Repetition is semantic: the same claim/issue with new message IDs remains repeated without material new evidence; no response alone does not reopen it. A distinct issue on the same option is allowed. A completed current participant or AI summary makes an equivalent representation redundant. An explicit participant summary still underway must not be interrupted. A repair stays within the original allowed evidence and plan. The entire visible Synthesiser message remains at most 55 words, including numbering, headings, sections and its closing question.
+The plan may carry scheduling stage and semanticReview. Time or two-person readiness never makes a candidate grounded or non-redundant. A two-person ending proposal is not unanimity; do not imply the silent person agreed or declare a final decision. Check all represented public objections and scope. Repetition is semantic: the same claim/issue with new message IDs remains repeated without material new evidence; no response alone does not reopen it. A distinct issue on the same option is allowed. A completed current participant or AI summary makes an equivalent representation redundant. An explicit participant summary still underway must not be interrupted. A repair stays within the original allowed evidence and plan. Synthesiser must preserve all relevant public information within its complete declared scope. Minimise wording only after completeness; never delete required facts or target options to shorten.

@@ -81,9 +81,8 @@ export function quietParticipants(counts, rule = QUIET_PARTICIPANT_RULE) {
 // last SILENCE_WINDOW public participant messages (two 6-message checkpoint
 // intervals). Evaluated only when at least SILENCE_WINDOW messages exist.
 export const SILENCE_WINDOW = 12;
-// Per participant and round: at most this many participation invitations, and
-// none within SILENCE_WINDOW human messages of the previous invitation.
-export const PARTICIPATION_INVITE_CAP = 2;
+// Participation invitations have no per-round cap or per-person message spacing.
+// The shared checkpoint pacing still applies.
 
 /** Roster names with zero messages among the last `window` public participant messages. */
 export function silentInWindow(chat, rosterNames = [], window = SILENCE_WINDOW) {

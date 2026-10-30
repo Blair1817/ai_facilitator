@@ -1,3 +1,4 @@
+import { completeSynthesisPlan, synthesisOutputTokens } from "./SynthesisCoverage.mjs";
 import { withPipelineLifetime, pipelineOptions, cancelStagePipelines, delayWithinPipeline } from "./PipelineLifetime.mjs";
 import { createBackgroundTasks } from "./BackgroundTasks.mjs";
 import { createDiscussionDeadline } from "./DiscussionDeadline.mjs";
@@ -7,7 +8,7 @@ import { createCloseoutScheduler } from "./AdaptiveCloseoutScheduler.mjs";
 import { createStaticInterventionScheduler } from "./StaticInterventionScheduler.mjs";
 import { buildStaticRetryUserContent } from "./StaticRetryFeedback.mjs";
 import { createFacilitatorPublicationCoordinator } from "./FacilitatorPublication.mjs";
-import { isPublicParticipantMessage, countPublicMessagesByName, quietParticipants, silentInWindow, countOptionMentions, SILENCE_WINDOW, PARTICIPATION_INVITE_CAP } from "./CognitiveOperations.mjs";
+import { isPublicParticipantMessage, countPublicMessagesByName, quietParticipants, silentInWindow, countOptionMentions, SILENCE_WINDOW } from "./CognitiveOperations.mjs";
 import { acceptIndependentDecision, finalizeIndependentDecision } from "./FinalDecisionSubmission.mjs";
 import { DECISION_NUDGE } from "../../shared/decisionSubmission.mjs";
 import { ClassicListenersCollector } from "@empirica/core/admin/classic";
@@ -667,7 +668,9 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     const invoke = (timing = {}) => {
       generatorAttempts += 1;
       logEntry.requestMade = true;
-      return getLLMResponse(messages, llmMaxOutputTokens, { ...generationOptions, ...timing });
+      const outputTokens = built.metadata.generationRole === "INFORMATION_SYNTHESISER"
+        ? synthesisOutputTokens(chat, llmMaxOutputTokens) : llmMaxOutputTokens;
+      return getLLMResponse(messages, outputTokens, { ...generationOptions, ...timing });
     };
     const llmResponse = adaptiveBudget
       ? await adaptiveBudget.call("generator", invoke, repairKind)
@@ -694,6 +697,10 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       ...(logEntry.generatorRawResponses || []),
       { attempt: (logEntry.generatorRawResponses?.length || 0) + 1, rawText: llmResponse.rawText },
     ];
+    if (built.metadata.generationRole === "INFORMATION_SYNTHESISER" && llmResponse.responseMetadata?.finish_reason === "length") {
+      logEntry.failureStage = "generator_truncated";
+      return { silent: true, reason: "Incomplete synthesis: provider output token limit reached" };
+    }
     logEntry.requestSuccess = true;
 
     const parseResult = parseGeneratorOutputStrict(llmResponse.rawText);
@@ -730,12 +737,11 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       aiOrSystemMessageIds: built.aiOrSystemMessageIds,
       recentAiMessageTexts: built.recentAiMessageTexts,
       allowedGroundingIds: built.allowedGroundingIds,
-      // Word cap applies to every automatically triggered facilitator path
-      // (Static + Adaptive Generalist/Specialist). It is deliberately not
-      // applied to the participant-requested (@Facilitator) bundle, which
-      // is tagged triggerType: "PARTICIPANT_REQUEST" in its prompt metadata
-      // -- that role needs more room to ground a substantive answer.
-      maxWords: built.metadata.triggerType === "PARTICIPANT_REQUEST" ? null : built.metadata.maxWords ?? AUTOMATIC_MAX_WORDS,
+      // Static, Generalist, Expander and Challenger keep their word caps.
+      // Synthesis must preserve complete public coverage; requested replies
+      // also use their existing uncapped visible-text policy.
+      maxWords: built.metadata.triggerType === "PARTICIPANT_REQUEST" || built.metadata.generationRole === "INFORMATION_SYNTHESISER"
+        ? null : built.metadata.maxWords ?? AUTOMATIC_MAX_WORDS,
       enforcePlanGrounding: isSpecialistRole(built.metadata.generationRole),
       forbidInternalDisclosure: isSpecialistRole(built.metadata.generationRole),
       // 2026-08-13: pipe the per-checkpoint participant roster into
@@ -745,6 +751,8 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       // harmless because the Validator LLM still catches the same
       // misuse semantically).
       activeParticipantNames: built.activeParticipantNames ?? null,
+      participationTargetNames: built.interventionPlan?.requiredReasoningAct === "PARTICIPATION_ELICITATION"
+        ? built.interventionPlan.target.participantNames ?? [built.interventionPlan.target.participantName] : null,
     });
     logEntry.deterministic = deterministicResult;
     if (!deterministicResult.passed) {
@@ -814,7 +822,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       selectedRole: built.metadata.generationRole,
       taskGeneralContext: built.taskGeneralContext,
       callLLM: (messages, options) => adaptiveBudget
-        ? adaptiveBudget.call("validator", timing => getLLMResponse(messages, llmMaxOutputTokens, { ...options, ...timing }))
+        ? adaptiveBudget.call("validator", timing => getLLMResponse(messages, built.metadata.generationRole === "INFORMATION_SYNTHESISER" ? synthesisOutputTokens(chat, llmMaxOutputTokens) : llmMaxOutputTokens, { ...options, ...timing }))
         : getLLMResponse(messages, llmMaxOutputTokens, options),
       priorFailedCriteria,
       priorCandidate,
@@ -2099,7 +2107,7 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
 
   // ── Phase 3: ask CheckpointManager whether the trigger conditions
   // are satisfied. Ordinary Static/Adaptive messages share the six-message
-  // gate and 30-second cooldown. Adaptive uses a 20-second floor and its
+  // gate and 15-second cooldown. Adaptive uses a 20-second floor and its
   // independent closeout scheduler shares the same in-flight lock. Neither has a
   // per-round automatic-attempt cap. Task/chat guards and per-message
   // deduplication remain shared.
@@ -2423,40 +2431,39 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
   logEntry.optionMentionCounts = optionMentionCounts;
   const recentRoles = cognitiveHistory.map(h => h.role).filter(Boolean);
   const participationInvites = currentRound.get("participationInvites") || {};
-  const invitable = name => {
-    const record = participationInvites[name];
-    return !record || ((record.count || 0) < PARTICIPATION_INVITE_CAP
-      && humanMessageCount - (record.atHumanMessageCount ?? -Infinity) >= SILENCE_WINDOW);
-  };
-  const pickOne = names => names[Math.floor(Math.random() * names.length)];
-  // A code-built participation candidate: invite `name`, anchored to the latest
-  // public participant message (the current topic). Verified by the same checker.
-  const participationCandidate = (name, source) => {
+  // Invite every code-verified silent or quiet participant together. No random
+  // target choice, per-person spacing, or per-round cap; normal pacing applies.
+  const participationCandidate = (names, source) => {
     const anchor = withMessageIds(formalChat).filter(isPublicParticipantMessage).at(-1);
-    if (!name || !anchor?.text) return null;
+    if (!names.length || !anchor?.text) return null;
     const checked = checkNeedAssessment({ need: "ELICIT", operation: "participation_gap", rationale: source, target: {
-      label: `Invite ${name} to share anything from their notes`, messageIds: [anchor.messageId],
-      evidence: [{ messageId: anchor.messageId, span: anchor.text }], optionLabels: [], criteria: [], participantName: name } },
+      label: `Invite ${names.join(", ")} to share anything from their notes`, messageIds: [anchor.messageId],
+      evidence: [{ messageId: anchor.messageId, span: anchor.text }], optionLabels: [], criteria: [], participantNames: names } },
       { chat: formalChat, activeParticipantNames: rosterNames });
     return checked.role ? { ...checked, source } : null;
   };
-  const silentNames = logEntry.triggerSource === "message" ? silentInWindow(formalChat, rosterNames).filter(invitable) : [];
-  logEntry.silenceRule = { window: SILENCE_WINDOW, silent: silentInWindow(formalChat, rosterNames), eligible: silentNames };
-  const quietCandidateName = pickOne(quietNames.filter(n => invitable(n) && !silentNames.includes(n)));
-  const extraCandidates = [participationCandidate(quietCandidateName, "code_quiet")].filter(Boolean);
+  const silentNames = silentInWindow(formalChat, rosterNames);
+  const participationNames = logEntry.triggerSource === "message"
+    ? rosterNames.filter(name => silentNames.includes(name) || quietNames.includes(name)) : [];
+  logEntry.silenceRule = { window: SILENCE_WINDOW, silent: silentNames, eligible: silentNames.filter(n => participationNames.includes(n)) };
+  logEntry.participationRule = { eligible: participationNames, mode: "all_eligible" };
+  const extraCandidates = [];
   const budget = createAdaptiveBudget({
     deadline: () => game.get("deadline"), log: logEntry,
     isCurrent: () => canPublishFacilitatorResult(game, logEntry)
       && automaticContextStillUsable(game, logEntry),
   });
   let publishedPlan = null;
+  let publishedSelectionKey = null;
   async function assess(excluded = []) {
     if (!budget.check()) return null;
     const start = Date.now();
     const remaining = budget.remainingTime();
-    // 2026-10-26: no priority between needs is supplied to the detector.
+    // Detector reports independently evidenced needs and optional current blockers;
+    // code controls priority, waiting time and tie-breaking.
     const scheduling = { remainingTimeMs: remaining, triggerSource: logEntry.triggerSource,
-      closeoutOpportunity: remaining <= 180_000, evaluateEarlyCloseout: true };
+      closeoutOpportunity: remaining <= 180_000, evaluateEarlyCloseout: true,
+      knownTargetIdentities: Object.keys(currentRound.get("adaptivePendingCandidates") || {}) };
     const assessorResult = await assessSemanticFactors({
       chat: formalChat, contextScope: "complete_current_round", interventionHistory: cognitiveHistory,
       activeParticipantNames: rosterNames, participationCounts, quietParticipants: quietNames, optionMentionCounts,
@@ -2480,11 +2487,12 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
     }
     if (!budget.check()) return null;
     logEntry.rawDetectorFactors = assessorResult.factors;
-    const checked = selectAdaptiveAssessment(assessorResult.factors, {
+    let checked = selectAdaptiveAssessment(assessorResult.factors, {
       chat: formalChat, roster: rosterNames,
       optionLabels: (currentRound.get("decisionOptions") || []).map(o => o.label),
       remainingTimeMs: budget.remainingTime(), triggerSource: logEntry.triggerSource, history: cognitiveHistory, excluded,
       extraCandidates, recentRoles,
+      pendingCandidates: currentRound.get("adaptivePendingCandidates") || {}, humanMessageCount,
       validateIntegration: (candidate, semanticReview) => {
         const plan = compilePlan("synthesiser", candidate.checkedFactors, {
           eligibleMessageIds: withMessageIds(formalChat).filter(isFormalHumanMessage).map(m => m.messageId),
@@ -2496,6 +2504,20 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
           }) });
       },
     });
+    // Persist observed eligibility even when participation takes this checkpoint.
+    // Timed integration scans, deferrals and recovery must not erase that queue.
+    if (logEntry.triggerSource === "message" && !excluded.length && checked.selection?.pending) {
+      currentRound.set("adaptivePendingCandidates", checked.selection.pending);
+    }
+    // Respect an explicit participant summary before inviting all eligible names.
+    // Participation is deterministic and takes precedence over the role draw.
+    const participation = !checked.defer && !excluded.length
+      ? participationCandidate(participationNames, "participation_rule") : null;
+    if (participation) checked = { ...participation, scheduling: checked.scheduling, early: checked.early,
+      integrationObservation: checked.integrationObservation,
+      selection: { mode: "rule_triggered", pool: [{ need: "ELICIT", operation: "participation_gap", role: "expander",
+        participantNames: participation.target.participantNames, source: "participation_rule" }],
+        probability: 1, rejected: [], remaining: [] } };
     checked.excludedTargets = excluded;
     logEntry.detectorCandidates = assessorResult.factors?.candidates ?? null;
     logEntry.selection = { ...checked.selection, remaining: (checked.selection?.remaining || []).length };
@@ -2536,42 +2558,27 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
     logEntry.controllerSelectedRole = chosen.role;
     logEntry.forced = false;
     logEntry.reasoning = gate.reason;
-    const plan = compilePlan(chosen.role, selection.checkedFactors, {
+    let plan = compilePlan(chosen.role, selection.checkedFactors, {
       eligibleMessageIds: withMessageIds(formalChat).filter(isFormalHumanMessage).map(m => m.messageId),
       interventionHistory: cognitiveHistory, scheduling: selection.scheduling, semanticReview: selection.semanticReview,
       excludedTargets: selection.excludedTargets,
     });
+    plan = completeSynthesisPlan(plan, { chat: formalChat, optionLabels });
     logEntry.plan = plan;
     delete logEntry.validator;
     delete logEntry.validatorRepair;
     const built = buildGeneratorContext(game, players, chat, budget.remainingTime(), Date.now() - game.get("taskStartTime"), "adaptive", chosen.role, plan);
     const result = await runSharedGeneration(game, chatKey, built, logEntry, originatingRoundId, originatingStageId, chat, { adaptiveBudget: budget });
-    if (result.published) publishedPlan = plan;
+    if (result.published) { publishedPlan = plan; publishedSelectionKey = selection.selectionKey; }
     return { ...result, role: chosen.role, outcome: logEntry.outcome, reason: logEntry.reason, failureStage: logEntry.failureStage,
       repetition: result.repetition || built.planPreflight?.failureReasons?.includes("TARGET_ALREADY_ADDRESSED") || false };
   }
   try {
-    // 2026-10-26: silence hard rule (Adaptive, message-triggered checkpoints
-    // only): a participant silent across the last SILENCE_WINDOW public
-    // messages is invited by the Expander. Not randomized; no detector call.
-    let initial = null;
-    const silentTarget = participationCandidate(pickOne(silentNames), "silence_rule");
-    if (silentTarget) {
-      const scheduling = { stage: "ordinary", remainingTimeMs: budget.remainingTime(), triggerSource: logEntry.triggerSource };
-      initial = { ...silentTarget, scheduling, early: { active: false, reason: "not_assessed" },
-        selection: { mode: "rule_triggered", pool: [{ need: "ELICIT", operation: "participation_gap", role: "expander",
-          participantName: silentTarget.target.participantName, source: "silence_rule" }],
-          probability: 1 / silentNames.length, rejected: [], remaining: [] } };
-      logEntry.selection = { ...initial.selection, remaining: 0 };
-      const gate = evaluateNeedGate(initial, { remainingTime: budget.remainingTime(), scheduling });
-      Object.assign(logEntry, { gateDecision: gate.decision, gateReason: gate.reason, eligibleRoles: gate.eligibleRoles });
-    } else {
-      initial = await assess();
-    }
+    const initial = await assess();
     const redraw = previous => {
       const next = redrawAdaptiveSelection(previous, { recentRoles });
       logEntry.selection = { ...logEntry.selection, redraw: { probability: next.selection?.probability ?? null,
-        role: next.role ?? null, need: next.need ?? null } };
+        role: next.role ?? null, need: next.need ?? null, reason: next.selection?.reason ?? null } };
       return next;
     };
     const result = await runAdaptiveSelection({ assess, generate, fallback, budget, log: logEntry, initial,
@@ -2580,11 +2587,20 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
     logEntry.modelCallCount = budget.calls.length;
     if (result.published) {
       recordPublish(game, { role: result.role, humanMessageCountAtPublish: logEntry.publishedHumanMessageCount, messageId: logEntry.publishedMessageId, now: Date.now() });
-      const invited = publishedPlan?.requiredReasoningAct === "PARTICIPATION_ELICITATION" ? publishedPlan.target?.participantName : null;
-      if (invited) {
-        const previous = participationInvites[invited] || {};
-        currentRound.set("participationInvites", { ...participationInvites,
-          [invited]: { count: (previous.count || 0) + 1, atHumanMessageCount: humanMessageCount } });
+      if (publishedSelectionKey) {
+        const pending = { ...(currentRound.get("adaptivePendingCandidates") || {}) };
+        delete pending[publishedSelectionKey];
+        currentRound.set("adaptivePendingCandidates", pending);
+      }
+      const invited = publishedPlan?.requiredReasoningAct === "PARTICIPATION_ELICITATION"
+        ? publishedPlan.target?.participantNames ?? [publishedPlan.target?.participantName].filter(Boolean) : [];
+      if (invited.length) {
+        const nextInvites = { ...participationInvites };
+        for (const name of invited) {
+          const previous = participationInvites[name] || {};
+          nextInvites[name] = { count: (previous.count || 0) + 1, atHumanMessageCount: humanMessageCount };
+        }
+        currentRound.set("participationInvites", nextInvites);
       }
       if (publishedPlan) currentRound.set("cognitiveInterventionHistory", [...cognitiveHistory, {
         planId: publishedPlan.planId, signature: publishedPlan.signature, role: result.role,

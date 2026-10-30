@@ -5,7 +5,8 @@ import { createHash } from "node:crypto";
 const entryDir = process.argv[1] ? path.dirname(process.argv[1]) : path.join(process.cwd(), "dist");
 export const RUNTIME_SOURCE_DIR = path.join(entryDir, "prompts", "source", "runtime");
 export const AUTOMATIC_MAX_WORDS = 50;
-export const SYNTHESISER_MAX_WORDS = 55;
+// Complete coverage takes precedence; concision is audited semantically.
+export const SYNTHESISER_MAX_WORDS = null;
 export const PROMPT_RUNTIME_VERSION = "v3.2";
 export const SPECIALIST_ROLES = Object.freeze({ expander: "INFORMATION_EXPANDER", challenger: "EVIDENCE_CHALLENGER", synthesiser: "INFORMATION_SYNTHESISER" });
 export function isSpecialistRole(role) { return Object.values(SPECIALIST_ROLES).includes(role); }

@@ -1,3 +1,4 @@
+import { mockSynthesisCoverage } from "../test/participant_sim/fakes/synthesisCoverage.mjs";
 // Real callbacks with a fake Empirica store, controlled provider responses and
 // no external requests. These tests verify orchestration, not model quality.
 import test from "node:test";
@@ -78,7 +79,7 @@ async function run(w, { assessments = [need(w)], generators, validators = [], tr
     requests.push({ kind, ...body });
     let data;
     if (kind === "assessor") data = asDetector(assessments[Math.min(a++, assessments.length - 1)]);
-    else if (kind === "validator") data = validators[v++] ?? flags();
+    else if (kind === "validator") data = mockSynthesisCoverage(validators[v++] ?? flags(), body.messages[1].content);
     else data = generators?.[g++] ?? (system.includes("# synthesiser.md") ? synthesis : system.includes("# challenger.md") ? challengerReply : staticReply);
     await mutate?.(kind, w, requests);
     return provider(data);
@@ -92,9 +93,8 @@ async function run(w, { assessments = [need(w)], generators, validators = [], tr
     timers.forEach(clearTimeout); globalThis.fetch = oldFetch; globalThis.setTimeout = oldTimeout;
   }
 }
-// 2026-10-26: no priority between needs. Both verified candidates enter the
-// pool and the role is drawn uniformly (Math.random is fixed here).
-test("verified scrutiny and integration are both eligible and the role is drawn uniformly, at any remaining time", async () => {
+// With equal urgency and waiting time, the remaining role tie is uniform.
+test("equally urgent new scrutiny and integration candidates tie uniformly, at any remaining time", async () => {
   for (const remaining of [400_000, 120_000]) {
     for (const [value, role, act] of [[0, "challenger", "EVIDENCE_AUDIT"], [0.99, "synthesiser", "EVIDENCE_CONSOLIDATION"]]) {
       const w = world({ remaining }), raw = { ...need(w), integrationCandidate: need(w, "INTEGRATE"), integrationStatus: "qualified" };
@@ -102,7 +102,7 @@ test("verified scrutiny and integration are both eligible and the role is drawn 
       assert.equal(r.published.length, 1);
       assert.equal(r.audit.plan.role, role, `${remaining}/${value}`);
       assert.equal(r.audit.plan.requiredReasoningAct, act);
-      assert.equal(r.audit.selection.mode, "randomized");
+      assert.equal(r.audit.selection.mode, "prioritized");
       assert.deepEqual(r.audit.selection.pool.map(c => c.role), ["challenger", "synthesiser"]);
       assert.equal(r.audit.selection.probability, 0.5);
       assert.equal(Object.hasOwn(r.audit.plan.scheduling, "integrationPriority"), false);
@@ -304,4 +304,69 @@ test("overlapping timed/message evaluations share the durable automatic lock and
     release?.(); harness.adaptiveCloseoutScheduler.cancel(w.game, "test_complete");
     timers.forEach(clearTimeout); globalThis.fetch = oldFetch; globalThis.setTimeout = oldTimeout;
   }
+});
+
+
+test("successful publication removes only its selected target from the round queue", async () => {
+  const w = world();
+  const raw = { ...need(w), integrationCandidate: need(w, "INTEGRATE"), integrationStatus: "qualified" };
+  const r = await withRandom(0, () => run(w, { assessments: [raw] }));
+  assert.equal(r.published.length, 1);
+  const pool = r.audit.selection.pool;
+  const pending = w.round.get("adaptivePendingCandidates");
+  assert.equal(Object.hasOwn(pending, pool.find(c => c.role === "challenger").selectionKey), false);
+  assert.equal(Object.hasOwn(pending, pool.find(c => c.role === "synthesiser").selectionKey), true);
+});
+
+test("failed generation and Static fallback do not mark the substantive target served", async () => {
+  const w = world();
+  const r = await run(w, { validators: [flags("roleMisaligned"), flags("roleMisaligned"), flags()] });
+  assert.equal(r.audit.selectedRole, "STATIC");
+  assert.equal(Object.keys(w.round.get("adaptivePendingCandidates")).length, 1);
+});
+
+
+test("a blocker annotation survives schema parsing and controls the real callback selection", async () => {
+  const chat = lines.map((text, i) => ({ text: i === 5 ? "Norvale guarantees everyone arrives on time, so let's submit Norvale now." : text,
+    sender: { id: names[i % 3], name: names[i % 3] } }));
+  const w = world({ chat });
+  const data = toDetectorOutput({ ...need(w), integrationCandidate: need(w, "INTEGRATE"), integrationStatus: "qualified" });
+  data.candidates.scrutinize.blocking = { kind: "decision_reasoning_risk",
+    evidence: [{ messageId: "m5", span: w.chat[5].text }], rationale: "The unsupported guarantee is being used to submit now." };
+  const { validateAgainstAssessorSchema } = await import("./SemanticAssessor.js");
+  assert.equal(validateAgainstAssessorSchema(data).ok, true);
+  const r = await withRandom(0.99, () => run(w, { assessments: [data] }));
+  assert.equal(r.published.length, 1);
+  assert.equal(r.audit.selectedRole, "challenger");
+  assert.equal(r.audit.selection.reason.priority, 1);
+  assert.equal(r.audit.selection.probability, 1);
+  assert.deepEqual(r.audit.selection.pool.find(c => c.role === "challenger").priorityEvidence, data.candidates.scrutinize.blocking.evidence);
+});
+
+
+test("a full synthesis above 55 words is preserved, gets a larger token budget, and can cite beyond detector seeds", async () => {
+  const extra = " The shuttle stops at the main hall only on weekdays and does not serve the riverside entrance on weekends.";
+  const chat = lines.map((text, i) => ({ text: i === 0 ? text + extra : text,
+    sender: { id: names[i % 3], name: names[i % 3] } }));
+  const w = world({ chat });
+  const summary = chat.map(m => m.text).join(" ") + " How do you weigh all these reported points together?";
+  assert.ok(summary.split(/\s+/).length > 55);
+  const r = await run(w, { assessments: [need(w, "INTEGRATE")], generators: [{ role: "INFORMATION_SYNTHESISER", message: summary,
+    groundingMessageIds: chat.map((_, i) => `m${i}`) }] });
+  assert.equal(r.published.length, 1);
+  assert.equal(r.published[0].content, summary);
+  assert.equal(r.audit.plan.maxWords, null);
+  assert.deepEqual(r.audit.plan.evidenceIds, chat.map((_, i) => `m${i}`));
+  assert.ok((r.requests.find(x => x.kind === "generator").max_tokens ?? r.requests.find(x => x.kind === "generator").max_completion_tokens) >= 8192);
+  assert.equal(r.audit.validator.coverage.passed, true);
+});
+
+test("an incomplete synthesis coverage audit cannot publish even when all boolean flags say pass", async () => {
+  const w = world();
+  const r = await run(w, { assessments: [need(w, "INTEGRATE")],
+    validators: [{ ...flags(), synthesisCoverage: [] }, { ...flags(), synthesisCoverage: [] }, flags()] });
+  assert.equal(r.published.length, 1);
+  assert.equal(r.published[0].content, staticReply.message);
+  assert.equal(r.audit.selectedRole, "STATIC");
+  assert.ok(r.requests.some(x => x.kind === "generator" && x.messages[1].content.includes("SYNTHESIS_COVERAGE_INCOMPLETE")));
 });

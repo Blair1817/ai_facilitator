@@ -38,7 +38,7 @@
     },
     "requiredReasoningActMissing": {
       "type": "boolean",
-      "description": "Missing or non-passed preflight, non-executable plan, unsupported/already-addressed target, or missing exact assigned operation. Does not permit invented completion."
+      "description": "Missing or non-passed preflight, non-executable plan, unsupported/already-addressed target, or missing exact assigned operation. Does not permit invented completion. For Synthesiser, any omitted or distorted relevant public information in the required scope fails the assigned operation."
     },
     "unanswerable": {
       "type": "boolean",
@@ -54,7 +54,7 @@
     },
     "length": {
       "type": "boolean",
-      "description": "True only when complete visible text exceeds the runtime word ceiling: 55 English words for Synthesiser and 50 for Expander/Challenger. Count headings and list numbers. No other length or layout limit."
+      "description": "Expander/Challenger exceed 50 English words. Synthesiser has no hard word cap; retain all required public information and minimise repetition/filler."
     }
   },
   "required": [

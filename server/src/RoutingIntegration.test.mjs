@@ -102,7 +102,7 @@ test("callbacks.js: Static bypasses Adaptive assessment while both conditions re
 
 test("callbacks.js: all routes share one transport and Generator invocation", () => {
   const generator = callbacksSource.slice(callbacksSource.indexOf("async function runSharedGeneration"), callbacksSource.indexOf("// ── S1-S4 sequence definitions"));
-  assert.equal([...generator.matchAll(/return getLLMResponse\(messages, llmMaxOutputTokens, \{ \.\.\.generationOptions/g)].length, 1);
+  assert.equal([...generator.matchAll(/return getLLMResponse\(messages, outputTokens, \{ \.\.\.generationOptions/g)].length, 1);
   assert.equal([...callbacksSource.matchAll(/function\s+getLLMResponse\(/g)].length, 1);
   assert.equal([...callbacksSource.matchAll(/async function requestChatCompletion\(/g)].length, 1);
 });

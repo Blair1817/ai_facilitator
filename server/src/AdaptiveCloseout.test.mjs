@@ -127,7 +127,7 @@ test("cooldown and in-flight refusal defer without losing a timed opportunity", 
   c.game.set("lastAttemptTimestamp", c.now());
   let locked = true;
   const scheduler = createCloseoutScheduler({ ...c, run: async (_g, t) => { calls.push(t); return { deferred: locked }; } });
-  scheduler.register(c.game); await c.advance(29_999); assert.equal(calls.length, 0);
+  scheduler.register(c.game); await c.advance(14_999); assert.equal(calls.length, 0);
   await c.advance(1); assert.equal(calls.length, 1);
   assert.equal(c.round.get("adaptiveCloseoutSchedule").completed[180], undefined);
   locked = false; await c.advance(1000);

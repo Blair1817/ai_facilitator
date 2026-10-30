@@ -205,7 +205,7 @@ test("R2 actual synthesis rule states authoritative order, every fallback and ta
   assert.match(synthesis, /absent, empty or "not provided" list as missing/);
   assert.match(synthesis, /explicit option list elsewhere in TASK_GENERAL_CONTEXT/);
   assert.match(synthesis, /If both lists are missing, use the order the options first appeared in the public discussion/);
-  assert.match(synthesis, /only to the selected TARGET options[^\n]+ALLOWED_GROUNDING_MESSAGE_IDS/);
+  assert.match(synthesis, /every option with shared task points in the required synthesis scope/);
   assert.match(synthesis, /Ordering never authorizes adding an option, fact or empty entry/);
   const bundle = runtimeGeneratorBundle("synthesiser");
   assert.equal(bundle.blocked, false, bundle.reason);

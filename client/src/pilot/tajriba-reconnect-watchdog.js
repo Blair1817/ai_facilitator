@@ -4,26 +4,13 @@
 // App-level safety net for the Tajriba v1.12.0 "partial-freeze" fault and the
 // Upstream `@empirica/tajriba` accessDenied-disposes-everything bug.
 //
-// Three layers of defense, all guarded so a missing prototype is a no-op:
-//
-// 1. If the Tajriba base connection sits in `_connecting` for > 60 s
-//    (i.e. graphql-ws retry loop is running but sessionParticipant never
-//    resolves), force `stop()` + `connect()` to give the retry loop a kick.
-// 2. If a TajribaParticipant (authenticated) emits `accessDenied`, clear
-//    any persisted session so the participant registration form is shown
-//    again instead of hanging on the loading spinner.
-// 3. Keep a tiny per-tab "no round/stage data" watcher (used by
-//    ConnectionRecovery.jsx) so the participant sees a visible bad-state
-//    instead of an invisible freeze.
-//
-// This patch only runs in the PILOT configuration; the upstream fixes should
-// obsolete it once Tajriba >= v1.12.5 is bundled (already on disk at
-// /home/delibra/.cache/empirica/bin/version/v1.12.5, see AGENTS.md).
+// Monitor both handshake/heartbeat and authenticated subscription delivery.
+// The Go binary version does not establish that these JS SDK issues are fixed.
 
 import { Tajriba } from "@empirica/tajriba";
+import { monitorTajribaTransport } from "./tajribaTransportRecovery.mjs";
 
-const LONG_CONNECTING_THRESHOLD_MS = 60_000;
-const watchdogTimers = new WeakMap();
+const monitors = new WeakMap();
 
 function installBaseWatchdog(prototype) {
   const originalConnect = prototype.connect;
@@ -31,49 +18,44 @@ function installBaseWatchdog(prototype) {
   prototype.__delibraBaseWatchdogInstalled = true;
 
   prototype.connect = function patchedConnect() {
+    if (this.__delibraStopping) return;
     const result = originalConnect.apply(this, arguments);
-    // Schedule a watchdog only once per instance: if the connection is
-    // still not "connected" after LONG_CONNECTING_THRESHOLD_MS, force a
-    // reset. This catches the partial-freeze fault at the client level.
-    if (watchdogTimers.has(this)) {
-      clearTimeout(watchdogTimers.get(this));
-    }
-    const timer = setTimeout(() => {
-      if (this._connected) return;
-      // Try to recover by recycling the WS client. graphql-ws's retry
-      // loop is already running, but `stop()` + `connect()` clears any
-      // stuck state in our wrapper.
-      console.warn(
-        "[delibra-watchdog] Tajriba base connection stuck for >",
-        LONG_CONNECTING_THRESHOLD_MS / 1000,
-        "s; forcing stop()+connect()",
-      );
-      try {
-        this._connected = false;
-        if (this._wsClient && typeof this._wsClient.dispose === "function") {
-          this._wsClient.dispose();
-          this._wsClient = null;
-        }
-        if (this._client) {
-          this._client = null;
-        }
-      } catch (_) {
-        // ignore
-      }
-      this.connect();
-    }, LONG_CONNECTING_THRESHOLD_MS);
-    watchdogTimers.set(this, timer);
+    const client = this._wsClient;
+    if (!client?.on || !client?.terminate) return result;
+    if (monitors.get(this)?.client === client) return result;
+    monitors.get(this)?.monitor.stop();
+    const monitor = monitorTajribaTransport(client, {
+      isSuspended: () => document.hidden || navigator.onLine === false,
+      // Probe only authenticated clients. Request no attribute contents,
+      // identities or chat: initial `done` uses the real subscription path.
+      probe: this.token ? (sink) => client.subscribe({
+        query: 'subscription DelibraLiveness { scopedAttributes(input: [{ kinds: ["global"] }]) { done } }',
+      }, sink) : null,
+    });
+    const resume = () => {
+      if (!document.hidden && navigator.onLine !== false) monitor.check();
+    };
+    window.addEventListener("online", resume);
+    document.addEventListener("visibilitychange", resume);
+    monitors.set(this, { client, monitor: {
+      stop() {
+        monitor.stop();
+        window.removeEventListener("online", resume);
+        document.removeEventListener("visibilitychange", resume);
+      },
+    } });
     return result;
   };
-
-  // Clear the watchdog once "connected" actually fires.
-  const originalEmit = prototype.emit;
-  prototype.emit = function patchedEmit(event, ...args) {
-    if (event === "connected" && watchdogTimers.has(this)) {
-      clearTimeout(watchdogTimers.get(this));
-      watchdogTimers.delete(this);
+  const originalStop = prototype.stop;
+  prototype.stop = function monitoredStop() {
+    monitors.get(this)?.monitor.stop();
+    monitors.delete(this);
+    this.__delibraStopping = true;
+    try {
+      return originalStop.apply(this, arguments);
+    } finally {
+      this.__delibraStopping = false;
     }
-    return originalEmit.apply(this, [event, ...args]);
   };
 }
 

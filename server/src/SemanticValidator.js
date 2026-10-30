@@ -1,3 +1,4 @@
+import { SYNTHESIS_COVERAGE_INSTRUCTION, synthesisCoverageSchema, checkSynthesisCoverage } from "./SynthesisCoverage.mjs";
 /**
  * SemanticValidator.js
  *
@@ -409,17 +410,21 @@ export async function validateCandidate({
     priorFailedCriteria,
     priorCandidate, interventionPlan, planPreflight, interventionHistory, recentAiMessages, activeParticipantNames, contextScope, triggerType, remainingTimeMs,
   });
+  const coverageRequired = selectedRole === "INFORMATION_SYNTHESISER" && !!interventionPlan?.synthesisCoverage;
   const messages = [
-    { role: "system", content: promptResult.content },
+    { role: "system", content: promptResult.content + (coverageRequired ? SYNTHESIS_COVERAGE_INSTRUCTION : "") },
     { role: "user", content: userContent },
   ];
 
-  const { type, properties, required, additionalProperties } = loadValidatorSchema();
+  const { type, properties, required, additionalProperties } = isSpecialistRole(selectedRole)
+    ? JSON.parse(readRuntimeFile("specialist/validation.schema.json")) : loadValidatorSchema();
+  const responseProperties = coverageRequired ? { ...properties, synthesisCoverage: synthesisCoverageSchema() } : properties;
+  const responseRequired = coverageRequired ? [...required, "synthesisCoverage"] : required;
   const llmResponse = await callLLM(messages, {
     reasoningEffort: "low",
     responseSchema: {
       name: "facilitator_semantic_validation",
-      schema: { type, properties, required, additionalProperties },
+      schema: { type, properties: responseProperties, required: responseRequired, additionalProperties },
     },
   });
   const responseMetadata = llmResponse.responseMetadata ?? null;
@@ -432,12 +437,19 @@ export async function validateCandidate({
     return { success: false, code: "VALIDATOR_PARSE_FAILURE", error: parseResult.error, rawText: llmResponse.rawText, responseMetadata };
   }
 
-  const schemaResult = validateAgainstValidatorSchema(parseResult.parsed);
+  if (coverageRequired && responseMetadata?.finish_reason === "length") {
+    return { success: false, code: "VALIDATOR_TRUNCATED", error: "Incomplete coverage audit", responseMetadata };
+  }
+  const { synthesisCoverage, ...flags } = parseResult.parsed;
+  const schemaResult = validateAgainstValidatorSchema(coverageRequired ? flags : parseResult.parsed);
   if (!schemaResult.ok) {
     return { success: false, code: "VALIDATOR_SCHEMA_FAILURE", error: JSON.stringify(schemaResult.errors), rawText: llmResponse.rawText, responseMetadata };
   }
 
-  const booleans = parseResult.parsed;
+  const booleans = coverageRequired ? flags : parseResult.parsed;
+  const coverage = coverageRequired ? checkSynthesisCoverage(synthesisCoverage, { chat, candidate, plan: interventionPlan }) : null;
+  if (coverage && !coverage.passed) booleans.requiredReasoningActMissing = true;
   const verdict = computeValidatorVerdict(booleans);
-  return { success: true, verdict: { ...verdict, booleans }, rawText: llmResponse.rawText, responseMetadata };
+  if (coverage && !coverage.passed) verdict.failedCriteria.push(`SYNTHESIS_COVERAGE_INCOMPLETE:${coverage.missingIds.join(",")}`);
+  return { success: true, verdict: { ...verdict, booleans, ...(coverage ? { coverage, synthesisCoverage } : {}) }, rawText: llmResponse.rawText, responseMetadata };
 }

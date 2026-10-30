@@ -1,48 +1,54 @@
 diff --git a/node_modules/@empirica/core/dist/chunk-UMPSA52E.js b/node_modules/@empirica/core/dist/chunk-UMPSA52E.js
-index fa020ca..d3693ea 100644
 --- a/node_modules/@empirica/core/dist/chunk-UMPSA52E.js
 +++ b/node_modules/@empirica/core/dist/chunk-UMPSA52E.js
-@@ -48,10 +48,26 @@ var ParticipantConnection = class {
+@@ -46,12 +46,16 @@
+         if (this._connected.getValue() || this._connecting.getValue()) {
+           return;
          }
++        clearTimeout(this._sessionRetryTimer);
          this._connecting.next(true);
          try {
 -          const tajPart = await taj.sessionParticipant(
 -            session.token,
 -            session.participant
 -          );
-+          // DELIBRA-PATCH: race the sessionParticipant await against a
-+          // 10-second timeout. With the patched @empirica/tajriba (see
-+          // DELIBRA_RECONNECT_PATCHES.md), connectionStatus() still
-+          // resolves on raw WS opened, but if auth drops mid-handshake the
-+          // underlying promise can stall indefinitely. The timeout
-+          // surfaces as a normal rejection so the finally block can clear
-+          // _connecting and sessionParticipant can be retried by the outer
-+          // reconnect event.
-+          const tajPart = await Promise.race([
-+            taj.sessionParticipant(
-+              session.token,
-+              session.participant
-+            ),
-+            new Promise((_, reject) =>
-+              setTimeout(
-+                () => reject(new Error("sessionParticipant timed out after 10 s")),
-+                10000
-+              )
-+            ),
-+          ]);
++          // The SDK owns a bounded handshake and closes the pending socket
++          // on timeout. An outer Promise.race would orphan that socket.
++          const tajPart = await taj.sessionParticipant(session.token, session.participant);
++          if (this._stopped.getValue()) {
++            tajPart.stop();
++            return;
++          }
            this._tajribaPart.next(tajPart);
            if (tajPart.connected) {
              this._connected.next(true);
-@@ -89,10 +105,25 @@ var ParticipantConnection = class {
+@@ -81,18 +85,36 @@
+             if (this._connecting.getValue()) {
+               this._connecting.next(false);
+             }
+-            console.log(
+-              "accessDenied",
+-              session?.participant.id,
+-              session?.token
+-            );
++            console.warn("[delibra-recovery] participant access denied");
              this.resetSession();
            });
          } catch (err) {
+-          if (err !== ErrNotConnected) {
 +          // DELIBRA-PATCH: log every catch (including ErrNotConnected) so
 +          // silent failures are visible in the browser console.
 +          if (err && err.message) {
 +            console.warn("[delibra-patch] sessionParticipant rejected:", err.message);
 +          }
-           if (err !== ErrNotConnected) {
++          if (this._stopped.getValue()) return;
++          if (err === ErrNotConnected || err?.code === "TAJRIBA_SESSION_CONNECT_TIMEOUT") {
++            // Temporary connectivity failure must retain the participant token.
++            clearTimeout(this._sessionRetryTimer);
++            this._sessionRetryTimer = setTimeout(() => {
++              if (!this._stopped.getValue()) sessions.next(session);
++            }, 1000);
++          } else {
              error("new conn error", err);
              this.resetSession();
            }
@@ -59,14 +65,23 @@ index fa020ca..d3693ea 100644
          }
        }
      );
+@@ -101,6 +123,7 @@
+     if (this._stopped.getValue()) {
+       return;
+     }
++    clearTimeout(this._sessionRetryTimer);
+     const taj = this._tajribaPart.getValue();
+     if (taj) {
+       taj.removeAllListeners("connected");
 diff --git a/node_modules/@empirica/core/dist/chunk-WGYNSNUC.js b/node_modules/@empirica/core/dist/chunk-WGYNSNUC.js
-index e08c837..7c465cf 100644
 --- a/node_modules/@empirica/core/dist/chunk-WGYNSNUC.js
 +++ b/node_modules/@empirica/core/dist/chunk-WGYNSNUC.js
-@@ -55,6 +55,31 @@ var TajribaConnection = class {
-         this._connecting.next(true);
+@@ -53,6 +53,31 @@
        }
-     });
+       if (!this._connecting.getValue()) {
+         this._connecting.next(true);
++      }
++    });
 +    // DELIBRA-PATCH: listen for the "closed" event emitted by the patched
 +    // @empirica/tajriba `stop()` (index.js). The upstream wrapper only watches
 +    // connected/disconnected/error, so when stop() fires (e.g. on Access
@@ -90,8 +105,6 @@ index e08c837..7c465cf 100644
 +        this.tajriba.connect && this.tajriba.connect();
 +      } catch (e) {
 +        // ignore - already connecting
-+      }
-+    });
-     this.tajriba.on("error", (err) => {
-       error("connection error", err);
+       }
      });
+     this.tajriba.on("error", (err) => {

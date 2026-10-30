@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Need Detector Output Schema (independent judgements, 2026-10-26)",
-  "description": "Three independently judged candidate needs (elicit, scrutinize, integrate), each null or one operation with exact per-message evidence. No ranking between needs. Quotation accuracy and author counts are re-verified per candidate by EvidenceChecker.checkNeedAssessment(); the runtime selects among verified candidates.",
+  "description": "Independent public discussion needs. Optional quoted current blockers inform code-controlled priority; waiting time and tie-breaking are handled by code.",
   "type": "object",
   "properties": {
     "candidates": {
@@ -31,6 +31,9 @@
                 },
                 "semanticReview": {
                   "$ref": "#/definitions/semanticReview"
+                },
+                "blocking": {
+                  "$ref": "#/definitions/blocking"
                 }
               },
               "required": [
@@ -68,6 +71,9 @@
                 },
                 "semanticReview": {
                   "$ref": "#/definitions/semanticReview"
+                },
+                "blocking": {
+                  "$ref": "#/definitions/blocking"
                 }
               },
               "required": [
@@ -367,6 +373,35 @@
       "required": [
         "key",
         "matches"
+      ],
+      "additionalProperties": false
+    },
+    "blocking": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "enum": [
+            "missing_comparison_information",
+            "decision_reasoning_risk"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/evidenceQuote"
+          }
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        }
+      },
+      "required": [
+        "kind",
+        "evidence",
+        "rationale"
       ],
       "additionalProperties": false
     }
