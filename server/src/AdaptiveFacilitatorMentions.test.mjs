@@ -214,8 +214,8 @@ test("Facilitator-authored participant mention does not enter the participant-re
   const message = "@[Blue], what evidence supports that comparison?";
   assert.equal(containsFacilitatorMention(message), false);
 
-  const humanGuard = callbacksSource.indexOf("if (!adaptiveTrigger && !isFormalHumanMessage(lastMessage)) return;");
-  const mentionDetection = callbacksSource.indexOf("const isMentionCheckpoint = !adaptiveTrigger && containsFacilitatorMention(latestHumanText);");
+  const humanGuard = callbacksSource.indexOf("if (!adaptiveTrigger && !staticRetry && !isFormalHumanMessage(lastMessage)) return;");
+  const mentionDetection = callbacksSource.indexOf("const isMentionCheckpoint = !adaptiveTrigger && !staticRetry && containsFacilitatorMention(latestHumanText);");
   assert.ok(humanGuard >= 0 && humanGuard < mentionDetection);
 });
 
