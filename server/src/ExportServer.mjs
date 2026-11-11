@@ -59,7 +59,7 @@ import http from "node:http";
 
 import { describeFinalDecisionOutcome, ExportService, ExportNotFoundError } from "./ExportService.mjs";
 import { recordExportEvent } from "./ExportAudit.mjs";
-import { connectExportAdmin } from "./ExportConnection.mjs";
+import { connectExportAdmin, ExportStoreTimeout } from "./ExportConnection.mjs";
 
 const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 25;
@@ -80,7 +80,9 @@ export function createExportServer({
   }
   const normalizedBasePath = normalizeBasePath(basePath);
 
+  let exportInProgress = false;
   return http.createServer(async (req, res) => {
+    let ownsExportSlot = false;
     try {
       // No research data or credentials are exposed. Azure must probe the
       // callbacks process, rather than merely the still-running Caddy socket.
@@ -93,6 +95,12 @@ export function createExportServer({
         await sendUnauthorized(res);
         return;
       }
+      if (exportInProgress) {
+        res.setHeader("Retry-After", "5");
+        await sendJson(res, 503, { error: "Another export is running. Try again shortly." });
+        return;
+      }
+      exportInProgress = ownsExportSlot = true;
       await route(req, res, {
         service,
         auditFile,
@@ -102,6 +110,10 @@ export function createExportServer({
         allowRaw: Boolean(allowRaw),
       });
     } catch (error) {
+      if (error instanceof ExportStoreTimeout) {
+        await sendJson(res, 504, { error: "The export store timed out. Try again shortly." });
+        return;
+      }
       if (error instanceof ExportNotFoundError) {
         await sendJson(res, 404, { error: error.message });
         return;
@@ -113,6 +125,8 @@ export function createExportServer({
       } catch {
         // socket already torn down
       }
+    } finally {
+      if (ownsExportSlot) exportInProgress = false;
     }
   });
 }
@@ -192,11 +206,12 @@ async function route(req, res, ctx) {
 async function handleListPage(req, res, ctx, search, auditFields, redact) {
   const filter = parseListFilter(search);
   const batchLimit = clampInt(search.limit, DEFAULT_LIMIT, 1, MAX_LIMIT);
-  const batches = await ctx.service.listBatches(filter);
+  const inventory = await ctx.service.readGameInventory();
+  const batches = await ctx.service.listBatches(filter, inventory);
   const trimmed = batches.slice(0, batchLimit);
   const gamesByBatch = await Promise.all(
     trimmed.map(async (b) => {
-      const games = await ctx.service.listGames(b.id, { ...filter, limit: MAX_LIMIT, offset: 0 });
+      const games = await ctx.service.listGames(b.id, { ...filter, limit: MAX_LIMIT, offset: 0 }, inventory);
       return { batchId: b.id, games: games.items };
     }),
   );

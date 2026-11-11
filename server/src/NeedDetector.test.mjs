@@ -478,7 +478,7 @@ test("silence rule window: needs SILENCE_WINDOW public messages; option mentions
   assert.deepEqual(countOptionMentions(CHAT, ["City A", "City B"]), { "City A": 2, "City B": 4 });
 });
 
-test("end-to-end: a silent participant is invited by rule and can be invited again after six messages; Static is unaffected", async () => {
+test("end-to-end: a silent participant can be invited again after one message checkpoint cools down", async () => {
   const w = world("adaptive", SILENT_JORDAN);
   const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "none" }, prompt => prompt === "expander" ? EXPANDER_REPLY("Jordan") : STATIC_REPLY);
   assert.deepEqual(r.calls, ["detector", "expander", "validator"]);
@@ -489,6 +489,13 @@ test("end-to-end: a silent participant is invited by rule and can be invited aga
   assert.equal(w.game.get("publishedThisRound"), 1, "it replaces the checkpoint message; no extra publication");
 
   for (let i = 0; i < 6; i++) appendHuman(w, i % 2 ? "Casey" : "Alex", `More detail ${i}.`);
+  w.game.set("lastAttemptTimestamp", Date.now() - 31_000);
+  const cooldown = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "none" }, () => STATIC_REPLY);
+  assert.deepEqual(cooldown.calls, ["detector", "static", "validator"]);
+  assert.deepEqual(cooldown.audit.participationRule.coolingDown, ["Jordan"]);
+  assert.equal(w.round.get("participationInvites").Jordan.count, 1);
+
+  for (let i = 0; i < 6; i++) appendHuman(w, i % 2 ? "Casey" : "Alex", `Another detail ${i}.`);
   w.game.set("lastAttemptTimestamp", Date.now() - 31_000);
   const again = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "none" }, prompt => prompt === "expander"
     ? { ...EXPANDER_REPLY("Jordan"), message: "@[Jordan], would you like to add anything you have read, good or bad? No worries if not." } : STATIC_REPLY);

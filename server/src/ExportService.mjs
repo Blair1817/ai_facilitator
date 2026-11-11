@@ -73,7 +73,7 @@ import { redactDeep } from "./SupabasePersistence.mjs";
  * mock admin that produces the same shape, or pre-built scope maps.
  */
 
-const SCOPES_PAGE_SIZE = 100;
+const SCOPES_PAGE_SIZE = 25;
 
 export class ExportService {
   constructor({ admin, auditFile, clock = Date, defaultRedact = true } = {}) {
@@ -88,8 +88,8 @@ export class ExportService {
 
   /**
    * List all batches in the store, optionally filtered by time range.
-   * The filter is applied at the Tajriba `kvs` level where possible to
-   * avoid a full store scan.
+   * Read a single scope inventory so batch counts and game rows can
+   * share the same store snapshot.
    *
    * @param {Object} [filter]
    * @param {string} [filter.fromISO]  inclusive lower bound (createdAt)
@@ -97,112 +97,75 @@ export class ExportService {
    * @param {string} [filter.status]   "created" | "running" | "ended"
    * @returns {Promise<Array<{id: string, createdAt: string, status: string, treatment: string|null, gameCount: number, playerCount: number}>>}
    */
-  async listBatches(filter = {}) {
-    const scopes = await this.allScopes({ kinds: ["batch"] });
-    // Pull every game scope once and group by `attrs.batchID` in memory.
-    // Tajriba v1.12's admin `scopes(filter: {kvs})` does not match the
-    // store's JSON-encoded attribute values (D-014 deploy 2026-08-18
-    // empirical inspection of the live NAS store), so the kvs form was
-    // returning all game scopes regardless of batchID. Filtering
-    // in-memory against the same `parseValue` semantics used by the
-    // renderer keeps the two paths consistent.
-    const allGames = await this.allScopes({ kinds: ["game"] });
-    const gamesByBatch = new Map();
-    const testOnlyBatches = new Set();
-    const formalBatches = new Set();
-    for (const g of allGames) {
-      const gameAttrs = await this.scopeAttributesOf(g);
-      const bid = gameAttrs.batchID;
-      const testing = (gameAttrs.testControlsEnabled === true || gameAttrs.testControlsEnabled === "true") || gameTreatmentName(gameAttrs) === "test";
-      (testing ? testOnlyBatches : formalBatches).add(bid);
-      if (!filter.includeTest && testing) continue;
-      if (bid == null) continue;
-      if (!gamesByBatch.has(bid)) gamesByBatch.set(bid, []);
-      gamesByBatch.get(bid).push(g);
-    }
+  async listBatches(filter = {}, inventory) {
+    inventory ??= await this.readGameInventory();
     const result = [];
-    for (const scope of scopes) {
+    for await (const scope of this.iterateScopes({ kinds: ["batch"] })) {
       const attrs = await this.scopeAttributesOf(scope);
-      if (!filter.includeTest && testOnlyBatches.has(scope.id) && !formalBatches.has(scope.id)) continue;
+      const allGames = inventory.get(scope.id) || [];
+      const games = filter.includeTest ? allGames : allGames.filter(game => !game.testMode);
+      if (allGames.length && !games.length) continue;
       const createdAt = attrs.createdAt || scope.createdAt || null;
       if (filter.fromISO && createdAt && createdAt < filter.fromISO) continue;
       if (filter.toISO && createdAt && createdAt > filter.toISO) continue;
       const status = attrs.status || "unknown";
       if (filter.status && status !== filter.status) continue;
       const treatment = gameTreatmentName(attrs);
-      if (!filter.includeTest && ((attrs.testControlsEnabled === true || attrs.testControlsEnabled === "true") || treatment === "test")) continue;
-      // Players are not directly linked to batches; we walk through
-      // `game -> player` to count the unique participants. This is the
-      // same shape Tajriba exposes in the admin UI.
-      const games = gamesByBatch.get(scope.id) || [];
-      const playerSet = new Set();
-      for (const g of games) {
-        const players = await this.gamePlayerIDs(g.id);
-        for (const pid of players) playerSet.add(pid);
-      }
-      result.push({
-        id: scope.id,
-        createdAt,
-        status,
-        treatment,
-        gameCount: games.length,
-        playerCount: playerSet.size,
-      });
+      if (!filter.includeTest && (attrs.testControlsEnabled === true || attrs.testControlsEnabled === "true" || treatment === "test")) continue;
+      const playerSet = new Set(games.flatMap(game => game.playerIDs));
+      result.push({ id: scope.id, createdAt, status, treatment, gameCount: games.length, playerCount: playerSet.size });
     }
     result.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
     return result;
   }
 
-  /**
-   * List games in a batch, with optional filter on treatment, sequence,
-   * and start time.
-   *
-   * @param {string} batchId
-   * @param {Object} [filter]
-   * @param {string} [filter.fromISO]
-   * @param {string} [filter.toISO]
-   * @param {string} [filter.treatment]   game-level treatment name (for example, "main")
-   * @param {string} [filter.sequenceId]  "S1" | "S2" | "S3" | "S4"
-   * @param {string} [filter.status]      "created" | "running" | "ended"
-   * @param {number} [filter.limit=100]
-   * @param {number} [filter.offset=0]
-   * @returns {Promise<{items: Array<Object>, total: number}>}
-   */
-  async listGames(batchId, filter = {}) {
-    if (!batchId) throw new Error("listGames: batchId is required");
-    // Pull all game scopes once and filter by `attrs.batchID` in memory.
-    // See listBatches for why the admin `kvs` filter is unreliable.
-    const allGames = await this.allScopes({ kinds: ["game"] });
-    const all = [];
-    for (const g of allGames) {
-      if ((await this.scopeAttributesOf(g)).batchID === batchId) all.push(g);
+  // Load each scope kind once per listing. v1.12 cannot reliably filter
+  // JSON-encoded batchID or gameID values in its scopes query.
+  async readGameInventory() {
+    const playerIDsByGame = new Map();
+    for await (const scope of this.iterateScopes({ kinds: ["player"] })) {
+      const { gameID } = await this.scopeAttributesOf(scope);
+      if (!gameID) continue;
+      if (!playerIDsByGame.has(gameID)) playerIDsByGame.set(gameID, []);
+      playerIDsByGame.get(gameID).push(scope.id);
     }
-    const items = [];
-    for (const scope of all) {
+    const inventory = new Map();
+    for await (const scope of this.iterateScopes({ kinds: ["game"] })) {
       const attrs = await this.scopeAttributesOf(scope);
-      const startedAt = attrs.startedAt || scope.createdAt || null;
-      const endedAt = attrs.endedAt || null;
+      const batchId = attrs.batchID;
+      if (batchId == null) continue;
       const treatment = gameTreatmentName(attrs);
-      if (!filter.includeTest && ((attrs.testControlsEnabled === true || attrs.testControlsEnabled === "true") || treatment === "test")) continue;
-      const sequenceId = attrs.sequenceId || null;
-      const status = attrs.status || "unknown";
-      if (filter.fromISO && startedAt && startedAt < filter.fromISO) continue;
-      if (filter.toISO && startedAt && startedAt > filter.toISO) continue;
-      if (filter.treatment && treatment !== filter.treatment) continue;
-      if (filter.sequenceId && sequenceId !== filter.sequenceId) continue;
-      if (filter.status && status !== filter.status) continue;
-      const playerIDs = await this.gamePlayerIDs(scope.id);
-      items.push({
+      const playerIDs = playerIDsByGame.get(scope.id) || [];
+      const game = {
         id: scope.id,
         batchId,
-        startedAt,
-        endedAt,
+        startedAt: attrs.startedAt || scope.createdAt || null,
+        endedAt: attrs.endedAt || null,
         treatment,
-        sequenceId,
-        testMode: (attrs.testControlsEnabled === true || attrs.testControlsEnabled === "true") || gameTreatmentName(attrs) === "test",
-        status,
+        sequenceId: attrs.sequenceId || null,
+        testMode: attrs.testControlsEnabled === true || attrs.testControlsEnabled === "true" || treatment === "test",
+        status: attrs.status || "unknown",
         playerCount: playerIDs.length,
-      });
+        playerIDs,
+      };
+      if (!inventory.has(batchId)) inventory.set(batchId, []);
+      inventory.get(batchId).push(game);
+    }
+    return inventory;
+  }
+
+  async listGames(batchId, filter = {}, inventory) {
+    if (!batchId) throw new Error("listGames: batchId is required");
+    inventory ??= await this.readGameInventory();
+    const items = [];
+    for (const { playerIDs, ...game } of inventory.get(batchId) || []) {
+      if (!filter.includeTest && game.testMode) continue;
+      if (filter.fromISO && game.startedAt && game.startedAt < filter.fromISO) continue;
+      if (filter.toISO && game.startedAt && game.startedAt > filter.toISO) continue;
+      if (filter.treatment && game.treatment !== filter.treatment) continue;
+      if (filter.sequenceId && game.sequenceId !== filter.sequenceId) continue;
+      if (filter.status && game.status !== filter.status) continue;
+      items.push(game);
     }
     items.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
     return paginate(items, filter);
@@ -226,21 +189,22 @@ export class ExportService {
     // empirical inspection of the live store). Pull all game scopes
     // and filter by id in memory; the kvs path mirrors the renderer
     // so a single code path covers both.
-    const allGames = await this.allScopes({ kinds: ["game"] });
-    const gameScopes = allGames.filter((s) => s.id === gameId);
-    if (gameScopes.length === 0) {
-      throw new ExportNotFoundError(`game not found: ${gameId}`);
+    let gameScope;
+    for await (const scope of this.iterateScopes({ kinds: ["game"] })) {
+      if (scope.id === gameId) {
+        gameScope = scope;
+        break;
+      }
     }
-    const game = await this.readGame(gameScopes[0]);
+    if (!gameScope) throw new ExportNotFoundError(`game not found: ${gameId}`);
+    const allRoundScopes = await this.allScopes({ kinds: ["round"] });
+    const game = await this.readGame(gameScope, allRoundScopes);
 
-    const playerIDs = await this.gamePlayerIDs(gameId);
-    const allPlayerScopes = await this.allScopes({ kinds: ["player"] });
-    const playerScopesById = new Map(allPlayerScopes.map((scope) => [scope.id, scope]));
     const players = [];
-    for (const pid of playerIDs) {
-      const playerScope = playerScopesById.get(pid);
-      if (!playerScope) continue;
-      players.push(await this.readPlayer(playerScope, gameId));
+    for await (const scope of this.iterateScopes({ kinds: ["player"] })) {
+      if ((await this.scopeAttributesOf(scope)).gameID === gameId) {
+        players.push(await this.readPlayer(scope, gameId));
+      }
     }
     players.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
@@ -249,7 +213,6 @@ export class ExportService {
     // playerRoundID-<roundId> link on the player; never pair by creation order.
     const allPlayerRounds = await this.allScopes({ kinds: ["playerRound"] });
     const playerRoundScopesById = new Map(allPlayerRounds.map((scope) => [scope.id, scope]));
-    const allRoundScopes = await this.allScopes({ kinds: ["round"] });
     const roundScopesById = new Map(allRoundScopes.map((scope) => [scope.id, scope]));
     const rounds = [];
     for (let idx = 0; idx < (game.rounds || []).length; idx += 1) {
@@ -261,14 +224,14 @@ export class ExportService {
     }
     rounds.sort((a, b) => a.taskIndex - b.taskIndex);
 
-    const llmLog = await this.readLlmLog(gameId);
+    const llmLog = await this.readLlmLog(gameId, gameScope);
 
     return { game, players, rounds, llmLog };
   }
 
-  async readGame(scope) {
+  async readGame(scope, roundScopes) {
     const attrs = await this.scopeAttributesOf(scope);
-    const roundIDs = await this.gameRoundIDs(scope.id);
+    const roundIDs = await this.gameRoundIDs(scope.id, roundScopes);
     // Include chat_round_<taskIndex> so renderTranscriptMd can render the
     // participant + facilitator transcript without re-querying.
     //
@@ -407,14 +370,10 @@ export class ExportService {
     };
   }
 
-  async readLlmLog(gameId) {
-    // Same in-memory filter pattern as the rest of the service: pull
-    // all game scopes and find the one whose id matches, because the
-    // admin `ids` filter is unreliable on Tajriba v1.12.
-    const allGames = await this.allScopes({ kinds: ["game"] });
-    const indexScopes = allGames.filter((s) => s.id === gameId);
-    if (indexScopes.length === 0) return [];
-    const gameAttrs = await this.scopeAttributesOf(indexScopes[0]);
+  async readLlmLog(gameId, scope) {
+    scope ??= (await this.allScopes({ kinds: ["game"] })).find(candidate => candidate.id === gameId);
+    if (!scope) return [];
+    const gameAttrs = await this.scopeAttributesOf(scope);
     const index = gameAttrs.llmLogIndex;
     if (!Array.isArray(index) || index.length === 0) return [];
     const entries = [];
@@ -432,9 +391,8 @@ export class ExportService {
    * The admin `scopes` query used to nest `attributes(first: 100)`, which
    * silently truncated any scope with more than 100 attributes (a game with
    * chat + llmLog + operational events) and made scalar reads flaky. That
-   * page size is raised at the query source (patched `@empirica/tajriba`
-   * ScopesDocument `first: 100` -> `2000`), so the nested connection now
-   * carries the full attribute set. The Tajriba `Query.attributes` resolver
+   * page size is raised to 2000 in both the HTTP export query and the
+   * patched SDK query used by the CLI. The Tajriba `Query.attributes` resolver
    * is unimplemented (`panic("not implemented")`) and must not be used.
    *
    * @param {Object} scope
@@ -562,13 +520,18 @@ export class ExportService {
   // ── Tajriba admin plumbing ───────────────────────────────────────────
 
   async allScopes(filters) {
+    const out = [];
+    for await (const scope of this.iterateScopes(filters)) out.push(scope);
+    return out;
+  }
+
+  async *iterateScopes(filters) {
     // Tajriba v1.12 expects `filter` as `[ScopedAttributesInput!]` — a list
     // of single-axis filter objects AND-ed together. Each object may only
     // use ONE of {kinds, kvs, ids, names, keys}. Accept either:
     //   - a single ScopedAttributesInput object  (auto-wrapped to length 1)
     //   - undefined/null                         (no filter)
     //   - an array of ScopedAttributesInput     (multi-axis AND)
-    const out = [];
     const first = SCOPES_PAGE_SIZE;
     let cursor = null;
     const filterArg =
@@ -584,13 +547,13 @@ export class ExportService {
       if (cursor) args.after = cursor;
       const page = await this.admin.scopes(args);
       for (const edge of page?.edges || []) {
-        out.push(edge.node);
+        yield edge.node;
       }
       if (!page?.pageInfo?.hasNextPage) break;
-      cursor = page.pageInfo.endCursor;
-      if (!cursor) break;
+      const nextCursor = page.pageInfo.endCursor;
+      if (!nextCursor || nextCursor === cursor) throw new Error("Export store pagination stopped advancing");
+      cursor = nextCursor;
     }
-    return out;
   }
 
   async countScopesByKvs(filter) {
@@ -622,12 +585,11 @@ export class ExportService {
       .map((s) => s.id);
   }
 
-  async gameRoundIDs(gameId) {
+  async gameRoundIDs(gameId, scopes) {
     // Pull all round scopes once and filter by `attrs.gameID` in memory.
     // See listBatches for why the admin `kvs` filter is unreliable.
-    const roundScopes = (
-      await this.allScopes({ kinds: ["round"] })
-    ).filter((s) => scopeAttributes(s).gameID === gameId);
+    scopes ??= await this.allScopes({ kinds: ["round"] });
+    const roundScopes = scopes.filter((s) => scopeAttributes(s).gameID === gameId);
     roundScopes.sort((a, b) => {
       const ai = numberOrZero(scopeAttributes(a).index);
       const bi = numberOrZero(scopeAttributes(b).index);

@@ -40,17 +40,17 @@ test("five runtime closeout/reselection few-shots pass schema, evidence and expe
 });
 const lines = ["Norvale has indoor signs.", "Fenwick has outdoor seating.", "Norvale has displays across the courtyard.", "Norvale app cannot send reminders.", "I prefer Norvale.", "Norvale seems good to me too."];
 const names = ["A", "B", "C"];
-function world({ chat = lines.map((text, i) => ({ text, sender: { id: names[i % 3], name: names[i % 3] } })), remaining = 400_000, condition = "adaptive" } = {}) {
+function world({ chat = lines.map((text, i) => ({ text, sender: { id: names[i % 3], name: names[i % 3] } })), remaining = 400_000, condition = "adaptive", taskIndex = 0 } = {}) {
   const roster = [...new Set(chat.filter(m => m.sender.id !== "ai" && m.speakerType !== "timer_reminder").map(m => m.sender.name))];
   while (roster.length < 3) roster.push(names.find(n => !roster.includes(n)));
   const players = roster.map(name => makeFakePlayer({ id: name, name, hexCode: "ffffff" }));
-  const game = new FakeGame({}, players), round = new FakeRound({ taskIndex: 0, taskVersion: "A", facilitation: condition,
+  const game = new FakeGame({}, players), round = new FakeRound({ taskIndex, taskVersion: "A", facilitation: condition,
     generalInfo: "Choose Norvale, Fenwick or Halden using only public task information.", decisionOptions: ["Norvale", "Fenwick", "Halden"].map(label => ({ id: label, label })) }, game);
   const stage = new FakeStage({ name: "Task" }, round); stage.currentGame = game;
   game.currentRound = round; game.currentStage = stage;
   for (const p of players) { p.currentGame = game; p.round = new FakeScope("playerRound"); p.stage = new FakeScope("playerStage"); }
   const transcript = chat.map((m, i) => ({ stage: "Discussion", speakerType: "human", messageType: "human", ...m, messageId: `canonical-${i}` }));
-  game.set("chat_round_0", transcript);
+  game.set(`chat_round_${taskIndex}`, transcript);
   game.set("deadline", Date.now() + remaining); game.set("taskStartTime", Date.now() - 100_000);
   const humans = transcript.filter(m => m.speakerType === "human").length;
   game.set("humanMessageCount", humans - 1); game.set("messagesSinceLastPublish", humans - 1);
@@ -85,9 +85,9 @@ async function run(w, { assessments = [need(w)], generators, validators = [], tr
     return provider(data);
   };
   try {
-    await harness.handleChat(undefined, { game: w.game, adaptiveTrigger: trigger });
-    return { requests, audit: readAppendOnlyAttribute(w.game, "llmLog").at(-1),
-      published: w.game.get("chat_round_0").filter(m => m.facilitatorOrigin === "LLM_GENERATED") };
+    const result = await harness.handleChat(undefined, { game: w.game, adaptiveTrigger: trigger });
+    return { requests, result, audit: readAppendOnlyAttribute(w.game, "llmLog").at(-1),
+      published: w.game.get(`chat_round_${w.round.get("taskIndex")}`).filter(m => m.facilitatorOrigin === "LLM_GENERATED") };
   } finally {
     harness.adaptiveCloseoutScheduler.cancel(w.game, "test_complete");
     timers.forEach(clearTimeout); globalThis.fetch = oldFetch; globalThis.setTimeout = oldTimeout;
@@ -195,7 +195,7 @@ test("<=20s starts no automatic call, and time/stage/snapshot changes still prev
     assert.ok(r.audit.cancellation, change);
   }
 });
-test("automatic message and closeout runs allow any number of ordinary appends, but Facilitator messages still supersede", async () => {
+test("automatic Challenger runs allow ordinary appends, but Facilitator messages still supersede", async () => {
   const addHuman = (w, n) => w.game.set("chat_round_0", [...w.game.get("chat_round_0"),
     ...Array.from({ length: n }, (_, i) => ({ ...w.chat[0], messageId: `during-${i}`, text: `during ${i}` }))]);
   const message = world();
@@ -206,18 +206,111 @@ test("automatic message and closeout runs allow any number of ordinary appends, 
     assert.equal((await run(w, { mutate(kind, w) { if (kind === "generator") addHuman(w, n); } })).published.length, 1);
   }
 
-  const closeout = world({ remaining: 180_000 }); closeout.game.set("messagesSinceLastPublish", 0);
-  const raw = { ...need(closeout), integrationCandidate: need(closeout, "INTEGRATE"), integrationStatus: "qualified" };
-  const strict = await run(closeout, { assessments: [raw], trigger: { triggerSource: "time_180", triggerSources: ["time_180"] },
-    mutate(kind, w) { if (kind === "generator") addHuman(w, 3); } });
-  assert.equal(strict.published.length, 1, "closeout has no replacement zero-new-message limit");
-
   const facilitator = world();
   const superseded = await run(facilitator, { mutate(kind, w) {
     if (kind === "generator") w.game.set("chat_round_0", [...w.game.get("chat_round_0"),
       { ...w.chat[0], messageId: "ai-reply", text: "Facilitator reply", messageType: "facilitator", speakerType: "facilitator", sender: { id: "ai", name: "Facilitator" } }]);
   } });
   assert.equal(superseded.published.length, 0, "a newer Facilitator message always supersedes the older automatic result");
+});
+
+test("a correction during synthesis validation refreshes coverage before publishing", async () => {
+  const w = world({ remaining: 180_000 });
+  w.game.set("messagesSinceLastPublish", 0);
+  const raw = { ...need(w), integrationCandidate: need(w, "INTEGRATE"), integrationStatus: "qualified" };
+  const correction = "Correction: Norvale can send reminders after the update.";
+  const updated = { ...synthesis,
+    message: synthesis.message.replace("Its app cannot send reminders.", correction),
+    groundingMessageIds: [...synthesis.groundingMessageIds, "m6"] };
+  const result = await run(w, { assessments: [raw], generators: [synthesis, updated],
+    trigger: { triggerSource: "time_180", triggerSources: ["time_180"] },
+    mutate(kind, { game, chat }, requests) {
+      if (kind === "validator" && requests.length === 3) game.append("chat_round_0", { ...chat[0], messageId: "correction", text: correction });
+    } });
+  assert.deepEqual(result.requests.map(request => request.kind), ["assessor", "generator", "validator", "generator", "validator"]);
+  assert.equal(result.published.length, 1);
+  assert.equal(result.published[0].text, updated.message);
+  assert.equal(result.audit.synthesisContextRefreshed, true);
+  assert.ok(result.audit.plan.synthesisCoverage.sourceMessageIds.includes("m6"));
+  const validatorContext = result.requests.at(-1).messages[1].content;
+  assert.equal(validatorContext.split(lines[1]).length - 1, 1, "source text occurs only in the transcript");
+  assert.match(validatorContext, /"evidence":\[\{"messageId":"m0"\}/);
+});
+
+test("second-round Task A still gets a validated prompt when discussion keeps overtaking synthesis", async () => {
+  const w = world({ taskIndex: 1, remaining: 120_000 });
+  w.game.set("chat_round_0", [{ ...w.chat[0], text: "Previous round only" }]);
+  const result = await run(w, { assessments: [need(w, "INTEGRATE")],
+    mutate(kind, { game, chat }, requests) {
+      if (kind === "generator" && requests.length <= 3) {
+        game.append("chat_round_1", { ...chat[0], messageId: `update-${requests.length}`, text: `Public update ${requests.length}.` });
+      }
+    } });
+  assert.deepEqual(result.requests.map(request => request.kind), ["assessor", "generator", "generator", "generator", "validator"]);
+  assert.equal(result.audit.synthesisRefreshExhausted, true);
+  assert.equal(result.published[0]?.role, staticReply.role);
+  assert.match(result.requests.at(-1).messages[1].content, /Public update 3/);
+  assert.equal(w.game.get("chat_round_0").length, 1);
+});
+
+test("a timed synthesis overtaken twice stays eligible for retry", async () => {
+  const w = world({ remaining: 120_000 });
+  w.game.set("messagesSinceLastPublish", 0);
+  const raw = { ...need(w), integrationCandidate: need(w, "INTEGRATE"), integrationStatus: "qualified" };
+  const result = await run(w, { assessments: [raw],
+    trigger: { triggerSource: "time_120", triggerSources: ["time_120"] },
+    mutate(kind, { game, chat }, requests) {
+      if (kind === "generator") game.append("chat_round_0", { ...chat[0], messageId: `update-${requests.length}`, text: "New public task information." });
+    } });
+  assert.equal(result.published.length, 0);
+  assert.equal(result.audit.reasonCode, "SYNTHESIS_CONTEXT_CHANGED");
+  assert.equal(result.result.deferred, true);
+});
+
+test("a participation invitation is dropped if its target contributes before publication", async () => {
+  const chat = lines.map((text, i) => ({ text, sender: { id: names[i % 2], name: names[i % 2] } }));
+  const w = world({ chat });
+  const invite = { role: "INFORMATION_EXPANDER", message: "@[C], anything to share from your notes? No worries if not.", groundingMessageIds: [] };
+  const result = await run(w, { generators: [invite, staticReply],
+    mutate(kind, { game, chat }, requests) {
+      if (kind === "validator" && requests.length === 3) game.append("chat_round_0", {
+        ...chat[0], sender: { id: "C", name: "C" }, messageId: "c-resumed", text: "I found one other transport detail.",
+      });
+    } });
+  assert.equal(result.audit.specialistFailure?.selection?.operation, "participation_gap");
+  assert.equal(result.published[0]?.role, staticReply.role);
+  assert.doesNotMatch(result.published[0].text, /@/);
+  assert.equal(w.round.get("participationInvites"), undefined);
+});
+
+test("a Challenger cannot tag a participant outside its cited public evidence", async () => {
+  const w = world();
+  const ungroundedMention = { ...challengerReply, message: "@[A], which public facts support the preference for Norvale?" };
+  const result = await run(w, { generators: [ungroundedMention, challengerReply] });
+  assert.equal(result.published[0]?.text, challengerReply.message);
+  assert.equal(result.requests.filter(request => request.kind === "generator").length, 2);
+  assert.match(result.requests[2].messages[1].content, /UNSUPPORTED_MENTION_TARGET/);
+});
+
+test("a delivered participation invitation gives the next message checkpoint to substantive needs", async () => {
+  const chat = lines.map((text, i) => ({ text, sender: { id: names[i % 2], name: names[i % 2] } }));
+  const w = world({ chat });
+  const invitation = { role: "INFORMATION_EXPANDER", message: "@[C], anything to share from your notes? No worries if not.", groundingMessageIds: [] };
+  const first = await run(w, { generators: [invitation] });
+  assert.equal(first.published[0]?.role, invitation.role);
+  assert.equal(w.round.get("participationInvites").C.skipNextCheckpoint, true);
+
+  for (let i = 0; i < 6; i++) w.game.append("chat_round_0", { ...w.chat[i], messageId: `next-${i}` });
+  w.game.set("lastAttemptTimestamp", Date.now() - 16_000);
+  const [priorInvitation] = w.round.get("cognitiveInterventionHistory");
+  const assessment = { ...need(w), semanticReview: { key: "Norvale preference without support",
+    matches: [{ id: priorInvitation.planId, relation: "different", responseEvidence: [], newEvidence: [] }] } };
+  const second = await run(w, { assessments: [assessment] });
+  assert.deepEqual(second.audit.participationRule.coolingDown, ["C"]);
+  assert.equal(second.published.at(-1)?.role, challengerReply.role, JSON.stringify({
+    selection: second.audit.selection, reason: second.audit.reason, specialistFailure: second.audit.specialistFailure,
+  }));
+  assert.equal(w.round.get("participationInvites").C.skipNextCheckpoint, false);
 });
 test("ten real checkpoints are replayable; checkpoint45 makes no new automatic call", async () => {
   assert.equal(replay.gameId, "adaptive-replay-session");

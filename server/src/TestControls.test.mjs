@@ -58,10 +58,10 @@ test('test allocation is persistent and does not consume formal ledger',()=>{
  assert.equal(globals.get('testSequenceAllocationLedgerV1').allocationNumber,1);
 });
 test('export listings hide test games unless requested',async()=>{
- const service=new ExportService({admin:{},auditFile:'/tmp/test-controls-audit-unused'});
- const scopes=[{id:'test'},{id:'formal'}];service.allScopes=async()=>scopes;
+ const scopes=[{id:'test'},{id:'formal'}];
+ const admin={scopes:async ({filter})=>({edges:filter[0].kinds.includes('game')?scopes.map(node=>({node})):[]})};
+ const service=new ExportService({admin,auditFile:'/tmp/test-controls-audit-unused'});
  service.scopeAttributesOf=async s=>({batchID:'b',testControlsEnabled:s.id==='test',treatmentName:s.id==='test'?'test':'main'});
- service.gamePlayerIDs=async()=>[];
  assert.deepEqual((await service.listGames('b')).items.map(g=>g.id),['formal']);
  assert.equal((await service.listGames('b',{includeTest:true})).items.length,2);
  service.scopeAttributesOf=async s=>({batchID:'b',treatmentName:s.id==='test'?'test':'main'});

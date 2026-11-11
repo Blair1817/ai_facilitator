@@ -25,8 +25,11 @@ the detector never reports it.
    others have spoken, or fewer than half the others' mean once that mean is
    at least two), or silent across the last `SILENCE_WINDOW = 12` public
    participant messages (the latter requires at least 12 messages). All eligible
-   names are invited together in one Expander message. No per-person invitation
-   cap or message spacing applies; the shared six-message/15 s pacing still does.
+   names are invited together in one Expander message. A delivered invitation
+   makes each recipient ineligible for the next message-triggered checkpoint.
+   If a targeted participant speaks while the invitation is being generated or
+   validated, discard the invitation before publication. The shared
+   six-message/15 s pacing still applies.
    The detector is called first to preserve explicit participant-summary deferral;
    otherwise this code rule takes precedence over substantive candidates.
    Logged as `selection.mode = "rule_triggered"` and `participationRule`.
@@ -65,7 +68,10 @@ the detector never reports it.
    pool using the same priority/waiting policy (no new detector call); nothing left → Static policy message.
 
 Scheduler-triggered closeout checks (180 s, 120 s, early-closeout probe) keep
-their existing integration-only scope.
+their existing integration-only scope. If new public messages invalidate a
+synthesis twice, retry a timed check within the remaining discussion budget.
+An ordinary message checkpoint can use the validated Static policy with the
+latest transcript after a second invalidation.
 
 ## Checklists and their basis
 
@@ -111,9 +117,9 @@ To verify:
 
 `detectorCandidates`, `selection` (`mode`, `pool`, `rejected`, `probability`,
 `eligibleRoles`, `recentRoles`, `redraw`), `silenceRule` (`window`, `silent`,
-`eligible`), `participationRule` (`eligible`, `mode`), `optionMentionCounts`, `participationCounts`, `quietParticipants`.
+`eligible`), `participationRule` (`eligible`, `coolingDown`, `mode`), `optionMentionCounts`, `participationCounts`, `quietParticipants`.
 Round state: `adaptivePendingCandidates` stores current target waiting records;
-`participationInvites` records delivered invitation counts for audit only; it imposes no cap or spacing.
+`participationInvites` records delivered invitation counts and the one-checkpoint cooldown.
 
 ## Intervention accounting
 
@@ -163,6 +169,11 @@ live-model replay and human review remain required.
 
 Generation and coverage-audit token budgets scale with public input, with at
 least 8192 output tokens to accommodate structure and reasoning. Provider
-`finish_reason=length` results fail closed. Existing automatic time/lifecycle
+`finish_reason=length` results fail closed. The validator receives the public
+transcript once, with source and recent-message IDs referencing it.
+If public participant messages change during synthesis, refresh the transcript
+and regenerate and validate once within the existing budget. If the transcript
+changes again before publication, skip the synthesis.
+Existing automatic time/lifecycle
 budgets remain in place, so slow or oversized work may still produce no summary;
 the system must never resolve this by silently deleting required facts.

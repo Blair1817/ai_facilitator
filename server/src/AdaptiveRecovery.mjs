@@ -64,7 +64,7 @@ export async function runAdaptiveSelection({ assess, generate, fallback, budget,
       break;
     }
     const result = await generate(selection);
-    if (result.published) return result;
+    if (result.published || result.stopSelection) return result;
     log.specialistFailures ??= [];
     log.specialistFailures.push({ selection, ...result });
     log.specialistFailure ??= { selection, ...result };

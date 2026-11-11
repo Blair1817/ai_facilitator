@@ -151,23 +151,30 @@ function canPublishFacilitatorResult(game, origin) {
     && !game.get("endedAt");
 }
 
-async function whileFacilitatorPublishesVisibleResponse(game, logEntry, task) {
-  const stillCurrent = () => canPublishFacilitatorResult(game, logEntry)
-    && (logEntry.participantRequested === true || automaticContextStillUsable(game, logEntry))
-    && (!logEntry.opportunityId || staticInterventionScheduler.canCommit(game, logEntry));
-  const rejectStale = () => {
-    logEntry.reasonCode = !canPublishFacilitatorResult(game, logEntry) ? "PHASE_ENDED"
-      : automaticContextReason(game, logEntry) || "DUPLICATE_SUPPRESSED";
+async function whileFacilitatorPublishesVisibleResponse(game, logEntry, task, candidateBlockReason) {
+  const publicationBlock = () => {
+    if (!canPublishFacilitatorResult(game, logEntry)) return "PHASE_ENDED";
+    const automaticBlock = logEntry.participantRequested === true ? null : automaticContextReason(game, logEntry);
+    if (automaticBlock) return automaticBlock;
+    const candidateBlock = candidateBlockReason?.();
+    if (candidateBlock) return candidateBlock;
+    if (logEntry.opportunityId && !staticInterventionScheduler.canCommit(game, logEntry)) return "DUPLICATE_SUPPRESSED";
+    return null;
+  };
+  const rejectStale = reasonCode => {
+    logEntry.reasonCode = reasonCode;
     logEntry.reason = `Discarded stale AI result before publication: ${logEntry.reasonCode}`;
     logEntry.outcome = "SILENT";
     return false;
   };
   return facilitatorPublication.commit(game, async () => {
     if (logEntry.messageAdded) return false;
-    if (!stillCurrent()) return rejectStale();
+    const initialBlock = publicationBlock();
+    if (initialBlock) return rejectStale(initialBlock);
     try {
       await setVisibleResponsePending(game, logEntry.auditRequestId, true, () => Empirica.flush());
-      if (!stillCurrent()) return rejectStale();
+      const finalBlock = publicationBlock();
+      if (finalBlock) return rejectStale(finalBlock);
       const posted = await task();
       if (posted) {
         logEntry.reasonCode = "PUBLISHED";
@@ -326,9 +333,8 @@ function publicContextFingerprint(chat) {
   return JSON.stringify(publicContextEntries(chat));
 }
 
-// Ordinary participant appends do not invalidate an automatic candidate,
-// regardless of their number or trigger source. Preserve snapshot integrity
-// and Facilitator/request supersession; stage validity is checked separately.
+// Preserve the original prefix and respect Facilitator/request supersession.
+// Synthesis additionally checks for participant appends before publication.
 function automaticContextReason(game, logEntry) {
   if (logEntry.facilitation === "static" && facilitatorPublication.hasRequested(game)) return "REQUEST_SUPERSEDED";
   if (!logEntry.publicContextFingerprint) return null;
@@ -618,6 +624,29 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   }
 
   let generatorAttempts = 0;
+  const plan = built.interventionPlan;
+  const participationTargets = plan?.requiredReasoningAct === "PARTICIPATION_ELICITATION"
+    ? plan.target.participantNames ?? [plan.target.participantName] : null;
+  const snapshotHumans = chat.filter(isFormalHumanMessage);
+  const synthesisSnapshot = plan?.synthesisCoverage ? publicContextFingerprint(snapshotHumans) : null;
+  function candidateBlockReason() {
+    if (synthesisSnapshot === null && !participationTargets) return null;
+    const currentHumans = (game.get(chatKey) || []).filter(isFormalHumanMessage);
+    if (synthesisSnapshot !== null && publicContextFingerprint(currentHumans) !== synthesisSnapshot) {
+      return "SYNTHESIS_CONTEXT_CHANGED";
+    }
+    if (participationTargets && currentHumans.slice(snapshotHumans.length)
+      .some(message => participationTargets.includes(message.sender?.name))) {
+      return "PARTICIPANT_ALREADY_CONTRIBUTED";
+    }
+    return null;
+  }
+  function rejectStaleCandidate(reasonCode) {
+    logEntry.reasonCode = reasonCode;
+    logEntry.reason = `Discarded stale AI result: ${reasonCode}`;
+    logEntry.outcome = "SILENT";
+    return { published: false, attempts: generatorAttempts };
+  }
   function retainContentFailure(stage, candidate, failedCriteria, feedback) {
     if (!logEntry.opportunityId || candidate == null || !failedCriteria?.length) return;
     logEntry.staticContentFailures = [...(logEntry.staticContentFailures || []), structuredClone({
@@ -751,8 +780,14 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
       // harmless because the Validator LLM still catches the same
       // misuse semantically).
       activeParticipantNames: built.activeParticipantNames ?? null,
-      participationTargetNames: built.interventionPlan?.requiredReasoningAct === "PARTICIPATION_ELICITATION"
-        ? built.interventionPlan.target.participantNames ?? [built.interventionPlan.target.participantName] : null,
+      participationTargetNames: participationTargets,
+      allowedMentionNames: logEntry.reasonCode === "PARTICIPANT_ALREADY_CONTRIBUTED" ? []
+        : plan && !participationTargets
+        ? (built.metadata.generationRole === "INFORMATION_EXPANDER" ? []
+          : withMessageIds(chat.filter(isFormalContextMessage))
+            .filter(message => isFormalHumanMessage(message) && (candidate.groundingMessageIds ?? []).includes(message.messageId))
+            .map(message => message.sender?.name).filter(Boolean))
+        : null,
     });
     logEntry.deterministic = deterministicResult;
     if (!deterministicResult.passed) {
@@ -893,12 +928,16 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     return { published: false, attempts: generatorAttempts, repetition: !!exactSpecialistRepeat(a1) };
   }
 
+  let candidateBlock = candidateBlockReason();
+  if (candidateBlock) return rejectStaleCandidate(candidateBlock);
   const v1 = await runValidator(a1.candidate);
   if (!isOriginatingStageActive() || !staticCandidateStillCurrent(game, logEntry)) {
     logEntry.reason ||= "Discarded stale Validator result after the originating Discussion stage ended";
     logEntry.outcome = "SILENT";
     return { published: false, attempts: generatorAttempts };
   }
+  candidateBlock = candidateBlockReason();
+  if (candidateBlock) return rejectStaleCandidate(candidateBlock);
   if (v1.validatorFailed) {
     logEntry.failureStage = "validator_unavailable";
     logEntry.reason = `Validator LLM unavailable on attempt 1 (${v1.code}): ${v1.error}`;
@@ -910,7 +949,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     if (logEntry.opportunityId) staticInterventionScheduler.progress(game, logEntry, "READY_TO_PUBLISH");
     logEntry.llmAction = a1.candidate;
     logEntry.visibleWordCount = a1.candidate.message.trim().split(/\s+/).filter(Boolean).length;
-    const posted = await postGeneratorResultIfValid(game, chatKey, a1.candidate, built.metadata.generationRole, logEntry);
+    const posted = await postGeneratorResultIfValid(game, chatKey, a1.candidate, built.metadata.generationRole, logEntry, candidateBlockReason);
     logEntry.attempts = generatorAttempts;
     logEntry.outcome = posted ? "PUBLISHED" : "SILENT";
     return { published: posted, candidate: a1.candidate, attempts: generatorAttempts, validator: v1.verdict };
@@ -944,12 +983,16 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     return { published: false, attempts: generatorAttempts };
   }
 
+  candidateBlock = candidateBlockReason();
+  if (candidateBlock) return rejectStaleCandidate(candidateBlock);
   const v2 = await runValidator(a2.candidate, v1.verdict.failedCriteria, a1.candidate);
   if (!isOriginatingStageActive() || !staticCandidateStillCurrent(game, logEntry)) {
     logEntry.reason ||= "Discarded stale repair Validator result after the originating Discussion stage ended";
     logEntry.outcome = "SILENT";
     return { published: false, attempts: generatorAttempts };
   }
+  candidateBlock = candidateBlockReason();
+  if (candidateBlock) return rejectStaleCandidate(candidateBlock);
   if (v2.validatorFailed) {
     logEntry.failureStage = "validator_unavailable";
     logEntry.reason = `Validator LLM unavailable on repair (${v2.code}): ${v2.error}`;
@@ -962,7 +1005,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     if (logEntry.opportunityId) staticInterventionScheduler.progress(game, logEntry, "READY_TO_PUBLISH");
     logEntry.llmAction = a2.candidate;
     logEntry.visibleWordCount = a2.candidate.message.trim().split(/\s+/).filter(Boolean).length;
-    const posted = await postGeneratorResultIfValid(game, chatKey, a2.candidate, built.metadata.generationRole, logEntry);
+    const posted = await postGeneratorResultIfValid(game, chatKey, a2.candidate, built.metadata.generationRole, logEntry, candidateBlockReason);
     logEntry.outcome = posted ? "PUBLISHED" : "SILENT";
     return { published: posted, candidate: a2.candidate, attempts: 2, validator: v2.verdict };
   }
@@ -1804,7 +1847,7 @@ Empirica.on("player", "humanMessageRequest", async (_ctx, { player, humanMessage
 // write. By the time this is called from runSharedGeneration, the schema,
 // deterministic, and live Semantic Validator checks have passed, so these
 // checks are a final defensive guard. Returns true if a message was posted.
-async function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole, logEntry) {
+async function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole, logEntry, candidateBlockReason) {
   if (!llmAction || typeof llmAction.message !== "string" || !llmAction.message.trim()) {
     logEntry.reason = "LLM response missing a valid non-empty 'message' field (per generation.schema.json)";
     return false;
@@ -1847,7 +1890,7 @@ async function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole
     if (!practice && participantRequest) game.set("totalParticipantRequestReplies", (game.get("totalParticipantRequestReplies") || 0) + 1);
     else if (!practice) game.set("totalInterventions", (game.get("totalInterventions") || 0) + 1);
     return true;
-  });
+  }, candidateBlockReason);
 }
 
 // A participant-requested turn must receive a visible response even when the
@@ -2430,9 +2473,8 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
   const optionMentionCounts = countOptionMentions(formalChat, optionLabels);
   logEntry.optionMentionCounts = optionMentionCounts;
   const recentRoles = cognitiveHistory.map(h => h.role).filter(Boolean);
-  const participationInvites = currentRound.get("participationInvites") || {};
-  // Invite every code-verified silent or quiet participant together. No random
-  // target choice, per-person spacing, or per-round cap; normal pacing applies.
+  let participationInvites = currentRound.get("participationInvites") || {};
+  // Invite eligible quiet or silent participants together.
   const participationCandidate = (names, source) => {
     const anchor = withMessageIds(formalChat).filter(isPublicParticipantMessage).at(-1);
     if (!names.length || !anchor?.text) return null;
@@ -2443,10 +2485,18 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
     return checked.role ? { ...checked, source } : null;
   };
   const silentNames = silentInWindow(formalChat, rosterNames);
+  const coolingDown = logEntry.triggerSource === "message"
+    ? rosterNames.filter(name => participationInvites[name]?.skipNextCheckpoint) : [];
   const participationNames = logEntry.triggerSource === "message"
-    ? rosterNames.filter(name => silentNames.includes(name) || quietNames.includes(name)) : [];
+    ? rosterNames.filter(name => !coolingDown.includes(name) && (silentNames.includes(name) || quietNames.includes(name))) : [];
+  if (coolingDown.length) {
+    participationInvites = { ...participationInvites, ...Object.fromEntries(coolingDown.map(name => [
+      name, { ...participationInvites[name], skipNextCheckpoint: false },
+    ])) };
+    currentRound.set("participationInvites", participationInvites);
+  }
   logEntry.silenceRule = { window: SILENCE_WINDOW, silent: silentNames, eligible: silentNames.filter(n => participationNames.includes(n)) };
-  logEntry.participationRule = { eligible: participationNames, mode: "all_eligible" };
+  logEntry.participationRule = { eligible: participationNames, coolingDown, mode: "all_eligible" };
   const extraCandidates = [];
   const budget = createAdaptiveBudget({
     deadline: () => game.get("deadline"), log: logEntry,
@@ -2455,6 +2505,7 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
   });
   let publishedPlan = null;
   let publishedSelectionKey = null;
+  let publishedContextBoundary = formalChat.length;
   async function assess(excluded = []) {
     if (!budget.check()) return null;
     const start = Date.now();
@@ -2546,8 +2597,9 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
     delete logEntry.validator;
     delete logEntry.validatorRepair;
     delete logEntry.failureStage;
-    const built = buildGeneratorContext(game, players, chat, budget.remainingTime(), Date.now() - game.get("taskStartTime"), "static", null, null);
-    const result = await runSharedGeneration(game, chatKey, built, logEntry, originatingRoundId, originatingStageId, chat, { adaptiveBudget: budget });
+    const currentChat = game.get(chatKey) || [];
+    const built = buildGeneratorContext(game, players, currentChat, budget.remainingTime(), Date.now() - game.get("taskStartTime"), "static", null, null);
+    const result = await runSharedGeneration(game, chatKey, built, logEntry, originatingRoundId, originatingStageId, currentChat, { adaptiveBudget: budget });
     return { ...result, role: "STATIC", outcome: logEntry.outcome };
   }
   async function generate(selection) {
@@ -2558,20 +2610,40 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
     logEntry.controllerSelectedRole = chosen.role;
     logEntry.forced = false;
     logEntry.reasoning = gate.reason;
-    let plan = compilePlan(chosen.role, selection.checkedFactors, {
+    const seedPlan = compilePlan(chosen.role, selection.checkedFactors, {
       eligibleMessageIds: withMessageIds(formalChat).filter(isFormalHumanMessage).map(m => m.messageId),
       interventionHistory: cognitiveHistory, scheduling: selection.scheduling, semanticReview: selection.semanticReview,
       excludedTargets: selection.excludedTargets,
     });
-    plan = completeSynthesisPlan(plan, { chat: formalChat, optionLabels });
-    logEntry.plan = plan;
-    delete logEntry.validator;
-    delete logEntry.validatorRepair;
-    const built = buildGeneratorContext(game, players, chat, budget.remainingTime(), Date.now() - game.get("taskStartTime"), "adaptive", chosen.role, plan);
-    const result = await runSharedGeneration(game, chatKey, built, logEntry, originatingRoundId, originatingStageId, chat, { adaptiveBudget: budget });
-    if (result.published) { publishedPlan = plan; publishedSelectionKey = selection.selectionKey; }
-    return { ...result, role: chosen.role, outcome: logEntry.outcome, reason: logEntry.reason, failureStage: logEntry.failureStage,
-      repetition: result.repetition || built.planPreflight?.failureReasons?.includes("TARGET_ALREADY_ADDRESSED") || false };
+    let generationChat = chat;
+    for (let refresh = 0; ; refresh++) {
+      const context = generationChat.filter(isFormalContextMessage);
+      const plan = completeSynthesisPlan(seedPlan, { chat: context, optionLabels });
+      logEntry.plan = plan;
+      delete logEntry.validator;
+      delete logEntry.validatorRepair;
+      const built = buildGeneratorContext(game, players, generationChat, budget.remainingTime(), Date.now() - game.get("taskStartTime"), "adaptive", chosen.role, plan);
+      const result = await runSharedGeneration(game, chatKey, built, logEntry, originatingRoundId, originatingStageId, generationChat, { adaptiveBudget: budget });
+      if (logEntry.reasonCode === "SYNTHESIS_CONTEXT_CHANGED") {
+        if (refresh || !budget.check()) {
+          logEntry.synthesisRefreshExhausted = true;
+          return { ...result, stopSelection: logEntry.triggerSource !== "message" };
+        }
+        logEntry.synthesisContextRefreshed = true;
+        delete logEntry.reasonCode;
+        delete logEntry.reason;
+        delete logEntry.failureStage;
+        generationChat = game.get(chatKey) || [];
+        continue;
+      }
+      if (result.published) {
+        publishedPlan = plan;
+        publishedSelectionKey = selection.selectionKey;
+        publishedContextBoundary = context.length;
+      }
+      return { ...result, role: chosen.role, outcome: logEntry.outcome, reason: logEntry.reason, failureStage: logEntry.failureStage,
+        repetition: result.repetition || built.planPreflight?.failureReasons?.includes("TARGET_ALREADY_ADDRESSED") || false };
+    }
   }
   try {
     const initial = await assess();
@@ -2595,19 +2667,18 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
       const invited = publishedPlan?.requiredReasoningAct === "PARTICIPATION_ELICITATION"
         ? publishedPlan.target?.participantNames ?? [publishedPlan.target?.participantName].filter(Boolean) : [];
       if (invited.length) {
-        const nextInvites = { ...participationInvites };
-        for (const name of invited) {
+        const nextInvites = Object.fromEntries(invited.map(name => {
           const previous = participationInvites[name] || {};
-          nextInvites[name] = { count: (previous.count || 0) + 1, atHumanMessageCount: humanMessageCount };
-        }
-        currentRound.set("participationInvites", nextInvites);
+          return [name, { count: (previous.count || 0) + 1, atHumanMessageCount: logEntry.publishedHumanMessageCount, skipNextCheckpoint: true }];
+        }));
+        currentRound.set("participationInvites", { ...participationInvites, ...nextInvites });
       }
       if (publishedPlan) currentRound.set("cognitiveInterventionHistory", [...cognitiveHistory, {
         planId: publishedPlan.planId, signature: publishedPlan.signature, role: result.role,
         requiredReasoningAct: publishedPlan.requiredReasoningAct, target: publishedPlan.target,
         evidence: publishedPlan.evidence, semanticKey: publishedPlan.semanticReview?.key ?? publishedPlan.target.label,
         expectedUptake: publishedPlan.expectedUptake, messageId: logEntry.publishedMessageId,
-        publicMessageBoundary: formalChat.length, message: result.candidate?.message, timestamp: Date.now(),
+        publicMessageBoundary: publishedContextBoundary, message: result.candidate?.message, timestamp: Date.now(),
       }]);
     }
   } catch (error) {
@@ -2620,7 +2691,8 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
     await finalizeAuditLog(game, logEntry);
     adaptiveCloseoutScheduler.resume(game);
   }
-  return { deferred: logEntry.cancellation?.reason === "discussion_context_changed", outcome: logEntry.outcome };
+  return { deferred: logEntry.cancellation?.reason === "discussion_context_changed"
+    || (logEntry.synthesisRefreshExhausted === true && !logEntry.messageAdded), outcome: logEntry.outcome };
 
 }
 

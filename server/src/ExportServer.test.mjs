@@ -253,6 +253,49 @@ test("GET / renders a list page with batches, games, and download links", async 
   }
 });
 
+test("exports homepage scans each scope kind once and admits one research request at a time", { timeout: 5000 }, async () => {
+  const scopes = fixture();
+  scopes.push(attr(makeScope("BATCH2", "batch"), "status", "ended"));
+  scopes.push(attr(makeScope("GAME2", "game"), "batchID", T("BATCH2")));
+  const admin = makeMockAdmin(scopes);
+  const originalScopes = admin.scopes;
+  const scanned = [];
+  let release;
+  let started;
+  const entered = new Promise(resolve => { started = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  admin.scopes = async args => {
+    scanned.push(args.filter[0].kinds[0]);
+    if (scanned.length === 1) {
+      started();
+      await hold;
+    }
+    return originalScopes(args);
+  };
+  const auditFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "export-load-")), "audit.jsonl");
+  const srv = await startServer(new ExportService({ admin }), auditFile, { basePath: "/exports" });
+  const listing = fetchText(srv.base + "/exports/");
+  try {
+    await Promise.race([entered, listing.then(() => assert.fail("Listing returned without scanning scopes"))]);
+    const busy = await fetchText(srv.base + "/exports/batches");
+    assert.equal(busy.status, 503);
+    assert.equal(busy.headers["retry-after"], "5");
+    const health = await fetchText(srv.base + "/exports/healthz", {}, { authenticate: false });
+    assert.equal(health.status, 200);
+    release();
+    const result = await listing;
+    assert.equal(result.status, 200);
+    assert.match(result.body, /GAME1/);
+    assert.match(result.body, /GAME2/);
+    assert.deepEqual(scanned, ["player", "game", "batch"]);
+    assert.equal((await fetchText(srv.base + "/exports/batches")).status, 200);
+  } finally {
+    release();
+    await listing.catch(() => {});
+    await srv.close();
+  }
+});
+
 test("GET /batches/:batchId/games returns a JSON list with game-level treatment filtering", async () => {
   const srv = await makeRunningServer();
   try {
