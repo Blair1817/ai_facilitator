@@ -147,7 +147,7 @@
       ],
       "SCHEDULING": {
         "remainingTimeMs": 400000,
-        "triggerSource": "early_closeout_probe",
+        "triggerSource": "message",
         "fixedIntegrationPriority": false,
         "evaluateEarlyCloseout": true
       },
@@ -302,7 +302,7 @@
       ],
       "SCHEDULING": {
         "remainingTimeMs": 350000,
-        "triggerSource": "early_closeout_probe",
+        "triggerSource": "message",
         "fixedIntegrationPriority": false,
         "evaluateEarlyCloseout": true
       },

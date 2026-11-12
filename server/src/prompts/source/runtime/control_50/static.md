@@ -35,4 +35,4 @@ Remember the following:
 
 ## LENGTH — v3.2
 
-Use at most 50 English words (<=50) across the complete visible intervention. The word budget matches the automatic non-Synthesiser Adaptive paths; do not imitate their Specialist role-selection policy.
+Aim for at most 40 English words across the complete visible intervention; never exceed 50 (<=50). The word budget matches the automatic non-Synthesiser Adaptive paths; do not imitate their Specialist role-selection policy.

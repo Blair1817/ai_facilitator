@@ -1,71 +1,65 @@
-# Adaptive need detection and role selection (updated 2026-10-30)
+# Adaptive need detection and role selection (updated 2026-11-11)
 
-This document describes how the Adaptive facilitator decides which role speaks
-at an automatic checkpoint. The 2026-10-30 selection update uses current
-blockers and waiting time before random tie-breaking. It replaces the role-priority description in
-`server/IMPLEMENTATION_LOGIC.md` and `LLM_DETECTOR_ONLY.md`, which are outdated
-on this point. Automatic pacing is six human messages and a 15 s attempt cooldown for both
-Static and Adaptive. Existing time floors, UI and experiment procedure remain.
+This document describes how the Adaptive facilitator decides when and which role
+speaks at an automatic checkpoint. The 2026-11-11 update removes the per-message
+early-closeout probe, the priority/waiting queue, Specialist repair and redraw,
+and limits participation invitations to recently silent participants. It
+replaces the role-priority description in `server/IMPLEMENTATION_LOGIC.md` and
+`LLM_DETECTOR_ONLY.md`, which are outdated on this point. Automatic pacing is
+six human messages and a 15 s attempt cooldown for both Static and Adaptive.
+Existing time floors, UI and experiment procedure remain.
 
 ## Division of labour
 
 | Step | Done by | What |
 |---|---|---|
-| 1. Judge each need | LLM detector (`specialist/assessor.md`, reasoning effort `low`) | ELICIT, SCRUTINIZE and INTEGRATE are judged independently against checklists; each is null or one operation + target + exact quotes |
-| 2. Verify evidence | Code (`EvidenceChecker.checkNeedAssessment`, per candidate) | Exact quotes from the cited public messages; ≥2 distinct participants for SCRUTINIZE/INTEGRATE; ≥3 messages for fragmented_evidence; operation matches need |
-| 3. Choose the role | Code (`AdaptiveEvidence.selectAdaptiveAssessment`) | Summary pause, participation rule, then evidenced blocker / longest wait / role rotation / random tie-break |
+| 1. Silence rule | Code | Invite recently silent participants; no detector call |
+| 2. Judge each need | LLM detector (`specialist/assessor.md`, reasoning effort `low`) | ELICIT, SCRUTINIZE and INTEGRATE are judged independently against checklists; each is null or one operation + target + exact quotes |
+| 3. Verify evidence | Code (`EvidenceChecker.checkNeedAssessment`, per candidate) | Exact quotes from the cited public messages; ≥2 distinct participants for SCRUTINIZE/INTEGRATE; ≥3 messages for fragmented_evidence; operation matches need |
+| 4. Choose the role | Code (`AdaptiveEvidence.selectAdaptiveAssessment`) | Summary pause (recent evidence only), then a uniform random draw by role |
 
-Participation (inviting a quiet or silent participant) is decided by code only;
-the detector never reports it.
+Participation (inviting a silent participant) is decided by code only; the
+detector never reports it. `QUIET_PARTICIPANTS` is detector context only.
+
+## Triggers
+
+- **Message checkpoint** (Static and Adaptive): Task stage, time floor (Static
+  10 s, Adaptive 20 s), 15 s cooldown, six human messages since the last
+  publication, no automatic pipeline in flight.
+- **Adaptive closeout checks**: remaining 180 s and 120 s, once each, integration
+  only; no Static message when nothing qualifies.
+- There is no background scan after ordinary messages (removed 2026-11-11: it
+  consumed the shared cooldown/lock and starved message checkpoints). A skipped
+  checkpoint waits for the next human message.
+- @Facilitator requests bypass pacing and are not interventions.
 
 ## Selection (message-triggered Adaptive checkpoints)
 
-1. **Participation rule (deterministic, not randomized).** At a message checkpoint,
-   invite all roster participants who are quiet overall (zero messages while
-   others have spoken, or fewer than half the others' mean once that mean is
-   at least two), or silent across the last `SILENCE_WINDOW = 12` public
-   participant messages (the latter requires at least 12 messages). All eligible
-   names are invited together in one Expander message. No per-person invitation
-   cap or message spacing applies; the shared six-message/15 s pacing still does.
-   The detector is called first to preserve explicit participant-summary deferral;
-   otherwise this code rule takes precedence over substantive candidates.
-   Logged as `selection.mode = "rule_triggered"` and `participationRule`.
-   It replaces the checkpoint message, adding no publication. Static is unaffected.
-2. **Candidate pool.** When no participation invitation is due, use the verified
-   substantive detector candidates. Participation never enters the random pool.
-3. **Prioritise, then break ties.** A qualified ELICIT candidate can report
-   `blocking.kind = "missing_comparison_information"` only when participants
-   explicitly cannot compare/proceed because the target information is missing.
-   A qualified SCRUTINIZE candidate can report `decision_reasoning_risk` only
-   when an unresolved target claim/reasoning is being used to choose/end/submit
-   now. Both kinds have the same priority, above ordinary needs. INTEGRATE has
-   no blocker annotation; it still needs sufficient, unfinished public material.
-   Code checks all blocker quotes against public participant messages, requires
-   a quote among the last six messages and a quote also cited in the target.
-   Invalid annotations lose priority without discarding the underlying need.
-   These are source checks: the interpretation remains an LLM judgement.
+1. **Silence rule (deterministic, not randomized, no detector call).** A roster
+   participant with no message among the last `SILENCE_WINDOW = 12` public
+   participant messages (requires at least 12 messages) is invited by the
+   Expander. Per participant and round: at most `PARTICIPATION_INVITE_CAP = 2`
+   invitations, none within 12 human messages of the previous one. Eligible
+   names are invited together in one message. If an invitee posts before
+   publication, the invitation is withdrawn and the Static policy is used.
+   Logged as `selection.mode = "rule_triggered"` and `silenceRule`. Being quiet
+   overall no longer triggers an invitation.
+2. **Summary pause.** A detector `defer` (participant summary in progress)
+   pauses the checkpoint, including the Static fallback, only while one of its
+   quotes is among the latest 3 public participant messages; otherwise it is
+   ignored (`selection.ignoredDefer`).
+3. **Uniform draw.** A role is drawn uniformly among roles present in the
+   verified pool, then a candidate uniformly within that role. A role that
+   filled the last two Specialist turns is skipped when another role is
+   available. The exact probability is logged (`selection.mode = "random"`).
+   There is no priority tier or waiting queue.
+4. **Empty pool** → Static policy message.
+5. **Any Specialist failure** (Validator rejection including repetition,
+   word limit, preflight, grounding) → Static policy message. No Specialist
+   repair and no redraw. Static keeps its own single repair in both conditions.
 
-   Within the highest tier, select the continuously eligible target that has
-   waited the most public participant messages since first observation. Retry
-   attempts and elapsed seconds do not add waiting credit. Target keys use
-   operation, stable semantic issue key (legacy fallback: target label), options
-   and criteria; new message IDs do not reset a stable issue. If identity changes,
-   waiting credit conservatively resets. Disappeared targets are removed. Only
-   successful publication removes the served target; failed generation or Static
-   fallback leaves it pending. Timed scans and summary pauses preserve the queue.
-
-   Within the remaining tie, skip a role used for the last two Specialist turns
-   if another tied role exists; then draw uniformly by role, and within that role.
-   Rotation never overrides a higher priority or longer wait. The exact final
-   probability, priority reason, quote evidence and waiting credit are logged as
-   `selection.mode = "prioritized"`. This policy is a design choice requiring
-   preregistration and live-model validation; it is not an empirical optimum.
-4. **Empty pool** → Static policy message (as before).
-5. **Repetition rejection** by the Validator → one redraw from the remaining
-   pool using the same priority/waiting policy (no new detector call); nothing left → Static policy message.
-
-Scheduler-triggered closeout checks (180 s, 120 s, early-closeout probe) keep
-their existing integration-only scope.
+Prompts ask for at most 40 words (hard runtime ceiling 50) for Static,
+Expander and Challenger; Synthesiser has no fixed ceiling.
 
 ## Checklists and their basis
 
@@ -110,10 +104,13 @@ To verify:
 ## Audit log fields (`llmLog`)
 
 `detectorCandidates`, `selection` (`mode`, `pool`, `rejected`, `probability`,
-`eligibleRoles`, `recentRoles`, `redraw`), `silenceRule` (`window`, `silent`,
-`eligible`), `participationRule` (`eligible`, `mode`), `optionMentionCounts`, `participationCounts`, `quietParticipants`.
-Round state: `adaptivePendingCandidates` stores current target waiting records;
-`participationInvites` records delivered invitation counts for audit only; it imposes no cap or spacing.
+`eligibleRoles`, `recentRoles`, `ignoredDefer`), `silenceRule` (`window`,
+`silent`, `eligible`), `specialistFailure`, `fallbackRoute`, `optionMentionCounts`,
+`participationCounts`, `quietParticipants`. Round state: `participationInvites`
+(`count`, `atHumanMessageCount`) enforces the invitation cap and spacing. The
+Markdown transcript export prints trigger source, selected role, selection
+mode/pool roles/probability, silence-rule eligibility, Specialist failure,
+fallback, Validator/deterministic failures, visible words and model calls.
 
 ## Intervention accounting
 
@@ -154,9 +151,8 @@ its thirteen flags, mapping source quotes to exact summary text. Each source's
 ALL distinct facts must be checked, including multi-fact messages. Code verifies
 that every source is accounted for exactly once, quote mappings exist, and
 represented sources are cited. A missing/invalid audit or an omitted fact fails
-validation and feeds the existing bounded repair path. Persistent failure never
-publishes the incomplete synthesis; the existing recovery may use a process-only
-Static fallback. Round-wide synthesis cannot exclude task sources merely because
+validation; the Specialist is not repaired (2026-11-11) and the incomplete
+synthesis is never published; the Static policy is used instead. Round-wide synthesis cannot exclude task sources merely because
 they were absent from detector seeds. The ledger is a source-verified semantic
 audit, not a deterministic proof that the model understood every fact correctly;
 live-model replay and human review remain required.

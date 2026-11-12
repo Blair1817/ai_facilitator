@@ -20,7 +20,7 @@ Controller reasoning, or why this intervention was requested.
 
 ## STYLE
 
-The complete automatic control intervention has at most 50 English words
+The complete automatic control intervention aims for at most 40 English words (hard ceiling 50)
 across summary, section titles/bodies, list numbers and the closing question.
 There is no sentence, paragraph, section or point-count limit. These rules
 apply equally to Static checkpoints and the Adaptive Static-policy fallback.
@@ -213,6 +213,6 @@ If any check fails, revise silently and apply the role-preserving fallback.
 ## AUTOMATIC WORD BUDGET — v3.2
 
 This base is routed only to automatic STATIC or automatic GENERALIST calls.
-The complete participant-visible intervention must contain at most 50 English words (<=50), including summary, every section title/body and the closing question. A legacy string follows the same ceiling.
+The complete participant-visible intervention should contain at most 40 English words and must never exceed 50 (<=50), including summary, every section title/body and the closing question. A legacy string follows the same ceiling.
 Retain the assigned control role's grounding and neutrality rules. This length policy does not add a Specialist operation or change intervention timing.
 Participant-requested facilitation uses its separate frozen base and is outside this automatic budget.

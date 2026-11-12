@@ -40,7 +40,7 @@ export function createCloseoutScheduler({ run, now = () => Date.now(), setTimer 
       sources.forEach(s => e.pending.delete(s));
       e.busy = true;
       let outcome;
-      try { outcome = await run(e.game, { triggerSource: sources.find(s => s.startsWith("time_")) ?? "early_closeout_probe", triggerSources: sources }); }
+      try { outcome = await run(e.game, { triggerSource: sources.find(s => s.startsWith("time_")), triggerSources: sources }); }
       catch (error) { onError(error); outcome = { deferred: true }; }
       finally { e.busy = false; }
       if (entries.get(e.game.id) !== e) return;
@@ -79,12 +79,6 @@ export function createCloseoutScheduler({ run, now = () => Date.now(), setTimer 
     return e;
   }
   return { register, cancel,
-    request(game) {
-      const e = register(game);
-      if (!e) return;
-      e.pending.add("early_closeout_probe");
-      if (!e.busy) schedule(e, 0);
-    },
     // Useful at the end of a foreground checkpoint: lets queued closeout
     // work retry under the cooldown without starting a parallel chain.
     resume(game) { const e = entries.get(game.id); if (e && !e.busy && e.pending.size) schedule(e, 0); },

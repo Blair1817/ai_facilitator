@@ -97,15 +97,14 @@ test("real callbacks send impossible comparison to the Static policy before any 
   assert.equal(r.log.at(-1).integrationObservation.qualified, false);
 });
 // Bounded non-repetition Specialist repair, then the existing Static policy.
-test("real callbacks repair the same Specialist plan once then use Static without plan/history leakage", async () => {
+test("a rejected Specialist goes straight to Static without repair or plan/history leakage", async () => {
   const r = await run(world(), { rejectSpecialist: true });
   assert.equal(r.published.length, 1);
-  assert.equal(r.requests.length, 7, "assessor + Specialist/Validator + one repair/Validator + Static/Validator");
+  assert.equal(r.requests.length, 5, "assessor + Specialist/Validator + Static/Validator");
   assert.match(r.requests[1].messages[0].content, /# challenger.md/);
-  assert.match(r.requests[3].messages[0].content, /# challenger.md/);
-  assert.match(r.requests[5].messages[0].content, /# static.md/);
-  assert.doesNotMatch(r.requests[5].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
-  assert.doesNotMatch(r.requests[6].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
+  assert.match(r.requests[3].messages[0].content, /# static.md/);
+  assert.doesNotMatch(r.requests[3].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
+  assert.doesNotMatch(r.requests[4].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
   assert.equal(r.log.at(-1).fallbackRoute, "SPECIALIST_TO_STATIC_POLICY");
   assert.equal(r.log.at(-1).selectedRole, "STATIC");
 });
@@ -119,7 +118,7 @@ test("Static real callbacks bypass the Adaptive Assessor and use the 50-word con
   const r = await run(world("static"));
   assert.equal(r.requests.length, 2);
   assert.equal(r.published.length, 1);
-  assert.match(r.requests[0].messages[0].content, /50 English words/);
+  assert.match(r.requests[0].messages[0].content, /at most 40 English words \(hard ceiling 50\)/);
   assert.doesNotMatch(r.requests[0].messages[0].content, /# specialist_common.md/);
 });
 test("Static real callbacks can publish grounded scoreboard-only messages without a closing question (mock LLM)", async () => {
@@ -236,10 +235,11 @@ test("schemas resolve from the active versioned route, not stale root descriptio
   assert.equal(buildRuntimeGenerationSchema("GENERALIST", "PARTICIPANT_REQUEST").title, "Generator Output Schema");
 });
 
-test("word-limit repair counts toward the Specialist budget before the Static-policy fallback", async () => {
+test("an over-long Specialist is not repaired and the Static-policy fallback still publishes", async () => {
   const r = await run(world(), { rejectSpecialist: true, overlongFirstSpecialist: true });
-  assert.equal(r.requests.filter(r => r.messages[0].content.includes("# challenger.md")).length, 2);
-  assert.equal(r.requests.length, 6);
+  assert.equal(r.requests.filter(r => r.messages[0].content.includes("# challenger.md")).length, 1);
+  assert.equal(r.requests.length, 4, "assessor + over-long Specialist + Static/Validator");
   assert.equal(r.published.length, 1);
-  assert.equal(r.log.at(-1).totalGeneratorAttempts, 3);
+  assert.equal(r.log.at(-1).totalGeneratorAttempts, 2);
+  assert.equal(r.log.at(-1).fallbackRoute, "SPECIALIST_TO_STATIC_POLICY");
 });

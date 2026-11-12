@@ -20,9 +20,8 @@ export function preflightPlan(plan, { chat = [], taskGeneralContext = "", active
   if (["EVIDENCE_CONSOLIDATION", "DISCREPANCY_REPRESENTATION", "CROSS_OPTION_COMPARISON"].includes(plan?.requiredReasoningAct)) enough &&= ids.length >= 2;
   if (plan?.requiredReasoningAct === "CROSS_OPTION_COMPARISON") enough &&= (target?.optionLabels?.length || 0) >= 2 && (target?.criteria?.length || 0) > 0;
   const participants = target?.participantNames ?? [target?.participantName];
-  // 2026-10-21: a participation target must be a roster participant who is
-  // quiet under the deterministic QUIET_PARTICIPANT_RULE (a fully silent
-  // participant still qualifies, as before).
+  // 2026-11-11: a participation target must be a roster participant with no
+  // message in the last SILENCE_WINDOW public participant messages.
   const participationValid = plan?.requiredReasoningAct !== "PARTICIPATION_ELICITATION" ||
     (contextScope === "complete_current_round" && Array.isArray(participants) && participants.length > 0
       && participants.every(name => activeParticipantNames.includes(name)

@@ -83,4 +83,4 @@ explanations, or commentary around the JSON.
 
 ## LENGTH
 
-Keep the complete visible intervention at most 50 English words (<=50).
+Aim for at most 40 English words across the complete visible intervention; never exceed 50 (<=50).

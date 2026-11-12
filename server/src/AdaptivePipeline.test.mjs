@@ -102,7 +102,7 @@ test("equally urgent new scrutiny and integration candidates tie uniformly, at a
       assert.equal(r.published.length, 1);
       assert.equal(r.audit.plan.role, role, `${remaining}/${value}`);
       assert.equal(r.audit.plan.requiredReasoningAct, act);
-      assert.equal(r.audit.selection.mode, "prioritized");
+      assert.equal(r.audit.selection.mode, "random");
       assert.deepEqual(r.audit.selection.pool.map(c => c.role), ["challenger", "synthesiser"]);
       assert.equal(r.audit.selection.probability, 0.5);
       assert.equal(Object.hasOwn(r.audit.plan.scheduling, "integrationPriority"), false);
@@ -138,45 +138,31 @@ test("Assessor missing criteria gets one structure repair followed by evidence v
   assert.equal(broken.audit.selectedRole, "STATIC");
   assert.equal(broken.requests.filter(r => r.kind === "assessor").length, 2);
 });
-test("outside-plan grounding repairs within original IDs; repeated failure reaches Static", async () => {
-  for (const repaired of [true, false]) {
-    const w = world(), invalid = { ...challengerReply, groundingMessageIds: ["m0"] };
-    const r = await run(w, { generators: [invalid, repaired ? challengerReply : invalid, staticReply] });
-    assert.equal(r.audit.recovery.counts.generatorRepair, 1);
-    assert.equal(r.published.length, 1);
-    assert.equal(r.audit.selectedRole, repaired ? "challenger" : "STATIC");
-    assert.match(r.requests[2].messages[1].content, /Allowed grounding IDs remain exactly \["m4","m5"\]/);
-    assert.equal(r.audit.modelCallCount, r.requests.length);
-  }
-});
-test("unsupported facts use one same-plan repair; Static keeps its own bounded repair", async () => {
-  const r = await run(world(), { validators: [flags("notGrounded"), flags("notGrounded"), flags("repetition"), flags()] });
+// 2026-11-11: an Adaptive Specialist never repairs; any failure goes to Static.
+test("outside-plan grounding is not repaired; the Specialist failure reaches Static", async () => {
+  const w = world(), invalid = { ...challengerReply, groundingMessageIds: ["m0"] };
+  const r = await run(w, { generators: [invalid, staticReply] });
+  assert.equal(r.audit.recovery.counts.generatorRepair, 0);
+  assert.equal(r.published.length, 1);
+  assert.equal(r.audit.selectedRole, "STATIC");
+  assert.equal(r.audit.fallbackRoute, "SPECIALIST_TO_STATIC_POLICY");
   assert.equal(r.audit.modelCallCount, r.requests.length);
-  assert.equal(r.audit.recovery.counts.generatorRepair, 1);
+});
+test("a Validator-rejected Specialist goes to Static; Static keeps its own bounded repair", async () => {
+  const r = await run(world(), { validators: [flags("notGrounded"), flags("notGrounded"), flags()] });
+  assert.equal(r.audit.modelCallCount, r.requests.length);
+  assert.equal(r.audit.recovery.counts.generatorRepair, 0);
   assert.equal(r.audit.recovery.counts.staticRepair, 1);
   assert.equal(r.audit.fallbackPublished, true);
-  assert.equal(r.requests.length, 9);
+  assert.equal(r.requests.length, 7);
 });
-// 2026-10-26: a repetition rejection redraws once from the remaining verified
-// pool without a new detector call; an empty pool ends in the Static policy.
-test("repetition redraws once from the remaining verified pool; an empty pool uses Static", async () => {
-  const single = await run(world(), { assessments: [need(world())], validators: [flags("repetition"), flags()] });
-  assert.equal(single.requests.filter(r => r.kind === "assessor").length, 1, "no reassessment call");
-  assert.equal(single.audit.recovery.counts.reselection, 1);
-  assert.equal(single.audit.recovery.counts.generatorRepair, 0, "repetition is not a paraphrase repair");
-  assert.equal(single.audit.reselectionResult.need, "NONE");
-  assert.equal(single.audit.fallbackPublished, true);
-  assert.equal(single.audit.selectedRole, "STATIC");
-
+test("a repetition rejection uses Static without a reassessment or redraw, even with another verified need", async () => {
   const w = world(), raw = { ...need(w), integrationCandidate: need(w, "INTEGRATE"), integrationStatus: "qualified" };
-  const both = await withRandom(0, () => run(w, { assessments: [raw], validators: [flags("repetition"), flags()] }));
-  assert.equal(both.requests.filter(r => r.kind === "assessor").length, 1);
-  assert.equal(both.audit.recovery.counts.reselection, 1);
-  assert.equal(both.audit.reselectionResult.role, "synthesiser");
-  assert.equal(both.audit.selection.redraw.role, "synthesiser");
-  assert.equal(both.audit.selection.redraw.probability, 1);
-  assert.equal(both.published.length, 1);
-  assert.equal(both.audit.selectedRole, "synthesiser");
+  const r = await withRandom(0, () => run(w, { assessments: [raw], validators: [flags("repetition"), flags()] }));
+  assert.equal(r.requests.filter(x => x.kind === "assessor").length, 1, "no reassessment call");
+  assert.equal(r.audit.recovery.counts.generatorRepair, 0);
+  assert.equal(r.audit.fallbackPublished, true);
+  assert.equal(r.audit.selectedRole, "STATIC");
 });
 test("<=20s starts no automatic call, and time/stage/snapshot changes still prevent late publication", async () => {
   const floor = await run(world({ remaining: 20_000 })); assert.equal(floor.requests.length, 0);
@@ -241,41 +227,6 @@ test("ten real checkpoints are replayable; checkpoint45 makes no new automatic c
   }
 });
 
-test("real checkpoint33 repetition redraws once from an empty pool, then NONE uses Static, with no forced synthesis", async () => {
-  const f = replay.checkpoints.find(c => c.checkpoint === 33);
-  const w = world({ chat: f.chat, remaining: f.remainingTimeMs });
-  w.round.set("generalInfo", f.taskGeneralContext);
-  const specialist = JSON.parse(f.generatorRawResponses[0].rawText);
-  const r = await run(w, { assessments: [f.detectorRawResponse, none], generators: [specialist, staticReply], validators: [flags("repetition"), flags()] });
-  assert.equal(r.audit.recovery.counts.reselection, 1);
-  assert.equal(r.audit.reselectionResult.need, "NONE");
-  assert.equal(r.audit.fallbackPublished, true);
-  assert.equal(r.audit.selectedRole, "STATIC");
-  assert.match(r.audit.excludedSemanticTargets[0].target.label, /Fenwick/i);
-});
-
-test("early two-person public readiness can trigger qualified integration below six messages", async () => {
-  const texts = ["Norvale has indoor signs.", "Norvale has displays across the courtyard.", "Norvale app cannot send reminders.", "Choose Norvale, ready to submit.", "Agreed, we can submit."];
-  const authors = ["A", "B", "A", "A", "B"];
-  const w = world({ chat: texts.map((text,i) => ({ text, sender: { id: authors[i], name: authors[i] } })) });
-  const q = i => ({ messageId: `m${i}`, span: texts[i] });
-  const integration = { need: "INTEGRATE", operation: "fragmented_evidence", rationale: "Three unconnected points", target: {
-    label: "Norvale points", messageIds: ["m0", "m1", "m2"], evidence: [q(0),q(1),q(2)], optionLabels: ["Norvale"], criteria: [] } };
-  const closeout = { proposal: { active: true, optionLabel: "Norvale", evidence: [q(3)] }, participants: [
-    { participantName: "A", reviewedThroughMessageId: "m3", stance: "ready", optionLabel: "Norvale", evidence: [q(3)] },
-    { participantName: "B", reviewedThroughMessageId: "m4", stance: "ready", optionLabel: "Norvale", evidence: [q(4)] },
-    { participantName: "C", reviewedThroughMessageId: null, stance: "uncommitted", optionLabel: null, evidence: [] },
-  ] };
-  const r = await run(w, { assessments: [{ ...none, closeout, integrationCandidate: integration, integrationStatus: "qualified" }],
-    generators: [{ ...synthesis, groundingMessageIds: ["m0", "m1", "m2"] }],
-    trigger: { triggerSource: "early_closeout_probe", triggerSources: ["early_closeout_probe"] } });
-  assert.equal(r.published.length, 1);
-  assert.equal(r.audit.scheduling.stage, "early_closeout");
-  assert.deepEqual(r.audit.earlyCloseout.supporters, ["A", "B"]);
-  assert.equal(w.stage.get("ended"), undefined);
-  assert.equal(w.round.get("finalDecisionConfirmed"), undefined);
-});
-
 test("overlapping timed/message evaluations share the durable automatic lock and never show assessment typing", async () => {
   const w = world(), harness = await getOfflineCallbacksHarness();
   const oldFetch = globalThis.fetch, oldTimeout = globalThis.setTimeout, timers = [];
@@ -307,43 +258,6 @@ test("overlapping timed/message evaluations share the durable automatic lock and
 });
 
 
-test("successful publication removes only its selected target from the round queue", async () => {
-  const w = world();
-  const raw = { ...need(w), integrationCandidate: need(w, "INTEGRATE"), integrationStatus: "qualified" };
-  const r = await withRandom(0, () => run(w, { assessments: [raw] }));
-  assert.equal(r.published.length, 1);
-  const pool = r.audit.selection.pool;
-  const pending = w.round.get("adaptivePendingCandidates");
-  assert.equal(Object.hasOwn(pending, pool.find(c => c.role === "challenger").selectionKey), false);
-  assert.equal(Object.hasOwn(pending, pool.find(c => c.role === "synthesiser").selectionKey), true);
-});
-
-test("failed generation and Static fallback do not mark the substantive target served", async () => {
-  const w = world();
-  const r = await run(w, { validators: [flags("roleMisaligned"), flags("roleMisaligned"), flags()] });
-  assert.equal(r.audit.selectedRole, "STATIC");
-  assert.equal(Object.keys(w.round.get("adaptivePendingCandidates")).length, 1);
-});
-
-
-test("a blocker annotation survives schema parsing and controls the real callback selection", async () => {
-  const chat = lines.map((text, i) => ({ text: i === 5 ? "Norvale guarantees everyone arrives on time, so let's submit Norvale now." : text,
-    sender: { id: names[i % 3], name: names[i % 3] } }));
-  const w = world({ chat });
-  const data = toDetectorOutput({ ...need(w), integrationCandidate: need(w, "INTEGRATE"), integrationStatus: "qualified" });
-  data.candidates.scrutinize.blocking = { kind: "decision_reasoning_risk",
-    evidence: [{ messageId: "m5", span: w.chat[5].text }], rationale: "The unsupported guarantee is being used to submit now." };
-  const { validateAgainstAssessorSchema } = await import("./SemanticAssessor.js");
-  assert.equal(validateAgainstAssessorSchema(data).ok, true);
-  const r = await withRandom(0.99, () => run(w, { assessments: [data] }));
-  assert.equal(r.published.length, 1);
-  assert.equal(r.audit.selectedRole, "challenger");
-  assert.equal(r.audit.selection.reason.priority, 1);
-  assert.equal(r.audit.selection.probability, 1);
-  assert.deepEqual(r.audit.selection.pool.find(c => c.role === "challenger").priorityEvidence, data.candidates.scrutinize.blocking.evidence);
-});
-
-
 test("a full synthesis above 55 words is preserved, gets a larger token budget, and can cite beyond detector seeds", async () => {
   const extra = " The shuttle stops at the main hall only on weekdays and does not serve the riverside entrance on weekends.";
   const chat = lines.map((text, i) => ({ text: i === 0 ? text + extra : text,
@@ -364,9 +278,8 @@ test("a full synthesis above 55 words is preserved, gets a larger token budget, 
 test("an incomplete synthesis coverage audit cannot publish even when all boolean flags say pass", async () => {
   const w = world();
   const r = await run(w, { assessments: [need(w, "INTEGRATE")],
-    validators: [{ ...flags(), synthesisCoverage: [] }, { ...flags(), synthesisCoverage: [] }, flags()] });
+    validators: [{ ...flags(), synthesisCoverage: [] }, flags()] });
   assert.equal(r.published.length, 1);
   assert.equal(r.published[0].content, staticReply.message);
   assert.equal(r.audit.selectedRole, "STATIC");
-  assert.ok(r.requests.some(x => x.kind === "generator" && x.messages[1].content.includes("SYNTHESIS_COVERAGE_INCOMPLETE")));
 });

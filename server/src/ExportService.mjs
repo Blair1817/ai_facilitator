@@ -929,6 +929,21 @@ export function renderTranscriptMd(bundle) {
       if (e.auditCompletedAt) lines.push(`- Completed: ${e.auditCompletedAt}`);
       if (e.messageAdded != null) lines.push(`- Message added: ${e.messageAdded}`);
       if (e.requestSuccess != null) lines.push(`- Request success: ${e.requestSuccess}`);
+      // 2026-11-11: compact Adaptive diagnostics (no message text).
+      if (e.triggerSource) lines.push(`- Trigger source: \`${e.triggerSource}\``);
+      if (e.selectedRole) lines.push(`- Selected role: \`${e.selectedRole}\``);
+      if (e.selection?.mode) {
+        const roles = (e.selection.pool || []).map(c => c?.role).filter(Boolean);
+        lines.push(`- Selection: ${e.selection.mode}; pool roles: ${roles.length ? roles.join(", ") : "none"}${e.selection.probability != null ? `; probability ${Number(e.selection.probability).toFixed(2)}` : ""}${e.selection.ignoredDefer ? "; stale pause ignored" : ""}`);
+      }
+      if (e.silenceRule?.eligible?.length) lines.push(`- Silence rule eligible: ${e.silenceRule.eligible.join(", ")}`);
+      const failure = e.specialistFailure;
+      if (failure) lines.push(`- Specialist failure: ${failure.failureStage || "unknown"}${failure.reason ? ` (${failure.reason})` : ""}`);
+      if (e.fallbackRoute) lines.push(`- Fallback: ${e.fallbackRoute}${e.fallbackOutcome ? ` -> ${e.fallbackOutcome}` : ""}`);
+      if (e.validator?.failedCriteria?.length) lines.push(`- Validator failed: ${e.validator.failedCriteria.join(", ")}`);
+      if (e.deterministicFailedCriteria?.length) lines.push(`- Deterministic failed: ${e.deterministicFailedCriteria.join(", ")}`);
+      if (e.visibleWordCount != null) lines.push(`- Visible words: ${e.visibleWordCount}`);
+      if (e.modelCallCount != null) lines.push(`- Model calls: ${e.modelCallCount}`);
       lines.push("");
     }
   }

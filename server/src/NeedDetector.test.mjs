@@ -47,6 +47,8 @@ const CHAT = [
   msg("Jordan", "ok"),
 ];
 
+const SILENT_JORDAN = [msg("Jordan", "I have a couple of notes."),
+  ...Array.from({ length: 12 /* SILENCE_WINDOW */ }, (_, i) => msg(i % 2 ? "Casey" : "Alex", `City ${i % 2 ? "B" : "A"} point ${i}.`))];
 // ── participation rule ──────────────────────────────────────────────────────
 
 test("participation counts use roster names only and ignore Facilitator/system messages", () => {
@@ -127,22 +129,27 @@ test("N3: SCRUTINIZE and INTEGRATE need two distinct participants; fragmented ev
   assert.equal(check(need("ELICIT", "coverage_gap", target(CHAT, [2]))).role, "expander", "ELICIT may cite a single participant");
 });
 
-test("N4: participation_gap must name a roster participant verified quiet by code", () => {
-  const invite = (name) => need("ELICIT", "participation_gap", target(CHAT, [5], { participantName: name }));
-  const ok = check(invite("Jordan"));
+// 2026-11-11: a participation target must be silent across the last SILENCE_WINDOW messages.
+test("N4: participation_gap must name a roster participant verified silent by code", () => {
+  const last = SILENT_JORDAN.length - 1;
+  const invite = (name) => need("ELICIT", "participation_gap", target(SILENT_JORDAN, [last], { participantName: name }));
+  const ok = check(invite("Jordan"), SILENT_JORDAN);
   assert.equal(ok.role, "expander");
-  assert.equal(ok.target.participantName, "Jordan");
-  assert.equal(check(invite("Alex")).downgradedReason, "PARTICIPANT_NOT_VERIFIED_QUIET");
-  assert.equal(check(invite("Stranger")).downgradedReason, "PARTICIPANT_NOT_VERIFIED_QUIET");
-  assert.equal(check(need("ELICIT", "participation_gap", target(CHAT, [5]))).downgradedReason, "PARTICIPANT_NOT_VERIFIED_QUIET");
+  assert.deepEqual(ok.target.participantNames, ["Jordan"]);
+  assert.equal(check(invite("Alex"), SILENT_JORDAN).downgradedReason, "PARTICIPANT_NOT_VERIFIED_QUIET");
+  assert.equal(check(invite("Stranger"), SILENT_JORDAN).downgradedReason, "PARTICIPANT_NOT_VERIFIED_QUIET");
+  assert.equal(check(need("ELICIT", "participation_gap", target(SILENT_JORDAN, [last])), SILENT_JORDAN).downgradedReason, "PARTICIPANT_NOT_VERIFIED_QUIET");
+  // Quiet overall but not silent in the window is no longer a target.
+  assert.equal(check(need("ELICIT", "participation_gap", target(CHAT, [5], { participantName: "Jordan" }))).downgradedReason, "PARTICIPANT_NOT_VERIFIED_QUIET");
 });
 
 test("every non-NONE need maps only to its own role's operations", () => {
   for (const [needName, role] of Object.entries(NEED_CATEGORIES)) {
     if (!role) continue;
     for (const [operation, [opRole]] of Object.entries(COGNITIVE_NEEDS)) {
-      const raw = need(needName, operation, target(CHAT, [0, 1, 3], operation === "participation_gap" ? { participantName: "Jordan" } : {}));
-      const result = check(raw);
+      const chat = operation === "participation_gap" ? SILENT_JORDAN : CHAT;
+      const raw = need(needName, operation, target(chat, [1, 2, 4], operation === "participation_gap" ? { participantName: "Jordan" } : {}));
+      const result = check(raw, chat);
       if (opRole === role) assert.equal(result.role, role, `${needName}/${operation}`);
       else assert.equal(result.downgradedReason, "OPERATION_NEED_MISMATCH", `${needName}/${operation}`);
     }
@@ -179,7 +186,6 @@ const planFor = (raw, chat = CHAT) => {
 test("verified needs compile to the matching fixed operation and pass preflight", () => {
   const cases = [
     [need("ELICIT", "coverage_gap", target(CHAT, [2], { optionLabels: ["City A"] })), "expander", "COVERAGE_GAP_ELICITATION"],
-    [need("ELICIT", "participation_gap", target(CHAT, [5], { participantName: "Jordan" })), "expander", "PARTICIPATION_ELICITATION"],
     [need("SCRUTINIZE", "unsupported_claim", target(CHAT, [0, 1], { optionLabels: ["City B"] })), "challenger", "EVIDENCE_AUDIT"],
     [need("INTEGRATE", "cross_option_evidence", target(CHAT, [2, 3], { optionLabels: ["City A", "City B"], criteria: ["transport"] })), "synthesiser", "CROSS_OPTION_COMPARISON"],
   ];
@@ -190,12 +196,17 @@ test("verified needs compile to the matching fixed operation and pass preflight"
     assert.equal(plan.intensity, "medium", "no numeric score feeds the plan");
     assert.equal(preflight.status, "passed", `${act}: ${preflight.failureReasons}`);
   }
+  const last = SILENT_JORDAN.length - 1;
+  const { plan, preflight } = planFor(need("ELICIT", "participation_gap", target(SILENT_JORDAN, [last], { participantName: "Jordan" })), SILENT_JORDAN);
+  assert.equal(plan.requiredReasoningAct, "PARTICIPATION_ELICITATION");
+  assert.equal(preflight.status, "passed", `${preflight.failureReasons}`);
 });
 
-test("preflight still blocks a participation target that is not quiet", () => {
-  const { plan } = planFor(need("ELICIT", "participation_gap", target(CHAT, [5], { participantName: "Jordan" })));
-  const balancedChat = [...CHAT, msg("Jordan", "City A has trains."), msg("Jordan", "City B has trams.")];
-  const preflight = preflightPlan(plan, { chat: balancedChat, taskGeneralContext: "Choose City A or City B.", activeParticipantNames: ROSTER });
+test("preflight still blocks a participation target that is no longer silent", () => {
+  const last = SILENT_JORDAN.length - 1;
+  const { plan } = planFor(need("ELICIT", "participation_gap", target(SILENT_JORDAN, [last], { participantName: "Jordan" })), SILENT_JORDAN);
+  const spokeChat = [...SILENT_JORDAN, msg("Jordan", "City A has trains.")];
+  const preflight = preflightPlan(plan, { chat: spokeChat, taskGeneralContext: "Choose City A or City B.", activeParticipantNames: ROSTER });
   assert.equal(preflight.status, "failed");
   assert.ok(preflight.failureReasons.includes("TARGET_UNSUPPORTED"));
 });
@@ -297,26 +308,22 @@ test("end-to-end: a finished summary does not leave a sticky pause at the next c
 });
 
 // Participation is decided by code and takes precedence over the random pool.
-test("end-to-end: the code-verified quiet participant is selected by rule and the Expander invites them", async () => {
+test("end-to-end: a message below the six-message gate starts no background detector scan", async () => {
+  const w = world("adaptive", CHAT.slice(0, 3));
+  w.game.set("messagesSinceLastPublish", 1);
+  const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "none" }, () => STATIC_REPLY);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.deepEqual(r.calls, [], "no per-message early-closeout probe");
+  assert.equal(r.published.length, 0);
+});
+
+test("end-to-end: a participant who is only quiet overall is not invited; the checkpoint uses the detector", async () => {
   const w = world("adaptive", CHAT);
-  let expanderContext = "";
-  const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "No content need." }, (prompt, body) => {
-    expanderContext = body.messages[1].content;
-    return prompt === "expander"
-      ? { role: "INFORMATION_EXPANDER", message: "@[Jordan], anything from your notes on any of the options, good or bad? No worries if not.", groundingMessageIds: [] }
-      : STATIC_REPLY;
-  });
-  assert.deepEqual(r.calls, ["detector", "expander", "validator"]);
-  assert.equal(r.published.length, 1);
-  assert.match(r.published[0].text ?? r.published[0].content, /@\[Jordan\]/);
-  assert.equal(r.audit.selectedRole, "expander");
-  assert.equal(r.audit.plan.requiredReasoningAct, "PARTICIPATION_ELICITATION");
-  assert.deepEqual(r.audit.quietParticipants, ["Jordan"]);
-  assert.equal(r.audit.selection.mode, "rule_triggered");
-  assert.deepEqual(r.audit.selection.pool.map(c => c.source), ["participation_rule"]);
-  assert.equal(r.audit.selection.probability, 1);
-  assert.deepEqual(w.round.get("participationInvites").Jordan.count, 1);
-  assert.match(expanderContext, /PARTICIPATION_ELICITATION/);
+  const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "No content need." }, () => STATIC_REPLY);
+  assert.deepEqual(r.calls, ["detector", "static", "validator"]);
+  assert.deepEqual(r.audit.quietParticipants, ["Jordan"], "quiet remains detector context");
+  assert.deepEqual(r.audit.silenceRule.eligible, []);
+  assert.equal(w.round.get("participationInvites"), undefined);
 });
 
 test("end-to-end: the detector receives exact participation counts and the quiet list", async () => {
@@ -443,8 +450,6 @@ function appendHuman(w, name, text) {
     content: text, sender: { id: player.id, name } }));
 }
 // Jordan speaks once, then Alex and Casey post twelve messages.
-const SILENT_JORDAN = [msg("Jordan", "I have a couple of notes."),
-  ...Array.from({ length: SILENCE_WINDOW }, (_, i) => msg(i % 2 ? "Casey" : "Alex", `City ${i % 2 ? "B" : "A"} point ${i}.`))];
 
 test("draw is uniform by role (not by candidate count) and avoids a third consecutive turn of one role", () => {
   const pool = [{ role: "expander", id: 1 }, { role: "expander", id: 2 }, { role: "challenger" }, { role: "synthesiser" }];
@@ -478,27 +483,49 @@ test("silence rule window: needs SILENCE_WINDOW public messages; option mentions
   assert.deepEqual(countOptionMentions(CHAT, ["City A", "City B"]), { "City A": 2, "City B": 4 });
 });
 
-test("end-to-end: a silent participant is invited by rule and can be invited again after six messages; Static is unaffected", async () => {
+test("end-to-end: a silent participant is invited without a detector call, at most twice per round, 12 messages apart; Static is unaffected", async () => {
   const w = world("adaptive", SILENT_JORDAN);
-  const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "none" }, prompt => prompt === "expander" ? EXPANDER_REPLY("Jordan") : STATIC_REPLY);
-  assert.deepEqual(r.calls, ["detector", "expander", "validator"]);
+  const none = { need: "NONE", operation: null, target: null, rationale: "none" };
+  let staticCount = 0;
+  const reply = prompt => prompt === "expander" ? EXPANDER_REPLY("Jordan")
+    : { ...STATIC_REPLY, message: `What else from your notes should the group hear, point ${++staticCount}?` };
+  const r = await runCheckpoint(w, none, reply);
+  assert.deepEqual(r.calls, ["expander", "validator"], "no detector call");
   assert.match(r.published[0].text ?? r.published[0].content, /@\[Jordan\]/);
   assert.equal(r.audit.selection.mode, "rule_triggered");
   assert.equal(r.audit.plan.requiredReasoningAct, "PARTICIPATION_ELICITATION");
   assert.equal(w.round.get("participationInvites").Jordan.count, 1);
   assert.equal(w.game.get("publishedThisRound"), 1, "it replaces the checkpoint message; no extra publication");
 
-  for (let i = 0; i < 6; i++) appendHuman(w, i % 2 ? "Casey" : "Alex", `More detail ${i}.`);
-  w.game.set("lastAttemptTimestamp", Date.now() - 31_000);
-  const again = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "none" }, prompt => prompt === "expander"
+  const next = (n) => { for (let i = 0; i < n; i++) appendHuman(w, i % 2 ? "Casey" : "Alex", `More detail ${appended}.`); w.game.set("lastAttemptTimestamp", Date.now() - 31_000); };
+  next(6);
+  const spaced = await runCheckpoint(w, none, reply);
+  assert.deepEqual(spaced.calls, ["detector", "static", "validator"], "not again within 12 messages");
+  next(6);
+  const again = await runCheckpoint(w, none, prompt => prompt === "expander"
     ? { ...EXPANDER_REPLY("Jordan"), message: "@[Jordan], would you like to add anything you have read, good or bad? No worries if not." } : STATIC_REPLY);
-  assert.deepEqual(again.calls, ["detector", "expander", "validator"]);
-  assert.equal(again.audit.selection.mode, "rule_triggered");
+  assert.deepEqual(again.calls, ["expander", "validator"]);
+  assert.equal(w.round.get("participationInvites").Jordan.count, 2);
+  next(6); await runCheckpoint(w, none, reply); next(6);
+  const capped = await runCheckpoint(w, none, reply);
+  assert.deepEqual(capped.calls, ["detector", "static", "validator"], "cap of two invitations per round");
   assert.equal(w.round.get("participationInvites").Jordan.count, 2);
 
   const staticWorld = world("static", SILENT_JORDAN);
   const s = await runCheckpoint(staticWorld, null, () => STATIC_REPLY);
   assert.deepEqual(s.calls, ["static", "validator"]);
+});
+
+test("end-to-end: an invitation is withdrawn for Static if the invitee posts before publication", async () => {
+  const w = world("adaptive", SILENT_JORDAN);
+  const r = await runCheckpoint(w, null, prompt => prompt === "expander" ? EXPANDER_REPLY("Jordan") : STATIC_REPLY, { onFetch: (system) => {
+    if (system.startsWith("# validator.md") && !w.game.get("chat_round_0").some(m => m.sender?.name === "Jordan" && m.messageId?.startsWith("extra-"))) appendHuman(w, "Jordan", "Actually, I can add something.");
+  } });
+  assert.deepEqual(r.calls, ["expander", "validator", "static", "validator"]);
+  assert.equal(r.published.length, 1);
+  assert.doesNotMatch(r.published[0].text ?? r.published[0].content, /@\[Jordan\]/);
+  assert.equal(r.audit.selectedRole, "STATIC");
+  assert.equal(w.round.get("participationInvites"), undefined);
 });
 
 test("end-to-end: the detector receives option mention counts and no priority fields", async () => {
@@ -552,16 +579,16 @@ test("export labels only automatic LLM messages as interventions", () => {
 });
 
 
-test("all quiet participants are invited together even after two earlier invitations", async () => {
-  const w = world("adaptive", Array.from({ length: 6 }, (_, i) => msg("Alex", `City A public point ${i}.`)));
-  w.round.set("participationInvites", { Casey: { count: 2, atHumanMessageCount: 5 }, Jordan: { count: 4, atHumanMessageCount: 5 } });
-  const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "none" },
-    () => ({ role: "INFORMATION_EXPANDER", message: "@[Casey] and @[Jordan], anything from your notes on any option, good or bad? No worries if not.", groundingMessageIds: [] }));
-  assert.deepEqual(r.audit.plan.target.participantNames, ["Casey", "Jordan"]);
-  assert.deepEqual(r.calls, ["detector", "expander", "validator"]);
+test("silent participants below the cap are invited together; a capped one is left out", async () => {
+  const w = world("adaptive", Array.from({ length: SILENCE_WINDOW }, (_, i) => msg("Alex", `City A public point ${i}.`)));
+  w.round.set("participationInvites", { Casey: { count: 2, atHumanMessageCount: 0 } });
+  const r = await runCheckpoint(w, null,
+    () => ({ role: "INFORMATION_EXPANDER", message: "@[Jordan], anything from your notes on any option, good or bad? No worries if not.", groundingMessageIds: [] }));
+  assert.deepEqual(r.audit.plan.target.participantNames, ["Jordan"]);
+  assert.deepEqual(r.calls, ["expander", "validator"]);
   assert.equal(r.published.length, 1);
-  assert.equal(w.round.get("participationInvites").Casey.count, 3);
-  assert.equal(w.round.get("participationInvites").Jordan.count, 5);
+  assert.equal(w.round.get("participationInvites").Casey.count, 2);
+  assert.equal(w.round.get("participationInvites").Jordan.count, 1);
 });
 
 test("multi-person participation evidence rejects a target set containing a non-quiet participant", () => {

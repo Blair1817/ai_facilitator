@@ -9,28 +9,17 @@ function fixture() {
   const log = {}, budget = createAdaptiveBudget({ now: () => time, deadline: () => 200_000, isCurrent: () => current, log });
   return { log, budget, tick: n => { time = n; }, stop: () => { current = false; } };
 }
-test("repetition excludes a problem, reselects once, and NONE/invalid/second failure always reaches Static", async () => {
-  for (const next of [{ need: "NONE" }, null, scrutiny]) {
+test("any Specialist failure goes straight to Static once, with no reselection", async () => {
+  for (const failure of [repeated, { published: false, failureStage: "deterministic" }]) {
     const f = fixture(), calls = [];
     const result = await runAdaptiveSelection({ ...f, initial: scrutiny,
-      generate: async () => { calls.push("generate"); return repeated; },
-      assess: async excluded => { calls.push("reselect"); assert.equal(excluded[0].target.label, scrutiny.target.label); return next; },
+      generate: async () => { calls.push("generate"); return failure; },
       fallback: async () => { calls.push("static"); return { published: true }; },
     });
     assert.equal(result.published, true);
-    assert.equal(calls.filter(x => x === "reselect").length, 1);
-    assert.equal(calls.at(-1), "static");
-    assert.equal(f.log.recovery.counts.reselection, 1);
+    assert.deepEqual(calls, ["generate", "static"]);
+    assert.equal(f.log.fallbackRoute, "SPECIALIST_TO_STATIC_POLICY");
   }
-});
-test("reselection may choose another scrutiny issue; it is never forced to integrate", async () => {
-  const f = fixture(); let n = 0;
-  const result = await runAdaptiveSelection({ ...f, initial: scrutiny,
-    generate: async selection => ++n === 1 ? repeated : { published: true, role: selection.role },
-    assess: async () => ({ ...scrutiny, target: { label: "Fenwick shuttle assumption" } }),
-    fallback: async () => { throw Error("unnecessary fallback"); },
-  });
-  assert.equal(result.role, "challenger");
 });
 test("timed empty scan is silent, whereas ordinary NONE still uses Static", async () => {
   for (const closeoutOnly of [true, false]) {
@@ -41,11 +30,10 @@ test("timed empty scan is silent, whereas ordinary NONE still uses Static", asyn
     assert.equal(fallback, closeoutOnly ? 0 : 1);
   }
 });
-test("existing explicit participant-summary deferral also survives a reselection", async () => {
+test("an explicit participant-summary deferral pauses the checkpoint without Static", async () => {
   const f = fixture();
-  const result = await runAdaptiveSelection({ ...f, initial: scrutiny,
-    generate: async () => repeated,
-    assess: async () => ({ need: "NONE", defer: { reason: "participant_summary_in_progress" } }),
+  const result = await runAdaptiveSelection({ ...f, initial: { need: "NONE", defer: { reason: "participant_summary_in_progress" } },
+    generate: async () => { throw Error("no generation during a pause"); },
     fallback: async () => { throw Error("Must not interrupt explicit participant organising"); },
   });
   assert.equal(result.published, false);
@@ -62,7 +50,7 @@ test("shared repair counts never reset and calls read time/lifecycle again", asy
   assert.equal(calls, 1);
   assert.equal(f.log.cancellation.reason, "chain_time_budget");
   f.tick(180_000);
-  assert.equal(f.budget.take("reselection"), false);
+  assert.equal(f.budget.take("staticRepair"), false);
   assert.equal(f.log.cancellation.reason, "adaptive_20s_floor");
   f.stop(); assert.equal(f.budget.check(), false);
 });

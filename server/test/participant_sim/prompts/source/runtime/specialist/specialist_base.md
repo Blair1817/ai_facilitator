@@ -45,7 +45,7 @@ A targeted question about a public claim is permitted; it must examine reasoning
 
 ## STYLE
 Use plain, natural English appropriate to the discussion. Explain the relevant public points clearly enough to perform the assigned operation.
-Obey the runtime word ceiling across all visible text: 50 English words for Expander/Challenger. Synthesiser has no fixed word ceiling: cover all distinct public task information in its scope, then use the shortest faithful wording. There is no target word range or sentence, paragraph, section or point-count limit.
+Obey the runtime word ceiling across all visible text: aim for at most 40 English words for Expander/Challenger (hard ceiling 50). Synthesiser has no fixed word ceiling: cover all distinct public task information in its scope, then use the shortest faithful wording. There is no target word range or sentence, paragraph, section or point-count limit.
 Avoid clinical diagnoses and generic encouragement when a concrete role-consistent action is available.
 
 ## OUTPUT CONTRACT

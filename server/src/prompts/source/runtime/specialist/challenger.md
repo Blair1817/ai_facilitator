@@ -31,7 +31,7 @@ Plain task language only: say "point", "drawback", "strength", "fit with". Do no
 ## QUALITY AND RESPONSE FORM
 Always name the leading option [X] when TARGET shows one.
 A grounded anchor or explanation may introduce the one answerable question. Paragraphs and sections are allowed; keep the explanation within the assigned reasoning issue.
-The runtime ceiling is 50 English words across all visible text, including headings and list numbers. There is no sentence limit or preferred shorter length.
+Aim for at most 40 English words across all visible text, including headings and list numbers; the hard runtime ceiling is 50. There is no sentence limit.
 
 ## ROLE-PRESERVING FALLBACK
 Remove unsupported framing while preserving the assigned target and operation. For EVIDENCE_AUDIT, use the alternatives form only for a public choice-preference target; otherwise keep the exact unsupported claim and ask what already-seen points, if any, support it. Never turn a claim-only target into an option preference to use a familiar template. Do not invent a point to bring back, replace the assigned operation or impersonate a Generalist. If the operation has no safe public target, validation and runtime fallback handle that failure.

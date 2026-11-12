@@ -81,8 +81,9 @@ export function quietParticipants(counts, rule = QUIET_PARTICIPANT_RULE) {
 // last SILENCE_WINDOW public participant messages (two 6-message checkpoint
 // intervals). Evaluated only when at least SILENCE_WINDOW messages exist.
 export const SILENCE_WINDOW = 12;
-// Participation invitations have no per-round cap or per-person message spacing.
-// The shared checkpoint pacing still applies.
+// Per participant and round: at most this many invitations, and none within
+// SILENCE_WINDOW human messages of the previous one (2026-11-11).
+export const PARTICIPATION_INVITE_CAP = 2;
 
 /** Roster names with zero messages among the last `window` public participant messages. */
 export function silentInWindow(chat, rosterNames = [], window = SILENCE_WINDOW) {
@@ -92,10 +93,10 @@ export function silentInWindow(chat, rosterNames = [], window = SILENCE_WINDOW) 
   return (Array.isArray(rosterNames) ? rosterNames : []).filter((name) => typeof name === "string" && name.trim() && !recent.has(name));
 }
 
-/** Code-verified participation targets: quiet overall OR silent in the recent window. */
+/** Code-verified participation targets: silent in the recent window (2026-11-11:
+ * being quiet overall is context only and no longer a participation target). */
 export function verifiedParticipationTargets(chat, rosterNames = []) {
-  const quiet = quietParticipants(countPublicMessagesByName(chat, rosterNames));
-  return [...new Set([...quiet, ...silentInWindow(chat, rosterNames)])];
+  return silentInWindow(chat, rosterNames);
 }
 
 /** Number of public participant messages mentioning each option label (case-insensitive). */

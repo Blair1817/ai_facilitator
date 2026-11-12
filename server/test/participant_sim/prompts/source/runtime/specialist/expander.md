@@ -23,7 +23,7 @@ Plain task language only: say "anything you've read", "your notes", "good or bad
 
 ## RESPONSE FORM AND LENGTH
 End with one concrete, answerable question. A grounded coverage observation or explanation may introduce the information request. Paragraphs and sections are allowed.
-The runtime ceiling is 50 English words across all visible text, including headings and list numbers. There is no sentence limit or preferred shorter length.
+Aim for at most 40 English words across all visible text, including headings and list numbers; the hard runtime ceiling is 50. There is no sentence limit.
 
 ## ROLE-PRESERVING FALLBACK
 If a specific observation cannot be grounded, drop it and keep the option-level question ("Has anyone read anything about [Z] yet, good or bad?"). Option labels from public task context are always safe targets. If the plan cannot safely be executed, do not fabricate a missing fact or participant target; validation and runtime fallback handle that failure.

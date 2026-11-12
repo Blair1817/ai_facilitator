@@ -29,7 +29,10 @@ for (const need of Object.keys(COGNITIVE_NEEDS)) test(`v3.2 compiles and validat
   assert.equal(plan.maxWords, role === "synthesiser" ? null : 50);
   assert.equal(Object.hasOwn(plan, "maxSentences"), false);
   assert.deepEqual(plan.target.messageIds, ids);
-  assert.equal(preflightPlan(plan, { chat, activeParticipantNames: ["Alex", "Casey", "Jordan"] }).status, "passed");
+  // A participation target must be silent across the last 12 public messages.
+  const filler = Array.from({ length: 9 }, (_, i) => ({ text: `Public point ${i}.`, sender: i % 2 ? { id: "p2", name: "Casey" } : { id: "p1", name: "Alex" } }));
+  const preflightChat = need === "participation_gap" ? [...chat, ...filler] : chat;
+  assert.equal(preflightPlan(plan, { chat: preflightChat, activeParticipantNames: ["Alex", "Casey", "Jordan"] }).status, "passed");
 });
 test("unknown role cannot compile", () => assert.throws(() => compilePlan("facilitator", {}), /unknown role/));
 test("single public claim can be a Challenger target without inventing group agreement", () => {

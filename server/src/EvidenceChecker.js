@@ -295,7 +295,7 @@ export function checkNeedAssessment(raw, { chat, activeParticipantNames = [], sc
   // N4
   if (raw.operation === "participation_gap") {
     const names = target.participantNames ?? [target.participantName];
-    // 2026-10-26: quiet overall OR silent across the recent window (code-verified).
+    // 2026-11-11: silent across the recent window (code-verified).
     const verified = verifiedParticipationTargets(publicMessages, activeParticipantNames);
     if (!Array.isArray(names) || !names.length || names.some(name => typeof name !== "string"
       || !activeParticipantNames.includes(name) || !verified.includes(name))) {
