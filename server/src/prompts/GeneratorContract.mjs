@@ -300,6 +300,7 @@ export function runDeterministicValidation(
     // tests of the check itself, not for the live pipeline).
     activeParticipantNames = null,
     participationTargetNames = null,
+    allowedMentionNames = null,
     // 2026-XX addition: hard word-count ceiling for the automatically
     // triggered facilitator paths (Static's fixed policy + Adaptive's
     // Generalist/Expander/Challenger/Synthesiser). Deliberately NOT
@@ -411,6 +412,13 @@ export function runDeterministicValidation(
           break;
         }
       }
+    }
+  }
+
+  if (typeof message === "string" && Array.isArray(allowedMentionNames)) {
+    const allowed = new Set(allowedMentionNames.map(name => name.toLowerCase()));
+    if ([...message.matchAll(MENTION_PATTERN)].some(([, name]) => !allowed.has(name.trim().toLowerCase()))) {
+      failedCriteria.push("UNSUPPORTED_MENTION_TARGET");
     }
   }
 

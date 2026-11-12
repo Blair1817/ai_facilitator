@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { WebSocketServer } from "ws";
-import { connectExportAdmin } from "./ExportConnection.mjs";
+import { connectExportAdmin, ExportStoreTimeout } from "./ExportConnection.mjs";
 
 // Exercise the bundled SDK used in production. Its bare ESM entry has a
 // directory import that Node cannot resolve without esbuild.
@@ -24,7 +24,8 @@ test("export survives an invalid 1006 close frame and can still query research d
     let body = "";
     for await (const part of req) body += part;
     const operation = JSON.parse(body);
-    requests.push({ query: operation.query, auth: req.headers.authorization });
+    requests.push({ query: operation.query, variables: operation.variables, auth: req.headers.authorization });
+    if (operation.variables?.filter?.[0]?.kinds?.includes("stall")) return;
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify(operation.query.includes("registerService")
       ? { data: { registerService: { sessionToken: "test-session" } } }
@@ -60,6 +61,7 @@ test("export survives an invalid 1006 close frame and can still query research d
     url: `http://127.0.0.1:${server.address().port}/query`,
     srtoken: "test-service-token",
     sdk,
+    queryTimeoutMs: 1500,
     onTransportError: (error) => { errors.push(error); notifyError(); },
   });
   assert.equal(sockets.length, 2, "registration and admin both use SDK sockets");
@@ -68,9 +70,14 @@ test("export survives an invalid 1006 close frame and can still query research d
   sockets[1]._socket.write(Buffer.from([0x88, 0x02, 0x03, 0xee]));
   await gotError;
   assert.equal(errors[0].error.code, "WS_ERR_INVALID_CLOSE_CODE");
-  const scopes = await admin.scopes({ kinds: ["game"] });
+  const args = { filter: [{ kinds: ["game"] }], first: 25 };
+  const scopes = await admin.scopes(args);
   assert.deepEqual(scopes.edges, []);
   assert.equal(connectionParams[1].authToken, "Bearer test-session");
   assert.match(requests.at(-1).query, /scopes/);
+  assert.equal(requests.at(-1).auth, "Bearer test-session");
+  assert.deepEqual(requests.at(-1).variables, args);
+  await assert.rejects(admin.scopes({ filter: [{ kinds: ["stall"] }] }), ExportStoreTimeout);
+  assert.deepEqual((await admin.scopes(args)).edges, []);
   assert.equal(admin.listenerCount("error"), 1);
 });

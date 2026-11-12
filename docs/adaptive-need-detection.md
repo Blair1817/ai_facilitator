@@ -41,7 +41,7 @@ detector never reports it. `QUIET_PARTICIPANTS` is detector context only.
    Expander. Per participant and round: at most `PARTICIPATION_INVITE_CAP = 2`
    invitations, none within 12 human messages of the previous one. Eligible
    names are invited together in one message. If an invitee posts before
-   publication, the invitation is withdrawn and the Static policy is used.
+   publication, the invitation is discarded and the Static policy is used.
    Logged as `selection.mode = "rule_triggered"` and `silenceRule`. Being quiet
    overall no longer triggers an invitation.
 2. **Summary pause.** A detector `defer` (participant summary in progress)
@@ -60,6 +60,12 @@ detector never reports it. `QUIET_PARTICIPANTS` is detector context only.
 
 Prompts ask for at most 40 words (hard runtime ceiling 50) for Static,
 Expander and Challenger; Synthesiser has no fixed ceiling.
+
+If new participant messages arrive while a synthesis is being generated or
+validated, it is discarded and regenerated once with the latest transcript; a
+second change ends a message checkpoint in the Static policy and makes a timed
+check retry later. An invitation is also discarded before publication if an
+invitee has posted meanwhile.
 
 ## Checklists and their basis
 
@@ -159,6 +165,11 @@ live-model replay and human review remain required.
 
 Generation and coverage-audit token budgets scale with public input, with at
 least 8192 output tokens to accommodate structure and reasoning. Provider
-`finish_reason=length` results fail closed. Existing automatic time/lifecycle
+`finish_reason=length` results fail closed. The validator receives the public
+transcript once, with source and recent-message IDs referencing it.
+If public participant messages change during synthesis, refresh the transcript
+and regenerate and validate once within the existing budget. If the transcript
+changes again before publication, skip the synthesis.
+Existing automatic time/lifecycle
 budgets remain in place, so slow or oversized work may still produce no summary;
 the system must never resolve this by silently deleting required facts.

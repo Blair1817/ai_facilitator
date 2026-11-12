@@ -59,7 +59,7 @@ export async function runAdaptiveSelection({ generate, fallback, budget, log, in
   }
   if (selection?.role) {
     const result = await generate(selection);
-    if (result.published) return result;
+    if (result.published || result.stopSelection) return result;
     log.specialistFailures = [{ selection, ...result }];
     log.specialistFailure = { selection, ...result };
   }

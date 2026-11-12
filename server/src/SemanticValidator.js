@@ -311,7 +311,10 @@ export function buildValidatorUserContext({
   const localWithIds = humanWithIds.slice(-6);
 
   const cumulativePublicContext = formatMessagesWithIds(humanWithIds);
-  const localContext = formatMessagesWithIds(localWithIds);
+  const synthesisCoverage = selectedRole === "INFORMATION_SYNTHESISER" && interventionPlan?.synthesisCoverage;
+  const localContext = synthesisCoverage
+    ? `Recent message IDs in CUMULATIVE_PUBLIC_CONTEXT: ${localWithIds.map(message => message.messageId).join(", ")}`
+    : formatMessagesWithIds(localWithIds);
 
   const sections = [
     ["[SELECTED_ROLE]", selectedRole || "(not provided)"],
@@ -330,7 +333,11 @@ export function buildValidatorUserContext({
   }
   sections.push(["[CONTEXT_SCOPE]", contextScope], ["[ACTIVE_PARTICIPANT_NAMES]", JSON.stringify(activeParticipantNames)], ["[RECENT_AI_MESSAGES]", JSON.stringify(recentAiMessages)]);
   if (isSpecialistRole(selectedRole)) {
-    sections.push(["[INTERVENTION_PLAN]", JSON.stringify(interventionPlan)], ["[PLAN_PREFLIGHT]", JSON.stringify(planPreflight)], ["[INTERVENTION_HISTORY]", JSON.stringify(interventionHistory)]);
+    // Synthesis evidence contains full source messages, already present above.
+    const validatorPlan = synthesisCoverage
+      ? { ...interventionPlan, evidence: interventionPlan.evidence?.map(({ messageId }) => ({ messageId })) }
+      : interventionPlan;
+    sections.push(["[INTERVENTION_PLAN]", JSON.stringify(validatorPlan)], ["[PLAN_PREFLIGHT]", JSON.stringify(planPreflight)], ["[INTERVENTION_HISTORY]", JSON.stringify(interventionHistory)]);
   }
   // Repair-loop hint: only added when this is a re-audit after a prior
   // failure. The shape is the exact [PRIOR_FAILED_CRITERIA] section the
