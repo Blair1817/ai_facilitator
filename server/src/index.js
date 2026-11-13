@@ -14,6 +14,7 @@ import { connectExportAdmin } from "./ExportConnection.mjs";
 import { Empirica } from "./callbacks";
 import { ExportService } from "./ExportService.mjs";
 import { createExportServer, listenExportServer, readExportServerConfig } from "./ExportServer.mjs";
+import { ExportMetadataIndex } from "./ExportMetadataIndex.mjs";
 import { recordExportEvent } from "./ExportAudit.mjs";
 import { waitForAdminEndpoint } from "./AdminContextStartup.mjs";
 import { runStartupSelfCheck } from "./prompts/promptLoader.js";
@@ -114,6 +115,7 @@ if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "your-key-here
           stop: () => admin.stop(),
         },
         auditFile: exportConfig.auditFile,
+        metadataIndex: new ExportMetadataIndex({ file: exportConfig.metadataStoreFile }),
       });
       const exportServer = createExportServer({
         service: exportService,

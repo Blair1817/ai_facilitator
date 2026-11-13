@@ -60,8 +60,9 @@ export async function connectExportAdmin({
     await admin.connectAndAwait();
     // Keep the generated SDK's scope shape, but authenticate and bound HTTP
     // reads explicitly. Never log upstream response bodies or credentials.
-    admin.scopes = async (variables) => {
-      const signal = AbortSignal.timeout(queryTimeoutMs);
+    admin.scopes = async ({ signal: requestSignal, ...variables } = {}) => {
+      const timeoutSignal = AbortSignal.timeout(queryTimeoutMs);
+      const signal = requestSignal ? AbortSignal.any([requestSignal, timeoutSignal]) : timeoutSignal;
       try {
         const response = await fetch(url, {
           method: "POST",
@@ -74,7 +75,8 @@ export async function connectExportAdmin({
         if (payload.errors?.length || !payload.data?.scopes) throw new Error("Export store scope query failed");
         return payload.data.scopes;
       } catch (error) {
-        if (signal.aborted) throw new ExportStoreTimeout("Export store query timed out");
+        if (requestSignal?.aborted) throw requestSignal.reason;
+        if (timeoutSignal.aborted) throw new ExportStoreTimeout("Export store query timed out");
         throw error;
       }
     };

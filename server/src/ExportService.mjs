@@ -7,8 +7,9 @@
  *   1. Pull only what a researcher needs (questionnaire data, chat
  *      transcripts, LLM audit log) without re-implementing the full
  *      Empirica CSV export. Filters by batch, treatment, time range,
- *      and game state at the Tajriba query layer so we never load the
- *      whole event log into memory.
+ *      and game state. Production lists use a read-only, incremental
+ *      metadata index; single-game exports use the live Tajriba API.
+ *      Remote CLI callers without a local index retain paged SDK reads.
  *
  *   2. Apply the same `redactPII` pipeline as the Supabase research
  *      mirror, by default, with an explicit opt-out flag. The data
@@ -57,6 +58,7 @@ import { Writable } from "node:stream";
 
 import { FACILITATOR_ROLES } from "./ExperimentPolicies.mjs";
 import { redactDeep } from "./SupabasePersistence.mjs";
+import { EXPORT_LIST_KEYS } from "./ExportMetadataIndex.mjs";
 
 /**
  * @typedef {Object} AdminConnection
@@ -67,6 +69,7 @@ import { redactDeep } from "./SupabasePersistence.mjs";
  * @property {AdminConnection} admin
  * @property {string} [auditFile]            JSONL path; if absent, audit calls are no-ops
  * @property {Object<string, any>} [clock]   for tests; defaults to global Date
+ * @property {import("./ExportMetadataIndex.mjs").ExportMetadataIndex} [metadataIndex]
  *
  * Per-scope attribute accessor: an admin connection in production
  * returns Attributes via `attributes(scopeID)`. Tests inject either a
@@ -74,14 +77,25 @@ import { redactDeep } from "./SupabasePersistence.mjs";
  */
 
 const SCOPES_PAGE_SIZE = 25;
+const PLAYER_LIST_KEYS = EXPORT_LIST_KEYS.player;
+const GAME_LIST_KEYS = EXPORT_LIST_KEYS.game;
+const BATCH_LIST_KEYS = EXPORT_LIST_KEYS.batch;
 
 export class ExportService {
-  constructor({ admin, auditFile, clock = Date, defaultRedact = true } = {}) {
+  constructor({ admin, auditFile, clock = Date, defaultRedact = true, signal, metadataIndex } = {}) {
     if (!admin) throw new Error("ExportService: admin connection is required");
     this.admin = admin;
     this.auditFile = auditFile || null;
     this.now = clock.now ? clock.now.bind(clock) : () => new Date().toISOString();
     this.defaultRedact = defaultRedact !== false;
+    this.signal = signal;
+    this.metadataIndex = metadataIndex;
+  }
+
+  // A request-local view keeps one client's cancellation out of later exports.
+  withSignal(signal) {
+    return new ExportService({ admin: this.admin, auditFile: this.auditFile,
+      clock: { now: this.now }, defaultRedact: this.defaultRedact, signal, metadataIndex: this.metadataIndex });
   }
 
   // ── Listing ───────────────────────────────────────────────────────────
@@ -100,8 +114,8 @@ export class ExportService {
   async listBatches(filter = {}, inventory) {
     inventory ??= await this.readGameInventory();
     const result = [];
-    for await (const scope of this.iterateScopes({ kinds: ["batch"] })) {
-      const attrs = await this.scopeAttributesOf(scope);
+    for await (const scope of (inventory.batchScopes ?? this.iterateScopes({ kinds: ["batch"] }))) {
+      const attrs = await this.scopeAttributesOf(scope, BATCH_LIST_KEYS);
       const allGames = inventory.get(scope.id) || [];
       const games = filter.includeTest ? allGames : allGames.filter(game => !game.testMode);
       if (allGames.length && !games.length) continue;
@@ -122,16 +136,23 @@ export class ExportService {
   // Load each scope kind once per listing. v1.12 cannot reliably filter
   // JSON-encoded batchID or gameID values in its scopes query.
   async readGameInventory() {
+    // Production listings use the local, read-only metadata journal index.
+    // Downloads deliberately do not use it: they keep reading the live store.
+    // SDK-only callers (e.g. the remote CLI) retain their explicit legacy path.
+    const snapshot = this.metadataIndex ? await this.metadataIndex.read({ signal: this.signal }) : null;
+    const scopesOfKind = kind => snapshot
+      ? snapshot.scopes.filter(scope => scope.kind === kind)
+      : this.iterateScopes({ kinds: [kind] });
     const playerIDsByGame = new Map();
-    for await (const scope of this.iterateScopes({ kinds: ["player"] })) {
-      const { gameID } = await this.scopeAttributesOf(scope);
+    for await (const scope of scopesOfKind("player")) {
+      const { gameID } = await this.scopeAttributesOf(scope, PLAYER_LIST_KEYS);
       if (!gameID) continue;
       if (!playerIDsByGame.has(gameID)) playerIDsByGame.set(gameID, []);
       playerIDsByGame.get(gameID).push(scope.id);
     }
     const inventory = new Map();
-    for await (const scope of this.iterateScopes({ kinds: ["game"] })) {
-      const attrs = await this.scopeAttributesOf(scope);
+    for await (const scope of scopesOfKind("game")) {
+      const attrs = await this.scopeAttributesOf(scope, GAME_LIST_KEYS);
       const batchId = attrs.batchID;
       if (batchId == null) continue;
       const treatment = gameTreatmentName(attrs);
@@ -151,6 +172,10 @@ export class ExportService {
       if (!inventory.has(batchId)) inventory.set(batchId, []);
       inventory.get(batchId).push(game);
     }
+    if (snapshot) {
+      inventory.batchScopes = scopesOfKind("batch");
+      inventory.listingMetadata = snapshot.metadata;
+    }
     return inventory;
   }
 
@@ -168,7 +193,9 @@ export class ExportService {
       items.push(game);
     }
     items.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
-    return paginate(items, filter);
+    const result = paginate(items, filter);
+    if (inventory.listingMetadata) result.metadata = inventory.listingMetadata;
+    return result;
   }
 
   // ── Game data extraction ──────────────────────────────────────────────
@@ -202,7 +229,7 @@ export class ExportService {
 
     const players = [];
     for await (const scope of this.iterateScopes({ kinds: ["player"] })) {
-      if ((await this.scopeAttributesOf(scope)).gameID === gameId) {
+      if ((await this.scopeAttributesOf(scope, PLAYER_LIST_KEYS)).gameID === gameId) {
         players.push(await this.readPlayer(scope, gameId));
       }
     }
@@ -398,8 +425,8 @@ export class ExportService {
    * @param {Object} scope
    * @returns {Object<string, any>}
    */
-  scopeAttributesOf(scope) {
-    return scopeAttributes(scope);
+  scopeAttributesOf(scope, keys) {
+    return scopeAttributes(scope, keys);
   }
 
   // ── Format rendering ──────────────────────────────────────────────────
@@ -534,6 +561,7 @@ export class ExportService {
     //   - an array of ScopedAttributesInput     (multi-axis AND)
     const first = SCOPES_PAGE_SIZE;
     let cursor = null;
+    const visited = new Set();
     const filterArg =
       filters == null
         ? undefined
@@ -542,16 +570,21 @@ export class ExportService {
           : [filters];
     // eslint-disable-next-line no-constant-condition
     while (true) {
+      this.signal?.throwIfAborted();
       const args = { first };
       if (filterArg !== undefined) args.filter = filterArg;
       if (cursor) args.after = cursor;
+      if (this.signal) args.signal = this.signal;
       const page = await this.admin.scopes(args);
+      this.signal?.throwIfAborted();
       for (const edge of page?.edges || []) {
+        this.signal?.throwIfAborted();
         yield edge.node;
       }
       if (!page?.pageInfo?.hasNextPage) break;
       const nextCursor = page.pageInfo.endCursor;
-      if (!nextCursor || nextCursor === cursor) throw new Error("Export store pagination stopped advancing");
+      if (!nextCursor || visited.has(nextCursor)) throw new Error("Export store pagination stopped advancing");
+      visited.add(nextCursor);
       cursor = nextCursor;
     }
   }
@@ -1159,7 +1192,7 @@ export function describeFinalDecisionOutcome(outcome) {
   return null;
 }
 
-function scopeAttributes(scope) {
+function scopeAttributes(scope, keys) {
   // In production, an admin scope is
   //   {id, kind, attributes: {totalCount, pageInfo, edges: [{node: {key, val, ...}}]}}
   // — a Relay-style connection, NOT a flat array. Each attribute's
@@ -1168,7 +1201,10 @@ function scopeAttributes(scope) {
   // array of {key, val} so the same code path needs to handle both.
   // We accept both `val` and `value` for the in-test path so a
   // fixture with `{key, value}` continues to work.
-  if (scope && scope.__attrs && typeof scope.__attrs === "object") return scope.__attrs;
+  if (scope && scope.__attrs && typeof scope.__attrs === "object") {
+    return keys ? Object.fromEntries([...keys].filter(key => Object.hasOwn(scope.__attrs, key))
+      .map(key => [key, scope.__attrs[key]])) : scope.__attrs;
+  }
 
   let attrEdges = null;
   if (scope && Array.isArray(scope.attributes)) {
@@ -1181,7 +1217,10 @@ function scopeAttributes(scope) {
     const scalarBest = {}; // key -> { version, current, value }
     for (const e of attrEdges) {
       const a = e && e.node;
-      if (!a || typeof a.key !== "string") continue;
+      // Scope.attributes has no key projection in the pinned Tajriba API.
+      // Avoid parsing large chat/audit/form values for list/count operations;
+      // downloads still read the complete attribute set via the default path.
+      if (!a || typeof a.key !== "string" || (keys && !keys.has(a.key))) continue;
       const raw = a.val !== undefined ? a.val : a.value;
       if (a.index === undefined || a.index === null) {
         // Scalar. Tajriba returns every historical version of a key that

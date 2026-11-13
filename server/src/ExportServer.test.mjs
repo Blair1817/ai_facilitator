@@ -6,6 +6,8 @@ import path from "node:path";
 import test from "node:test";
 
 import { ExportService } from "./ExportService.mjs";
+import { ExportStoreTimeout } from "./ExportConnection.mjs";
+import { ExportMetadataIndex } from "./ExportMetadataIndex.mjs";
 import {
   createExportServer,
   listenExportServer,
@@ -294,6 +296,55 @@ test("exports homepage scans each scope kind once and admits one research reques
     await listing.catch(() => {});
     await srv.close();
   }
+});
+
+test("a store timeout returns 504 and releases admission for the next request", async () => {
+  const admin = makeMockAdmin(fixture()), original = admin.scopes;
+  let fail = true;
+  admin.scopes = args => {
+    if (fail) { fail = false; throw new ExportStoreTimeout("synthetic upstream timeout"); }
+    return original(args);
+  };
+  const auditFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "export-timeout-")), "audit.jsonl");
+  const srv = await startServer(new ExportService({ admin }), auditFile);
+  try {
+    const failed = await fetchText(srv.base + "/");
+    assert.equal(failed.status, 504); assert.doesNotMatch(failed.body, /synthetic/);
+    assert.equal((await fetchText(srv.base + "/")).status, 200);
+  } finally { await srv.close(); }
+});
+
+test("disconnect cancels the store read, stops paging and releases the export slot", { timeout: 5000 }, async () => {
+  const admin = makeMockAdmin(fixture()), original = admin.scopes;
+  let entered, release, observedAbort, first = true, querySignal;
+  const started = new Promise(resolve => { entered = resolve; });
+  const aborted = new Promise(resolve => { observedAbort = resolve; });
+  const hold = new Promise(resolve => { release = resolve; });
+  admin.scopes = async args => {
+    if (first) {
+      first = false; querySignal = args.signal; entered();
+      if (args.signal) await Promise.race([hold, new Promise((_, reject) => {
+        args.signal.addEventListener("abort", () => { observedAbort(); reject(args.signal.reason); }, { once: true });
+      })]);
+      else await hold;
+    }
+    return original(args);
+  };
+  const auditFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "export-disconnect-")), "audit.jsonl");
+  const srv = await startServer(new ExportService({ admin }), auditFile);
+  const request = http.get(srv.base + "/", { headers: { authorization: AUTHORIZATION } });
+  request.on("error", () => {});
+  try {
+    await started;
+    assert.ok(querySignal instanceof AbortSignal, "The request signal must reach the store adapter");
+    request.destroy();
+    await aborted;
+    const result = await fetchText(srv.base + "/batches");
+    assert.equal(result.status, 200);
+    assert.equal(querySignal.aborted, true);
+    assert.equal((await fetchText(srv.base + "/")).status, 200,
+      "Cancellation must not leak into a later request");
+  } finally { release(); request.destroy(); await srv.close(); }
 });
 
 test("GET /batches/:batchId/games returns a JSON list with game-level treatment filtering", async () => {
@@ -663,6 +714,7 @@ test("runtime configuration defaults securely and preserves Tajriba overrides", 
   assert.equal(config.tajribaConfig, "/tmp/local-empirica.toml");
   assert.equal(config.tajribaSrToken, "local-token");
   assert.equal(config.tajribaUrl, "http://127.0.0.1:3999/query");
+  assert.equal(config.metadataStoreFile, "/data/tajriba.json");
 
   const overridden = readExportServerConfig({
     EXPORT_AUTH_USERNAME: AUTH_USERNAME,
@@ -671,12 +723,94 @@ test("runtime configuration defaults securely and preserves Tajriba overrides", 
     EXPORT_PORT: "3011",
     EXPORT_BASE_PATH: "research-exports/",
     EXPORT_ALLOW_RAW: "1",
+    TAJRIBA_STORE_FILE: "/tmp/custom-tajriba.json",
   });
   assert.equal(overridden.host, "127.0.0.2");
   assert.equal(overridden.port, 3011);
   assert.equal(overridden.basePath, "/research-exports");
   assert.equal(overridden.allowRaw, true);
   assert.equal(overridden.tajribaConfig, undefined);
+  assert.equal(overridden.metadataStoreFile, "/tmp/custom-tajriba.json");
+  assert.equal(readExportServerConfig({
+    EXPORT_AUTH_USERNAME: AUTH_USERNAME, EXPORT_AUTH_PASSWORD: AUTH_PASSWORD,
+    TAJRIBA_STORE_FILE: "/tmp/custom-tajriba.json", EXPORT_METADATA_STORE_FILE: "/tmp/export-store.json",
+  }).metadataStoreFile, "/tmp/export-store.json");
+});
+
+test("indexed list routes make zero attribute HTTP queries; transcript refresh still reads new messages", async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "export-index-live-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "tajriba.json");
+  const scopes = fixture();
+  const events = [{ version: "v1.12.0" }, { version: 0, format: "JSON", compression: "NoCompression" }];
+  for (const s of scopes) {
+    events.push({ kind: "Scope", obj: { id: s.id, kind: s.kind, createdAt: s.createdAt } });
+    for (const [i, a] of s.attributes.entries()) {
+      events.push({ kind: "Attribute", obj: { id: `${s.id}-${i}`, nodeID: s.id, key: a.key, val: a.value } });
+    }
+  }
+  fs.writeFileSync(file, events.map(event => JSON.stringify(event)).join("\n") + "\n");
+  const admin = makeMockAdmin(scopes);
+  const query = admin.scopes;
+  let queries = 0;
+  admin.scopes = args => { queries += 1; return query(args); };
+  const service = new ExportService({ admin, metadataIndex: new ExportMetadataIndex({ file }) });
+  const srv = await startServer(service, path.join(dir, "audit.jsonl"), { basePath: "/exports" });
+  t.after(() => srv.close());
+  const page = await fetchText(`${srv.base}/exports/`);
+  assert.equal(page.status, 200);
+  assert.match(page.body, /Metadata checked/);
+  assert.match(page.body, /games\/GAME1\/transcript/);
+  const batches = await fetchText(`${srv.base}/exports/batches`);
+  assert.equal(JSON.parse(batches.body).items[0].gameCount, 1);
+  assert.equal(JSON.parse(batches.body).metadata.source, "read-only-store-index");
+  const games = await fetchText(`${srv.base}/exports/batches/BATCH1/games`);
+  assert.equal(JSON.parse(games.body).items[0].playerCount, 1);
+  assert.equal(queries, 0, "every listing route must avoid full-attribute HTTP reads");
+
+  const first = await fetchText(`${srv.base}/exports/games/GAME1/transcript`);
+  assert.equal(first.status, 200);
+  assert.ok(queries > 0, "transcripts keep the live Tajriba query path");
+  const chat = scopes.find(s => s.id === "GAME1").attributes.find(a => a.key === "chat_round_0");
+  const messages = JSON.parse(chat.value);
+  messages.push({ messageId: "p1-new", roundIndex: 0, sequencePosition: 3, speakerType: "human",
+    text: "NEW LIVE MESSAGE", sender: { id: "p1", name: "Red" }, ts: 1723705230000 });
+  chat.value = JSON.stringify(messages);
+  // Do not refresh the metadata journal: transcript freshness must not
+  // depend on the index, nor on the file flusher having run yet.
+  const second = await fetchText(`${srv.base}/exports/games/GAME1/transcript`);
+  assert.doesNotMatch(first.body, /NEW LIVE MESSAGE/);
+  assert.match(second.body, /NEW LIVE MESSAGE/);
+  assert.equal(second.headers["cache-control"], "no-store");
+  fs.unlinkSync(file);
+  const unavailable = await fetchText(`${srv.base}/exports/`);
+  assert.equal(unavailable.status, 503);
+  assert.equal(unavailable.headers["retry-after"], "5");
+  const stillLive = await fetchText(`${srv.base}/exports/games/GAME1/transcript`);
+  assert.equal(stillLive.status, 200);
+  assert.match(stillLive.body, /NEW LIVE MESSAGE/);
+});
+
+test("an unavailable metadata index fails safely without falling back to HTTP scans", async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "export-index-error-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let queries = 0;
+  const service = new ExportService({
+    admin: { scopes: async () => { queries += 1; throw new Error("must not scan HTTP"); } },
+    metadataIndex: new ExportMetadataIndex({ file: path.join(dir, "missing-secret-path.json") }),
+  });
+  const srv = await startServer(service, path.join(dir, "audit.jsonl"), { basePath: "/exports" });
+  t.after(() => srv.close());
+  const unauthenticated = await fetchText(`${srv.base}/exports/`, {}, { authenticate: false });
+  assert.equal(unauthenticated.status, 401);
+  const health = await fetchText(`${srv.base}/exports/healthz`, {}, { authenticate: false });
+  assert.equal(health.status, 200);
+  for (const route of ["/exports/", "/exports/batches", "/exports/batches/B1/games"]) {
+    const response = await fetchText(srv.base + route);
+    assert.equal(response.status, 503);
+    assert.doesNotMatch(response.body, /missing-secret-path|ENOENT/);
+  }
+  assert.equal(queries, 0);
 });
 
 test("test data is hidden by default, included explicitly, and labelled in direct exports", async () => {

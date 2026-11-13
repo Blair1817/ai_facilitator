@@ -20,12 +20,13 @@ const sdk = sdkModule.exports;
 
 test("export survives an invalid 1006 close frame and can still query research data", { timeout: 15000 }, async (t) => {
   const requests = [];
+  let notifyStall;
   const server = http.createServer(async (req, res) => {
     let body = "";
     for await (const part of req) body += part;
     const operation = JSON.parse(body);
     requests.push({ query: operation.query, variables: operation.variables, auth: req.headers.authorization });
-    if (operation.variables?.filter?.[0]?.kinds?.includes("stall")) return;
+    if (operation.variables?.filter?.[0]?.kinds?.includes("stall")) { notifyStall?.(); return; }
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify(operation.query.includes("registerService")
       ? { data: { registerService: { sessionToken: "test-session" } } }
@@ -78,6 +79,14 @@ test("export survives an invalid 1006 close frame and can still query research d
   assert.equal(requests.at(-1).auth, "Bearer test-session");
   assert.deepEqual(requests.at(-1).variables, args);
   await assert.rejects(admin.scopes({ filter: [{ kinds: ["stall"] }] }), ExportStoreTimeout);
+  const cancellation = new AbortController();
+  const inFlight = new Promise(resolve => { notifyStall = resolve; });
+  const pending = admin.scopes({ filter: [{ kinds: ["stall"] }], signal: cancellation.signal });
+  await inFlight;
+  cancellation.abort(new DOMException("Client disconnected", "AbortError"));
+  await assert.rejects(pending, { name: "AbortError" });
   assert.deepEqual((await admin.scopes(args)).edges, []);
+  assert.ok(requests.every(request => !Object.hasOwn(request.variables || {}, "signal")),
+    "Local cancellation signals must never be serialized as GraphQL variables");
   assert.equal(admin.listenerCount("error"), 1);
 });

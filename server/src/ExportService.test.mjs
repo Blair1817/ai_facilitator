@@ -16,6 +16,7 @@ import {
   ExportNotFoundError,
 } from "./ExportService.mjs";
 import { recordExportEvent } from "./ExportAudit.mjs";
+import { ExportMetadataIndex } from "./ExportMetadataIndex.mjs";
 import {
   assertExpectedTajribaQueryCount,
   patchTajribaBundleSource,
@@ -423,9 +424,139 @@ test("listGames filters by treatment and respects limit/offset", async () => {
   assert.equal(roundFacilitation.items.length, 0);
 });
 
+test("listing parses only metadata, not chat, model audits or submitted forms", async () => {
+  const fx = fixture();
+  const svc = service({ scopes: fx.scopes });
+  const expectedBatches = await svc.listBatches();
+  const expectedGames = await svc.listGames("BATCH1");
+  const metadata = new Set(["gameID", "batchID", "createdAt", "startedAt", "endedAt", "status",
+    "sequenceId", "treatment", "treatmentName", "testControlsEnabled"]);
+  for (const scope of Object.values(fx.scopes).filter(s => ["batch", "game", "player"].includes(s.kind))) {
+    scope.attributes.push({ key: "large-unrelated-value", value: "{}" });
+    for (const attribute of scope.attributes.filter(a => !metadata.has(a.key))) {
+      Object.defineProperty(attribute, "value", { get() { throw Error(`Listing read ${attribute.key}`); } });
+    }
+  }
+  assert.deepEqual(await svc.listBatches(), expectedBatches);
+  assert.deepEqual(await svc.listGames("BATCH1"), expectedGames);
+});
+
+test("many-batch inventory reads each scope kind once across pages and refreshes between requests", async () => {
+  const scopes = {};
+  for (let b = 0; b < 30; b++) {
+    const batch = { id: `B${b}`, kind: "batch", attributes: [] };
+    attr(batch, "status", "ended"); scopes[batch.id] = batch;
+    for (let g = 0; g < 2; g++) {
+      const game = { id: `G${b}-${g}`, kind: "game", attributes: [] };
+      attr(game, "batchID", JSON.stringify(batch.id)); attr(game, "status", "ended");
+      attr(game, "treatmentName", "main"); attr(game, "startedAt", `2026-11-11T19:0${g}:00Z`);
+      scopes[game.id] = game;
+      for (let p = 0; p < 3; p++) {
+        const player = { id: `P${b}-${g}-${p}`, kind: "player", attributes: [] };
+        attr(player, "gameID", JSON.stringify(game.id)); scopes[player.id] = player;
+      }
+    }
+  }
+  const admin = makeMockAdmin(scopes), original = admin.scopes, calls = [];
+  admin.scopes = args => { calls.push(args.filter[0].kinds[0]); return original(args); };
+  const svc = new ExportService({ admin });
+  const inventory = await svc.readGameInventory();
+  const batches = await svc.listBatches({}, inventory);
+  assert.equal(batches.length, 30);
+  for (const batch of batches) {
+    assert.equal(batch.gameCount, 2); assert.equal(batch.playerCount, 6);
+    const page = await svc.listGames(batch.id, { limit: 1, offset: 1 }, inventory);
+    assert.equal(page.total, 2); assert.equal(page.items[0].id, `G${batch.id.slice(1)}-0`);
+    assert.equal(page.items[0].playerCount, 3);
+  }
+  assert.equal(calls.filter(k => k === "player").length, 8);
+  assert.equal(calls.filter(k => k === "game").length, 3);
+  assert.equal(calls.filter(k => k === "batch").length, 2);
+  attr(scopes["G0-0"], "status", "running");
+  const refreshed = await svc.listGames("B0", { status: "running" });
+  assert.equal(refreshed.items.length, 1, "No process-wide stale inventory cache");
+});
+
+test("indexed inventory preserves counts, test exclusion, filters and pagination across many batches", async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "export-index-filters-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const scopes = {};
+  for (let b = 0; b < 30; b++) {
+    const batch = makeScope(`B${b}`, "batch", s => {
+      attr(s, "createdAt", "2026-11-12T10:00:00Z"); attr(s, "status", b % 2 ? "running" : "ended");
+    });
+    scopes[batch.id] = batch;
+    for (let g = 0; g < 3; g++) {
+      const game = makeScope(`G${b}-${g}`, "game", s => {
+        attr(s, "batchID", T(batch.id)); attr(s, "treatmentName", g === 2 ? "test" : "main");
+        attr(s, "sequenceId", g % 2 ? "S2" : "S1"); attr(s, "status", g % 2 ? "running" : "ended");
+        attr(s, "startedAt", `2026-11-12T10:0${g}:00Z`);
+      });
+      scopes[game.id] = game;
+      for (let p = 0; p < 3; p++) {
+        const player = makeScope(`P${b}-${g}-${p}`, "player", s => attr(s, "gameID", T(game.id)));
+        scopes[player.id] = player;
+      }
+    }
+  }
+  const events = [{ version: "v1.12.0" }, { version: 0, format: "JSON", compression: "NoCompression" }];
+  for (const scope of Object.values(scopes)) {
+    events.push({ kind: "Scope", obj: { id: scope.id, kind: scope.kind } });
+    for (const [i, a] of scope.attributes.entries()) events.push({ kind: "Attribute", obj: {
+      id: `${scope.id}-${i}`, nodeID: scope.id, key: a.key, val: a.value,
+    } });
+  }
+  const file = path.join(dir, "tajriba.json");
+  fs.writeFileSync(file, events.map(event => JSON.stringify(event)).join("\n") + "\n");
+  const indexed = new ExportService({
+    admin: { scopes: async () => assert.fail("Indexed listings must not issue HTTP queries") },
+    metadataIndex: new ExportMetadataIndex({ file }),
+  });
+  const legacy = service({ scopes });
+  const inventory = await indexed.readGameInventory();
+  for (const filter of [{}, { includeTest: true }, { status: "ended" },
+    { fromISO: "2026-11-12T00:00:00Z", toISO: "2026-11-13T00:00:00Z" }]) {
+    assert.deepEqual(await indexed.listBatches(filter, inventory), await legacy.listBatches(filter));
+  }
+  for (const batch of await indexed.listBatches({}, inventory)) {
+    assert.equal(batch.gameCount, 2); assert.equal(batch.playerCount, 6);
+    for (const filter of [{ limit: 1, offset: 1 }, { includeTest: true }, { treatment: "main", sequenceId: "S2" },
+      { status: "running" }, { fromISO: "2026-11-12T10:01:00Z", toISO: "2026-11-12T10:02:00Z" }]) {
+      const { metadata, ...result } = await indexed.listGames(batch.id, filter, inventory);
+      assert.equal(metadata.source, "read-only-store-index");
+      assert.deepEqual(result, await legacy.listGames(batch.id, filter));
+    }
+  }
+});
+
+test("scope pagination rejects a cursor cycle rather than accumulating repeated pages", async () => {
+  let calls = 0;
+  const svc = new ExportService({ admin: { scopes: async () => {
+    if (++calls > 4) throw Error("Pagination loop escaped its cycle guard");
+    return { edges: [], pageInfo: { hasNextPage: true, endCursor: calls % 2 ? "A" : "B" } };
+  } } });
+  await assert.rejects(svc.allScopes({ kinds: ["game"] }), /pagination stopped advancing/);
+  assert.equal(calls, 3);
+});
+
+test("cancellation stops pagination even when a store adapter returns a late page", async () => {
+  const cancellation = new AbortController();
+  let calls = 0;
+  const svc = new ExportService({ admin: { scopes: async () => {
+    calls++;
+    cancellation.abort(new DOMException("Client disconnected", "AbortError"));
+    return { edges: [{ node: { id: "late" } }], pageInfo: { hasNextPage: true, endCursor: "late" } };
+  } } });
+  await assert.rejects(svc.withSignal(cancellation.signal).allScopes({ kinds: ["game"] }), { name: "AbortError" });
+  assert.equal(calls, 1, "Do not fetch another page or retain the late result");
+  assert.equal(svc.signal, undefined, "The reusable service has no request-local cancellation");
+});
+
 test("getGameBundle assembles players, rounds, and the bounded LLM log", async () => {
   const fx = fixture();
   const svc = service({ scopes: fx.scopes });
+  await svc.listBatches();
+  await svc.listGames("BATCH1");
   const bundle = await svc.getGameBundle("GAME1");
   assert.equal(bundle.game.id, "GAME1");
   assert.equal(bundle.game.batchId, "BATCH1");

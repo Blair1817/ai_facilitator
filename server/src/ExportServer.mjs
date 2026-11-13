@@ -60,6 +60,7 @@ import http from "node:http";
 import { describeFinalDecisionOutcome, ExportService, ExportNotFoundError } from "./ExportService.mjs";
 import { recordExportEvent } from "./ExportAudit.mjs";
 import { connectExportAdmin, ExportStoreTimeout } from "./ExportConnection.mjs";
+import { ExportMetadataIndex, ExportMetadataUnavailable } from "./ExportMetadataIndex.mjs";
 
 const MAX_LIMIT = 200;
 const DEFAULT_LIMIT = 25;
@@ -83,6 +84,7 @@ export function createExportServer({
   let exportInProgress = false;
   return http.createServer(async (req, res) => {
     let ownsExportSlot = false;
+    let cancellation, onDisconnect;
     try {
       // No research data or credentials are exposed. Azure must probe the
       // callbacks process, rather than merely the still-running Caddy socket.
@@ -101,8 +103,14 @@ export function createExportServer({
         return;
       }
       exportInProgress = ownsExportSlot = true;
+      cancellation = new AbortController();
+      onDisconnect = () => {
+        if (!res.writableEnded) cancellation.abort(new DOMException("Export client disconnected", "AbortError"));
+      };
+      req.once("aborted", onDisconnect);
+      res.once("close", onDisconnect);
       await route(req, res, {
-        service,
+        service: service.withSignal ? service.withSignal(cancellation.signal) : service,
         auditFile,
         now,
         requester,
@@ -110,6 +118,12 @@ export function createExportServer({
         allowRaw: Boolean(allowRaw),
       });
     } catch (error) {
+      if (cancellation?.signal.aborted || res.destroyed) return;
+      if (error instanceof ExportMetadataUnavailable) {
+        res.setHeader("Retry-After", "5");
+        await sendJson(res, 503, { error: error.message });
+        return;
+      }
       if (error instanceof ExportStoreTimeout) {
         await sendJson(res, 504, { error: "The export store timed out. Try again shortly." });
         return;
@@ -126,6 +140,10 @@ export function createExportServer({
         // socket already torn down
       }
     } finally {
+      if (onDisconnect) {
+        req.removeListener("aborted", onDisconnect);
+        res.removeListener("close", onDisconnect);
+      }
       if (ownsExportSlot) exportInProgress = false;
     }
   });
@@ -222,6 +240,7 @@ async function handleListPage(req, res, ctx, search, auditFields, redact) {
     limit: batchLimit,
     basePath: ctx.basePath,
     allowRaw: ctx.allowRaw,
+    metadata: inventory.listingMetadata,
   });
   await recordExportEvent({
     auditFile: ctx.auditFile,
@@ -232,12 +251,13 @@ async function handleListPage(req, res, ctx, search, auditFields, redact) {
 
 async function handleBatchesJson(req, res, ctx, search, auditFields, redact) {
   const filter = parseListFilter(search);
-  const items = await ctx.service.listBatches(filter);
+  const inventory = await ctx.service.readGameInventory();
+  const items = await ctx.service.listBatches(filter, inventory);
   await recordExportEvent({
     auditFile: ctx.auditFile,
     record: { ...auditFields, endpoint: "batches.json", format: "json", redact, filter },
   });
-  await sendJson(res, 200, { items, filter });
+  await sendJson(res, 200, { items, filter, metadata: inventory.listingMetadata });
 }
 
 async function handleBatchGamesJson(req, res, ctx, batchId, search, auditFields, redact) {
@@ -449,6 +469,7 @@ export function readExportServerConfig(env = process.env) {
     tajribaUrl: env.TAJRIBA_URL || "http://127.0.0.1:3000/query",
     tajribaConfig: env.TAJRIBA_CONFIG,
     tajribaSrToken: env.TAJRIBA_SRTOKEN,
+    metadataStoreFile: env.EXPORT_METADATA_STORE_FILE || env.TAJRIBA_STORE_FILE || "/data/tajriba.json",
   };
 }
 
@@ -516,7 +537,7 @@ async function sendHtml(res, status, html) {
   res.end(html, "utf8");
 }
 
-function renderListPage({ batches, gamesByBatch, filter, limit, basePath, allowRaw }) {
+function renderListPage({ batches, gamesByBatch, filter, limit, basePath, allowRaw, metadata }) {
   const gameMap = new Map(gamesByBatch.map((g) => [g.batchId, g.games]));
   const filterChips = [];
   for (const [k, v] of Object.entries(filter)) {
@@ -636,6 +657,7 @@ function renderListPage({ batches, gamesByBatch, filter, limit, basePath, allowR
 <body>
   <h1>Delibra research export</h1>
   <p class="sub">Choose a batch and game to download the questionnaire CSV, chat transcript, or full bundle. Downloads are PII-redacted by default.${allowRaw ? " Raw export is available only when explicitly requested." : ""} Every download is recorded in the audit log.</p>
+  ${metadata ? `<p class="sub">Metadata checked: ${escapeHtml(metadata.checkedAt)}. Store last modified: ${escapeHtml(metadata.sourceModifiedAt)}. Listing includes complete persisted records only; recent changes may appear after the store flushes.${metadata.pendingTail ? " A record is still being written; refresh to include it once complete." : ""} Transcript views read the live store separately on each refresh.</p>` : ""}
   ${filterForm}
   <div class="active">${filterChips.length ? `Active filters: ${filterChips.join(" ")}` : ""}</div>
   <table>
@@ -776,6 +798,7 @@ export function createDefaultExportServer({
   authPassword,
   basePath = "/",
   allowRaw = false,
+  metadataStoreFile = "/data/tajriba.json",
 } = {}) {
   if (!url) throw new Error("createDefaultExportServer: url is required");
   if (!srtoken) throw new Error("createDefaultExportServer: srtoken is required");
@@ -787,6 +810,7 @@ export function createDefaultExportServer({
       admin: { scopes: async (args) => admin.scopes(args), stop: () => admin.stop() },
       auditFile,
       defaultRedact,
+      metadataIndex: new ExportMetadataIndex({ file: metadataStoreFile }),
     });
     return createExportServer({ service, auditFile, authUsername, authPassword, basePath, allowRaw });
   })();
