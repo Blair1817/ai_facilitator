@@ -871,6 +871,9 @@ export function renderTranscriptMd(bundle) {
   lines.push(`- Players: ${players.map((p) => p.name || p.id).join(", ")}`);
   lines.push(`- Total interventions: ${game.totalInterventions || 0}`);
   lines.push(`- Total fallbacks: ${game.totalFallbackMessages || 0}`);
+  // Adaptive Specialist attempts that returned to the Static policy. These are
+  // not counted in totalFallbackMessages (fixed request-fallback messages).
+  lines.push(`- Specialist-to-Static fallbacks: ${(llmLog || []).filter((e) => e?.fallbackRoute === "SPECIALIST_TO_STATIC_POLICY").length}`);
   lines.push(`- Participant-requested replies (not interventions): ${game.totalParticipantRequestReplies || 0}`);
   lines.push("");
 
@@ -931,12 +934,36 @@ export function renderTranscriptMd(bundle) {
         const roles = (e.selection.pool || []).map(c => c?.role).filter(Boolean);
         lines.push(`- Selection: ${e.selection.mode}; pool roles: ${roles.length ? roles.join(", ") : "none"}${e.selection.probability != null ? `; probability ${Number(e.selection.probability).toFixed(2)}` : ""}${e.selection.ignoredDefer ? "; stale pause ignored" : ""}`);
       }
+      // 2026-11-13: failure causes (codes only, no message text).
+      const rejectedCandidates = (e.selection?.rejected || []).filter(Boolean);
+      if (rejectedCandidates.length) lines.push(`- Rejected candidates: ${rejectedCandidates.map(r => `${r.need || "?"}/${r.operation || "?"} (${r.reason || "unverified"})`).join("; ")}`);
+      if (e.droppedDetectorCriteria?.length) lines.push(`- Dropped unestablished criteria: ${e.droppedDetectorCriteria.map(d => `${d.candidate}:${d.criterion}`).join(", ")}`);
+      if (e.integrationObservation?.reason) lines.push(`- Integration status: ${e.integrationObservation.reason}`);
+      if (e.detectorError) lines.push(`- Detector error: ${e.detectorError}`);
+      if (e.synthesisLedger) {
+        const l = e.synthesisLedger;
+        lines.push(`- Synthesis ledger: ${l.messages} messages -> ${l.items} items (${l.verbatim} messages quoted verbatim, ${l.repeats} repeats, ${l.noTaskInformation} without task information); question: ${l.questionSource}; ${l.latencyMs} ms`);
+        if (l.fallbacks?.length) lines.push(`- Ledger fallbacks: ${l.fallbacks.map(f => `${f.messageId} (${f.reason})`).join(", ")}`);
+      }
       if (e.silenceRule?.eligible?.length) lines.push(`- Silence rule eligible: ${e.silenceRule.eligible.join(", ")}`);
       const failure = e.specialistFailure;
-      if (failure) lines.push(`- Specialist failure: ${failure.failureStage || "unknown"}${failure.reason ? ` (${failure.reason})` : ""}`);
+      if (failure) {
+        const preflightFailed = e.planPreflight?.status === "failed";
+        const stage = failure.failureStage || (failure.validator?.failedCriteria?.length ? "semantic" : preflightFailed ? "preflight" : "unknown");
+        const failedRole = failure.role || failure.selection?.role;
+        lines.push(`- Specialist failure: ${stage}${failedRole ? ` [${failedRole}]` : ""}${failure.reason ? ` (${failure.reason})` : ""}`);
+        if (failure.validator?.failedCriteria?.length) lines.push(`- Specialist validator failed: ${failure.validator.failedCriteria.join(", ")}`);
+        if (preflightFailed && e.planPreflight.failureReasons?.length) {
+          const failedChecks = Object.entries(e.planPreflight.checks || {}).filter(([, ok]) => !ok).map(([name]) => name);
+          lines.push(`- Specialist preflight failed: ${e.planPreflight.failureReasons.join(", ")}${failedChecks.length ? ` [${failedChecks.join(", ")}]` : ""}`);
+        }
+      }
+      if (e.cancellation?.reason) lines.push(`- Cancelled: ${e.cancellation.reason}${e.cancellation.remainingTimeMs != null ? ` (remaining ${e.cancellation.remainingTimeMs} ms)` : ""}`);
       if (e.fallbackRoute) lines.push(`- Fallback: ${e.fallbackRoute}${e.fallbackOutcome ? ` -> ${e.fallbackOutcome}` : ""}`);
       if (e.validator?.failedCriteria?.length) lines.push(`- Validator failed: ${e.validator.failedCriteria.join(", ")}`);
-      if (e.deterministicFailedCriteria?.length) lines.push(`- Deterministic failed: ${e.deterministicFailedCriteria.join(", ")}`);
+      const deterministicFailed = e.deterministicFailedCriteria?.length ? e.deterministicFailedCriteria
+        : e.deterministic?.passed === false ? e.deterministic.failedCriteria || [] : [];
+      if (deterministicFailed.length) lines.push(`- Deterministic failed: ${deterministicFailed.join(", ")}`);
       if (e.visibleWordCount != null) lines.push(`- Visible words: ${e.visibleWordCount}`);
       if (e.modelCallCount != null) lines.push(`- Model calls: ${e.modelCallCount}`);
       lines.push("");

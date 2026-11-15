@@ -173,3 +173,46 @@ changes again before publication, skip the synthesis.
 Existing automatic time/lifecycle
 budgets remain in place, so slow or oversized work may still produce no summary;
 the system must never resolve this by silently deleting required facts.
+
+## 2026-11-13 repairs after the two rehearsal sessions
+
+Evidence: exported sessions `01M7ATWX2HQQ5C9EP6SPBB7XEQ` and `01M7B1FTT6TTSENCB6FX1Y5Y25`, plus repeated live sampling of the real Validator and detector on those transcripts (`gpt-5.6-luna`).
+
+- **Unestablished criteria are dropped, not fatal.** The detector often names a comparison aspect in its own words ("accommodation" when participants said "rooms"). `dropUnestablishedCriteria()` removes such labels before selection and logs them as `droppedDetectorCriteria`. Preflight still refuses any unestablished label it is given. `CROSS_OPTION_COMPARISON` needs two option labels; a named criterion is optional. Before: 6/6 sampled integration candidates at one checkpoint were rejected `TARGET_UNSUPPORTED`; after: 6/6 qualified.
+- **Every role is preflighted at selection** (`validatePlan`), so a drawn Expander/Challenger candidate cannot be blocked later at generation preflight.
+- **Participation invitations.** `specialist/validator.md` now states that inviting a target to share from their own notes asserts no fact. Before: 11/26 sampled standard invitations rejected (`hiddenInformationInference`, `notGrounded`, …); after: 26/26 passed, while a control that asserts what the notes contain was rejected 6/6. An invitation that is attempted but not published now also starts the 12-message spacing window (`participationInvites[name].failedAttempts`, capped at 2), unless the invitee has posted meanwhile. The silence rule itself is unchanged (deterministic, no detector call).
+- **Detector structure.** The detector call now sends a strict response schema derived from `assessor.schema.json` (`strictAssessorResponseSchema()`); explicit nulls for optional fields are removed before the canonical schema check. Earlier sessions lost about one detector call in ten to malformed JSON.
+- **Adaptive Static turn.** A candidate rejected only for `GROUNDING_ID_NOT_PARTICIPANT_MESSAGE` / `UNKNOWN_GROUNDING_ID` uses its single Static repair instead of losing the checkpoint.
+- **Export.** `transcript.md` prints Specialist Validator failures, preflight failures, rejected candidates, dropped criteria, detector errors, cancellation reasons and a Specialist-to-Static fallback count.
+
+- **One Specialist repair is restored** (`generatorRepair: 1`; supersedes the 2026-11-11 "no Specialist repair" rule above). Once integration candidates qualified, the Synthesiser's first draft was usually rejected by the coverage check (`SYNTHESIS_COVERAGE_INCOMPLETE`, typically for omitted preference/leaning statements): 5 drafts, 5 rejections in one replay, each returning to Static. The Validator names the omitted message IDs, so the repair uses that feedback. A repetition rejection still goes straight to Static, and there is still no reselection. Cost: a repaired Synthesiser turn took about 70 s in replay.
+- **Synthesis coverage audit** (`SynthesisCoverage.mjs`): a message that only states a preference, leaning, agreement or vote, or only asks a question, is `no_task_information`; facts, qualifications and concerns in a mixed message must still be covered. The Synthesiser repair prompt now says to keep what was covered and add the omitted content. Replays of session `01M7B1FTT6TTSENCB6FX1Y5Y25` (same transcript, `gpt-5.6-luna`): Synthesiser published 0/5 attempts with no repair, 1/5 with repair only, 4/9 with repair plus this audit change (three replays: 2/3, 0/4, 2/2). Remaining rejections are single omitted task details; a failed attempt costs 60–78 s before the Static turn.
+
+## 2026-11-14 Synthesiser rebuilt on a per-message ledger
+
+Supersedes the Synthesiser parts of the sections above (one-shot scoreboard generation, the 13-flag Validator with the `SYNTHESIS_COVERAGE_INCOMPLETE` audit, and the repair/coverage notes of 2026-11-13). Those paths are no longer used for Adaptive Synthesiser turns.
+
+**Why.** The Synthesiser was all-or-nothing: one call wrote the whole scoreboard, a second had to prove nothing was omitted, and a single omitted detail discarded the message after 60–78 s. In replays of session `01M7B1FTT6TTSENCB6FX1Y5Y25` it published 0/5, 1/5 and 4/9 attempts across three successive repairs.
+
+**Design (`SynthesisLedger.mjs`).**
+
+1. Every public participant message of the round gets exactly one ledger entry: `points` (one or more statements, each with an exact quote from the message and an option), `repeats` (adds nothing beyond an earlier message), or `no_task_information` (greeting, logistics, bare preference/vote, bare question, remark about the discussion).
+2. One extraction call proposes entries for the messages that have none yet (`specialist/ledger_extractor.md`); one independent audit call confirms or rejects each entry (`specialist/ledger_auditor.md`). Both use strict response schemas.
+3. Code checks what code can check: one entry per message ID, quotes are substrings of the message, options are task options, no mentions, bounded length, repeats point to earlier represented messages.
+4. Entries that fail are retried once with the reason, for those messages only. Anything still unconfirmed, missing, malformed, or affected by a model outage is replaced by **the participant's own words in quotation marks**, placed under the option the message names (otherwise "Other points").
+5. Code renders the scoreboard: options in the task's authoritative order, points in first-appearance order, no names, plus one closing question (the model's if the auditor approved it, otherwise a fixed neutral question).
+6. Confirmed entries are stored per round (`round.synthesisLedger`, keyed by message ID and bound to the exact text), so later scoreboards only ask the model about new messages. Quoted fallbacks are never cached.
+
+**Guarantees enforced by code, not by model behaviour.**
+
+- *Complete*: every message is `points`, quoted, a repeat of represented content, or explicitly excluded with a recorded reason; the audit log lists all of them (`synthesisLedger.accounted`).
+- *Always deliverable*: no model verdict can discard the scoreboard. Only a lifecycle change (stage ended, a newer Facilitator message, the 20 s floor) or fewer than two information items stops it. An exhausted chain time budget does not.
+- *Nothing unverified*: model-written text reaches participants only if its quote check passed and the auditor confirmed it.
+- New participant messages that arrive during generation are folded in (up to two refreshes), then the scoreboard is published as complete up to its snapshot.
+- A second scoreboard in a round requires at least one new information item since the previous one.
+
+**Scoreboard guarantee per round.** If no Synthesiser scoreboard has been delivered: at the 180 s closeout tick it is built unless the detector selected a role or a participant is writing their own summary; at the 120 s tick it is built unconditionally, without a detector call and ahead of any other role; and at any checkpoint where two participants are publicly ready to finish it is built before the group moves on. Ticks are read from `triggerSources`, because a tick that coincides with a message opportunity is recorded with `triggerSource: "message"`.
+
+**What is still a model judgement.** Wording quality; whether a message is "no task information" (two independent calls must agree, otherwise it is quoted); whether a point is faithful (same rule). **What cannot be guaranteed.** A scoreboard for a group that ends the discussion before any checkpoint and before 180 s remain, or that has shared fewer than two information items.
+
+**Audit/export.** `routingDecision: "ADAPTIVE_LEDGER_SYNTHESIS"`, `synthesisLedger` (counts, per-message accounting, fallbacks with reasons, model calls, latency), `selection.guarantee`. `transcript.md` prints a "Synthesis ledger" line and any "Ledger fallbacks".

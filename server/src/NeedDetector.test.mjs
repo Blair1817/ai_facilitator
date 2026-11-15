@@ -250,7 +250,7 @@ const provider = (data) => new Response(JSON.stringify({
 const passFlags = () => Object.fromEntries(VALIDATOR_CRITERIA.map((key) => [key, false]));
 const published = (game) => game.get("chat_round_0").filter((m) => m.sender?.id === "ai");
 
-async function runCheckpoint(w, detector, generatorFor, { onFetch } = {}) {
+async function runCheckpoint(w, detector, generatorFor, { onFetch, validatorFor } = {}) {
   const { handleChat } = await getOfflineCallbacksHarness();
   const calls = [];
   const priorFetch = globalThis.fetch;
@@ -265,7 +265,7 @@ async function runCheckpoint(w, detector, generatorFor, { onFetch } = {}) {
       if (detector === "API_ERROR") return new Response("boom", { status: 500 });
       return provider(asDetector(detector));
     }
-    if (system.startsWith("# validator.md")) { calls.push("validator"); return provider(mockSynthesisCoverage(passFlags(), body.messages[1].content)); }
+    if (system.startsWith("# validator.md")) { calls.push("validator"); return provider(mockSynthesisCoverage(validatorFor?.(body) ?? passFlags(), body.messages[1].content)); }
     const prompt = /# (static|expander|challenger|synthesiser|generalist)\.md/.exec(system)?.[1] ?? "unknown";
     calls.push(prompt);
     return provider(generatorFor(prompt, body));
@@ -595,4 +595,47 @@ test("multi-person participation evidence rejects a target set containing a non-
   const checked = check(need("ELICIT", "participation_gap", target(CHAT, [5], { participantNames: ["Jordan", "Alex"] })));
   assert.equal(checked.role, null);
   assert.equal(checked.downgradedReason, "PARTICIPANT_NOT_VERIFIED_QUIET");
+});
+
+test("end-to-end: a rejected invitation is spaced like a published one instead of retrying at every checkpoint", async () => {
+  const w = world("adaptive", SILENT_JORDAN);
+  const none = { need: "NONE", operation: null, target: null, rationale: "none" };
+  let staticCount = 0;
+  const reply = prompt => prompt === "expander" ? EXPANDER_REPLY("Jordan")
+    : { ...STATIC_REPLY, message: `What else from your notes should the group hear, item ${++staticCount}?` };
+  const rejectInvite = body => /@\[Jordan\]/.test(body.messages[1].content.split("[TASK_GENERAL_CONTEXT]")[0])
+    ? { ...passFlags(), hiddenInformationInference: true } : null;
+  const first = await runCheckpoint(w, none, reply, { validatorFor: rejectInvite });
+  assert.deepEqual(first.calls, ["expander", "validator", "expander", "validator", "static", "validator"], "one repair, then Static");
+  assert.equal(first.audit.fallbackRoute, "SPECIALIST_TO_STATIC_POLICY");
+  assert.deepEqual(first.audit.silenceRule.unpublishedAttempt, ["Jordan"]);
+  assert.deepEqual({ count: w.round.get("participationInvites").Jordan.count, failed: w.round.get("participationInvites").Jordan.failedAttempts }, { count: 0, failed: 1 });
+
+  const next = (n) => { for (let i = 0; i < n; i++) appendHuman(w, i % 2 ? "Casey" : "Alex", `Further detail ${i} after ${staticCount}.`); w.game.set("lastAttemptTimestamp", Date.now() - 31_000); };
+  next(6);
+  const spaced = await runCheckpoint(w, none, reply, { validatorFor: rejectInvite });
+  assert.deepEqual(spaced.calls, ["detector", "static", "validator"], "the detector gets the next checkpoint");
+  next(6);
+  const retried = await runCheckpoint(w, none, reply);
+  assert.deepEqual(retried.calls, ["expander", "validator"], "retried once the spacing window has passed");
+  assert.equal(w.round.get("participationInvites").Jordan.count, 1);
+});
+
+test("end-to-end: the Adaptive Static turn repairs a candidate that cites an unknown message ID", async () => {
+  const w = world("adaptive", CHAT);
+  let attempt = 0;
+  const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "No content need." },
+    () => ++attempt === 1 ? { ...STATIC_REPLY, groundingMessageIds: ["m999"] } : STATIC_REPLY);
+  assert.deepEqual(r.calls, ["detector", "static", "static", "validator"]);
+  assert.equal(r.audit.groundingIdRepairAttempted, true);
+  assert.equal(r.published.length, 1);
+});
+
+test("end-to-end: the Adaptive Static turn also repairs an unknown message ID combined with an over-long message", async () => {
+  const w = world("adaptive", CHAT);
+  let attempt = 0;
+  const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "No content need." },
+    () => ++attempt === 1 ? { ...STATIC_REPLY, message: Array(60).fill("word").join(" ") + "?", groundingMessageIds: ["m999"] } : STATIC_REPLY);
+  assert.deepEqual(r.calls, ["detector", "static", "static", "validator"]);
+  assert.equal(r.published.length, 1);
 });

@@ -3,6 +3,27 @@ import { GENERATION_ROLES, OPERATION_ROLE, isPublicParticipantMessage, verifiedP
 import { withMessageIds } from "./prompts/DynamicContext.mjs";
 import { AUTOMATIC_MAX_WORDS, SYNTHESISER_MAX_WORDS } from "./prompts/PromptRuntime.mjs";
 
+const publicTextOf = (chat, taskGeneralContext) => [taskGeneralContext, ...withMessageIds(chat).filter(isPublicParticipantMessage).map(m => m.text)].join("\n").toLowerCase();
+
+/** 2026-11-13: the detector often names a comparison aspect in its own words
+ * ("accommodation" when participants said "rooms"/"hotels"). Such a label is
+ * not public wording, so it is removed before selection instead of failing the
+ * whole candidate at preflight. Quotes, option labels and message IDs are
+ * untouched; preflight below still rejects any unestablished label it is given. */
+export function dropUnestablishedCriteria(factors, { chat = [], taskGeneralContext = "" } = {}) {
+  if (!factors?.candidates) return { factors, dropped: [] };
+  const publicText = publicTextOf(chat, taskGeneralContext);
+  const dropped = [];
+  const candidates = Object.fromEntries(Object.entries(factors.candidates).map(([key, candidate]) => {
+    const criteria = candidate?.target?.criteria;
+    if (!Array.isArray(criteria)) return [key, candidate];
+    const kept = criteria.filter(label => typeof label === "string" && label.trim() && publicText.includes(label.toLowerCase()));
+    for (const label of criteria) if (!kept.includes(label)) dropped.push({ candidate: key, criterion: label });
+    return [key, kept.length === criteria.length ? candidate : { ...candidate, target: { ...candidate.target, criteria: kept } }];
+  }));
+  return { factors: dropped.length ? { ...factors, candidates } : factors, dropped };
+}
+
 /** Input/source checks, not an independent proof of semantic correctness.
  * Public-target interpretations remain subject to semantic validation. */
 export function preflightPlan(plan, { chat = [], taskGeneralContext = "", activeParticipantNames = [], contextScope = "complete_current_round", interventionHistory = [] } = {}) {
@@ -18,7 +39,8 @@ export function preflightPlan(plan, { chat = [], taskGeneralContext = "", active
     && target.messageIds.every(id => quotes.some(q => q.messageId === id && typeof q.span === "string" && q.span.length > 0 && byId.get(id)?.text?.includes(q.span)));
   let enough = sourceComplete;
   if (["EVIDENCE_CONSOLIDATION", "DISCREPANCY_REPRESENTATION", "CROSS_OPTION_COMPARISON"].includes(plan?.requiredReasoningAct)) enough &&= ids.length >= 2;
-  if (plan?.requiredReasoningAct === "CROSS_OPTION_COMPARISON") enough &&= (target?.optionLabels?.length || 0) >= 2 && (target?.criteria?.length || 0) > 0;
+  // 2026-11-13: a named criterion is optional (it is dropped when it is not public wording); two options are still required.
+  if (plan?.requiredReasoningAct === "CROSS_OPTION_COMPARISON") enough &&= (target?.optionLabels?.length || 0) >= 2;
   const participants = target?.participantNames ?? [target?.participantName];
   // 2026-11-11: a participation target must be a roster participant with no
   // message in the last SILENCE_WINDOW public participant messages.

@@ -105,6 +105,57 @@ function loadAssessorSchema() {
   return cachedAssessorSchema;
 }
 
+/** 2026-11-13: provider-enforced structure for the detector. Earlier sessions
+ * lost about one detector call in ten to malformed JSON. Derived from the
+ * canonical schema so there is one source of truth: every property becomes
+ * required, a formerly optional one becomes nullable, and keywords the strict
+ * mode does not accept are removed. The canonical schema (lengths, uniqueness,
+ * optional fields) is still enforced locally after stripNullOptionals(). */
+const STRICT_UNSUPPORTED = ["$schema", "title", "description", "minLength", "maxLength", "minItems", "maxItems", "uniqueItems"];
+function toStrictSchema(node) {
+  if (Array.isArray(node)) return node.map(toStrictSchema);
+  if (!node || typeof node !== "object") return node;
+  const out = {};
+  for (const [key, value] of Object.entries(node)) {
+    if (STRICT_UNSUPPORTED.includes(key)) continue;
+    if (key === "oneOf") out.anyOf = toStrictSchema(value);
+    else if (key === "const") out.enum = [value];
+    else if (key === "definitions") out.$defs = Object.fromEntries(Object.entries(value).map(([name, def]) => [name, toStrictSchema(def)]));
+    else if (key === "$ref") out.$ref = String(value).replace("#/definitions/", "#/$defs/");
+    else if (key === "properties") {
+      const required = new Set(node.required || []);
+      out.properties = Object.fromEntries(Object.entries(value).map(([name, child]) => {
+        const strict = toStrictSchema(child);
+        return [name, required.has(name) ? strict : { anyOf: [strict, { type: "null" }] }];
+      }));
+    } else if (key === "required") continue;
+    else out[key] = toStrictSchema(value);
+  }
+  if (out.properties) out.required = Object.keys(out.properties);
+  if (Array.isArray(out.enum) && !out.type && out.enum.every(v => typeof v === "string")) out.type = "string";
+  return out;
+}
+let cachedStrictAssessorSchema = null;
+export function strictAssessorResponseSchema() {
+  cachedStrictAssessorSchema ??= toStrictSchema(loadAssessorSchema());
+  return cachedStrictAssessorSchema;
+}
+/** Strict output carries explicit nulls for optional fields; the canonical
+ * contract expresses the same thing by omission. */
+export function stripNullOptionals(parsed) {
+  if (!parsed || typeof parsed !== "object") return parsed;
+  const out = { ...parsed };
+  for (const key of ["defer", "closeout", "integrationStatus"]) if (out[key] === null) delete out[key];
+  if (out.candidates && typeof out.candidates === "object") {
+    out.candidates = Object.fromEntries(Object.entries(out.candidates).map(([name, candidate]) => {
+      if (!candidate || typeof candidate !== "object" || candidate.semanticReview !== null) return [name, candidate];
+      const { semanticReview, ...rest } = candidate;
+      return [name, rest];
+    }));
+  }
+  return out;
+}
+
 const ajv = new Ajv({ strict: false, allErrors: true });
 
 export function validateAgainstAssessorSchema(parsed) {
@@ -198,10 +249,12 @@ export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM,
 
   const attempts = [];
   for (let attempt = 0; attempt < (allowStructureRepair ? 2 : 1); attempt++) {
-    const llmResponse = await callLLM(messages, { structureRepair: attempt > 0 });
+    const llmResponse = await callLLM(messages, { structureRepair: attempt > 0,
+      responseSchema: { name: "need_detector_output", schema: strictAssessorResponseSchema() } });
     const responseMetadata = llmResponse.responseMetadata ?? null;
     if (!llmResponse.success) return { success: false, code: "ASSESSOR_API_ERROR", error: llmResponse.error, responseMetadata, attempts };
     const parsed = strictParseJsonObject(llmResponse.rawText);
+    if (parsed.ok) parsed.parsed = stripNullOptionals(parsed.parsed);
     const schema = parsed.ok ? validateAgainstAssessorSchema(parsed.parsed) : null;
     if (parsed.ok && schema.ok) return { success: true, factors: parsed.parsed, rawText: llmResponse.rawText, responseMetadata, attempts };
     const failure = { code: parsed.ok ? "ASSESSOR_SCHEMA_FAILURE" : "ASSESSOR_PARSE_FAILURE",

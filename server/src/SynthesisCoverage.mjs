@@ -33,13 +33,18 @@ Each entry is {messageId, status, reason, mappings}. status is covered,
 no_task_information, out_of_scope, or missing. mappings is an array of
 {sourceQuote, summaryQuote}, each an exact nonempty substring of the source
 message and CANDIDATE.message respectively. For covered, map ALL distinct task
-facts, concerns, qualifications and relevant reasoning in that source, not just
-one convenient fact. A multi-fact source needs all its distinct content covered;
+facts, concerns and qualifications in that source, not just one convenient
+fact. A multi-fact source needs all its distinct content covered;
 faithful merging and deduplication are allowed, loss of meaning is not.
 Use missing for any omitted or distorted relevant point, number, unit, scope,
 uncertainty, correction, unresolved concern or either side of a discrepancy.
-no_task_information is only for greetings, logistics or genuinely non-task text;
-explain why, never use it to discard an inconvenient task point or preference.
+no_task_information is for greetings, logistics, genuinely non-task text, and
+messages that only state a personal preference, leaning, agreement or vote, or
+only ask a question, without adding a task fact, condition or concern; explain
+why. Never use it to discard an inconvenient task fact or concern. When a
+message mixes a task fact with a preference or a question, its facts,
+qualifications and concerns must be covered; the preference or question itself
+need not appear (the scoreboard lists information, not who favours what).
 out_of_scope is allowed ONLY for a focused discrepancy and must explain why the
 message is unrelated to that specific discrepancy. Round-wide synthesis covers
 ALL public task information about ALL alternatives; detector quotes, repeated

@@ -38,6 +38,13 @@ in the candidate is grounded. Verify claims in the public sources.
   about the target option, good or bad, beyond its existing vague impression.
 - PARTICIPATION_ELICITATION: invite every roster-confirmed quiet or silent target in TARGET.participantNames
   (or the single legacy TARGET.participantName) together using @[Name] for each, with an easy way out. No inferred private possession or motive.
+  Every participant holds their own task notes by design. Inviting a target to
+  share anything from their notes, on any option, good or bad, is the assigned
+  form: it asserts no fact, so it is not notGrounded, inventedInformation,
+  unsupportedInformationDetected, unanswerable or hiddenInformationInference,
+  and it needs no supporting message IDs. Flag those only when the candidate
+  states what the notes contain, says the participant holds a specific fact,
+  or gives a reason for their silence.
 No synthesis, option preference request, one-sided solicitation, fabricated
 missing topic, or @[Name] outside the participation operation.
 

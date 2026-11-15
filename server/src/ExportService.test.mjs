@@ -776,6 +776,36 @@ test("late Initial Decision audit metadata exports without misclassifying it as 
   assert.equal(row[columns.indexOf("initial_decision_timeout_reason")], "late_submission");
 });
 
+test("renderTranscriptMd prints Adaptive failure causes without message text", () => {
+  const selection = { role: "expander" };
+  const markdown = renderTranscriptMd({
+    game: { id: "G", totalFallbackMessages: 0 }, players: [], rounds: [],
+    llmLog: [
+      { auditRequestId: "a", outcome: "PUBLISHED", selectedRole: "STATIC", fallbackRoute: "SPECIALIST_TO_STATIC_POLICY", fallbackOutcome: "PUBLISHED",
+        specialistFailure: { selection, role: "expander", reason: "Validator rejected Specialist candidate; returning to the Static policy",
+          candidate: { message: "SECRET CANDIDATE TEXT" }, validator: { passed: false, failedCriteria: ["notGrounded", "hiddenInformationInference"] } } },
+      { auditRequestId: "b", outcome: "PUBLISHED", selectedRole: "STATIC", fallbackRoute: "SPECIALIST_TO_STATIC_POLICY",
+        specialistFailure: { selection: { role: "challenger" }, published: false },
+        planPreflight: { status: "failed", failureReasons: ["TARGET_UNSUPPORTED"], checks: { roleOperationMatch: true, publicTargetVerified: false } } },
+      { auditRequestId: "c", outcome: "SILENT", selectedRole: "STATIC", detectorError: "SCHEMA: bad output",
+        selection: { mode: "random", pool: [], rejected: [{ need: "INTEGRATE", operation: "fragmented_evidence", reason: "integration_already_covered" }] },
+        integrationObservation: { reason: "integration_already_covered" }, cancellation: { reason: "discussion_context_changed", remainingTimeMs: 1234 },
+        deterministic: { passed: false, failedCriteria: ["UNKNOWN_GROUNDING_ID"] } },
+    ],
+  });
+  assert.match(markdown, /- Specialist-to-Static fallbacks: 2/);
+  assert.match(markdown, /- Specialist failure: semantic \[expander\]/);
+  assert.match(markdown, /- Specialist validator failed: notGrounded, hiddenInformationInference/);
+  assert.match(markdown, /- Specialist failure: preflight \[challenger\]/);
+  assert.match(markdown, /- Specialist preflight failed: TARGET_UNSUPPORTED \[publicTargetVerified\]/);
+  assert.match(markdown, /- Rejected candidates: INTEGRATE\/fragmented_evidence \(integration_already_covered\)/);
+  assert.match(markdown, /- Integration status: integration_already_covered/);
+  assert.match(markdown, /- Detector error: SCHEMA: bad output/);
+  assert.match(markdown, /- Cancelled: discussion_context_changed \(remaining 1234 ms\)/);
+  assert.match(markdown, /- Deterministic failed: UNKNOWN_GROUNDING_ID/);
+  assert.doesNotMatch(markdown, /SECRET CANDIDATE TEXT/);
+});
+
 test("renderTranscriptMd emits one section per round and a final LLM audit log section", async () => {
   const svc = service();
   const { markdown } = await svc.renderTranscriptMd("GAME1", { redact: true });

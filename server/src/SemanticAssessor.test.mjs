@@ -161,3 +161,28 @@ test("assessSemanticFactors: throws synchronously if callLLM is not a function (
 test("integration: no real external LLM request is made by any test in this file (callLLM is always a local fake, never fetch)", () => {
   assert.equal(typeof globalThis.__integrationTestMadeRealRequest, "undefined");
 });
+
+test("the detector requests a strict response schema derived from the canonical one", async () => {
+  const { strictAssessorResponseSchema, stripNullOptionals, validateAgainstAssessorSchema: validate, assessSemanticFactors: assess } = await import("./SemanticAssessor.js");
+  const strict = strictAssessorResponseSchema();
+  const text = JSON.stringify(strict);
+  for (const keyword of ["oneOf", "minLength", "maxLength", "minItems", "uniqueItems", "\"const\"", "#/definitions/"]) assert.ok(!text.includes(keyword), keyword);
+  const walk = node => { if (!node || typeof node !== "object") return; if (node.properties) {
+    assert.deepEqual([...node.required].sort(), Object.keys(node.properties).sort()); assert.equal(node.additionalProperties, false); }
+    Object.values(node).forEach(walk); };
+  walk(strict);
+  assert.deepEqual(strict.properties.defer.anyOf.at(-1), { type: "null" }, "optional fields become nullable");
+
+  const strictOutput = { candidates: { elicit: null, scrutinize: null, integrate: null }, rationale: "none", defer: null, closeout: null, integrationStatus: null };
+  assert.equal(validate(strictOutput).ok, false, "canonical contract expresses optional by omission");
+  assert.equal(validate(stripNullOptionals(strictOutput)).ok, true);
+  const withReview = { candidates: { elicit: { operation: "coverage_gap", target: { label: "x", messageIds: ["m0"], evidence: [{ messageId: "m0", span: "a" }], optionLabels: [], criteria: [] }, rationale: "r", semanticReview: null }, scrutinize: null, integrate: null }, rationale: "r" };
+  assert.equal("semanticReview" in stripNullOptionals(withReview).candidates.elicit, false);
+
+  let seen = null;
+  const result = await assess({ chat: [{ text: "a", sender: { id: "p1", name: "Alex" } }], taskGeneralContext: "Choose A or B.", activeParticipantNames: ["Alex"],
+    callLLM: async (_messages, options) => { seen = options; return { success: true, rawText: JSON.stringify(strictOutput) }; } });
+  assert.equal(seen.responseSchema.name, "need_detector_output");
+  assert.equal(result.success, true);
+  assert.equal("defer" in result.factors, false);
+});

@@ -107,7 +107,7 @@ function deferIsRecent(defer, chat) {
   return Array.isArray(defer?.evidence) && defer.evidence.some(q => recent.has(q?.messageId));
 }
 
-export function selectAdaptiveAssessment(raw, { chat, roster, optionLabels = [], remainingTimeMs, triggerSource = "message", history = [], excluded = [], validateIntegration = null, extraCandidates = [], random = Math.random, recentRoles = [] }) {
+export function selectAdaptiveAssessment(raw, { chat, roster, optionLabels = [], remainingTimeMs, triggerSource = "message", history = [], excluded = [], validateIntegration = null, validatePlan = null, extraCandidates = [], random = Math.random, recentRoles = [] }) {
   const early = verifyEarlyCloseout(raw?.closeout, { chat, roster, optionLabels });
   const stage = remainingTimeMs <= 180_000 ? "closeout_assessment" : early.active ? "early_closeout" : "ordinary";
   const scheduling = { stage, remainingTimeMs, triggerSource };
@@ -121,9 +121,12 @@ export function selectAdaptiveAssessment(raw, { chat, roster, optionLabels = [],
     }
     const semantic = verifySemanticTarget(candidate.semanticReview, { chat, references });
     if (!semantic.ok) return { ...checked, need: "NONE", role: null, checkedFactors: null, downgradedReason: semantic.reason, semantic };
-    // An integration candidate must qualify as an executable plan.
-    if (checked.role === "synthesiser" && validateIntegration) {
-      const preflight = validateIntegration(checked, candidate.semanticReview);
+    // A candidate must qualify as an executable plan before it can be drawn
+    // (2026-11-13: every role, not only integration, so a drawn candidate is
+    // never blocked later at generation preflight).
+    const validate = checked.role === "synthesiser" ? validateIntegration : validatePlan;
+    if (validate) {
+      const preflight = validate(checked, candidate.semanticReview);
       if (preflight.status !== "passed") return { ...checked, need: "NONE", role: null, checkedFactors: null,
         downgradedReason: preflight.failureReasons.join(","), integrationPreflight: preflight };
     }

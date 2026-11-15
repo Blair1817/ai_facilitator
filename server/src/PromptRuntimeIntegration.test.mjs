@@ -1,4 +1,5 @@
 import { mockSynthesisCoverage } from "../test/participant_sim/fakes/synthesisCoverage.mjs";
+import { ledgerKind, mockLedgerExtraction, mockLedgerAudit } from "../test/participant_sim/fakes/ledgerMock.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -52,7 +53,9 @@ async function run(w, { invalidComparison = false, skipDuringValidation = false,
   globalThis.fetch = async (_url, options) => {
     const body = JSON.parse(options.body);requests.push(body);
     const system = body.messages[0].content;let data;
-    if (system.startsWith("# assessor.md")) data = toDetectorOutput(assessment ?? factors(w, invalidComparison));
+    if (ledgerKind(system) === "ledger_extract") data = mockLedgerExtraction(body.messages[1].content, { question: "How do you weigh those reported travel times?" });
+    else if (ledgerKind(system) === "ledger_audit") data = mockLedgerAudit(body.messages[1].content);
+    else if (system.startsWith("# assessor.md")) data = toDetectorOutput(assessment ?? factors(w, invalidComparison));
     else if (system.startsWith("# validator.md")) {
       data = mockSynthesisCoverage(Object.fromEntries(VALIDATOR_CRITERIA.map(k => [k, false])), body.messages[1].content);
       if (rejectSpecialist && body.messages[1].content.includes("[INTERVENTION_PLAN]")) data.requiredReasoningActMissing = true;
@@ -97,14 +100,16 @@ test("real callbacks send impossible comparison to the Static policy before any 
   assert.equal(r.log.at(-1).integrationObservation.qualified, false);
 });
 // Bounded non-repetition Specialist repair, then the existing Static policy.
-test("a rejected Specialist goes straight to Static without repair or plan/history leakage", async () => {
+test("a twice-rejected Specialist goes to Static after one repair, without plan/history leakage", async () => {
   const r = await run(world(), { rejectSpecialist: true });
   assert.equal(r.published.length, 1);
-  assert.equal(r.requests.length, 5, "assessor + Specialist/Validator + Static/Validator");
+  assert.equal(r.requests.length, 7, "assessor + Specialist/Validator + repair/Validator + Static/Validator");
   assert.match(r.requests[1].messages[0].content, /# challenger.md/);
-  assert.match(r.requests[3].messages[0].content, /# static.md/);
-  assert.doesNotMatch(r.requests[3].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
-  assert.doesNotMatch(r.requests[4].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
+  assert.match(r.requests[3].messages[0].content, /# challenger.md/);
+  assert.match(r.requests[3].messages[1].content, /\[PRIOR_FAILED_CRITERIA\]/);
+  assert.match(r.requests[5].messages[0].content, /# static.md/);
+  assert.doesNotMatch(r.requests[5].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
+  assert.doesNotMatch(r.requests[6].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
   assert.equal(r.log.at(-1).fallbackRoute, "SPECIALIST_TO_STATIC_POLICY");
   assert.equal(r.log.at(-1).selectedRole, "STATIC");
 });
@@ -192,7 +197,7 @@ test("Specialist internal labels and out-of-plan IDs cannot pass mechanical publ
   assert.ok(bad.failedCriteria.includes("GROUNDING_ID_OUTSIDE_PLAN_EVIDENCE"));
 });
 
-test("real callbacks publish a numbered multi-section synthesis with more than three sentences", async () => {
+test("real callbacks publish a numbered, option-ordered scoreboard that accounts for every public message", async () => {
   const w = world();
   const chat = w.game.get("chat_round_0");
   const assessment = { need: "INTEGRATE", operation: "cross_option_evidence", rationale: "Public transport figures remain uncombined.", target: {
@@ -200,18 +205,24 @@ test("real callbacks publish a numbered multi-section synthesis with more than t
     evidence: [1, 2].map(i => ({ messageId: `m${i}`, span: chat[i].text })),
     optionLabels: ["City A", "City B"], criteria: ["transport"],
   } };
-  const output = { role: "INFORMATION_SYNTHESISER", message: {
-    summary: "Here are the reported figures.",
-    sections: [{ title: "1. City A", body: "Transport is 12 minutes." }, { title: "2. City B", body: "Transport is 18 minutes." }],
-    question: "How do you weigh those reported travel times?",
-  }, groundingMessageIds: ["m1", "m2"] };
-  const r = await run(w, { assessment, output });
+  const r = await run(w, { assessment });
   assert.equal(r.published.length, 1);
-  assert.equal(r.requests.length, 3);
-  assert.match(r.published[0].content, /1\. City A\n\nTransport is 12 minutes\./);
-  assert.match(r.published[0].content, /2\. City B\n\nTransport is 18 minutes\./);
-  assert.deepEqual(r.published[0].presentation, output.message);
+  assert.equal(r.requests.length, 3, "detector + ledger extraction + ledger audit; no Generator or 13-flag Validator call");
+  assert.equal(r.published[0].role, "INFORMATION_SYNTHESISER");
+  assert.deepEqual(r.published[0].presentation, {
+    summary: "Shared points so far",
+    sections: [
+      { title: "City A", body: "1. City A transport is 12 minutes.\n2. City A cost is 25000." },
+      { title: "City B", body: "1. I prefer City B.\n2. City B transport is 18 minutes.\n3. City B cost is 32000." },
+      { title: "Other points", body: "1. Those are my reported figures." },
+    ],
+    question: "How do you weigh those reported travel times?",
+  });
+  assert.match(r.published[0].content, /City A\n\n1\. City A transport is 12 minutes\./);
   assert.equal(r.log.at(-1).visibleWordCount, r.published[0].content.trim().split(/\s+/).length);
+  assert.equal(r.log.at(-1).routingDecision, "ADAPTIVE_LEDGER_SYNTHESIS");
+  assert.deepEqual(r.log.at(-1).synthesisLedger.accounted.map(e => e.status), Array(6).fill("points"));
+  assert.equal(w.round.get("cognitiveInterventionHistory").at(-1).role, "synthesiser");
 });
 
 test("missing or forged Specialist preflight cannot reach an external Validator call", async () => {
@@ -235,11 +246,11 @@ test("schemas resolve from the active versioned route, not stale root descriptio
   assert.equal(buildRuntimeGenerationSchema("GENERALIST", "PARTICIPANT_REQUEST").title, "Generator Output Schema");
 });
 
-test("an over-long Specialist is not repaired and the Static-policy fallback still publishes", async () => {
+test("an over-long Specialist uses its single repair; a later rejection falls back to Static, which still publishes", async () => {
   const r = await run(world(), { rejectSpecialist: true, overlongFirstSpecialist: true });
-  assert.equal(r.requests.filter(r => r.messages[0].content.includes("# challenger.md")).length, 1);
-  assert.equal(r.requests.length, 4, "assessor + over-long Specialist + Static/Validator");
+  assert.equal(r.requests.filter(r => r.messages[0].content.includes("# challenger.md")).length, 2);
+  assert.equal(r.requests.length, 6, "assessor + over-long Specialist + shortened Specialist/Validator + Static/Validator");
   assert.equal(r.published.length, 1);
-  assert.equal(r.log.at(-1).totalGeneratorAttempts, 2);
+  assert.equal(r.log.at(-1).totalGeneratorAttempts, 3);
   assert.equal(r.log.at(-1).fallbackRoute, "SPECIALIST_TO_STATIC_POLICY");
 });

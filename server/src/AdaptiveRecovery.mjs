@@ -4,9 +4,11 @@ export const ADAPTIVE_FLOOR_MS = 20_000;
 export const ADAPTIVE_CHAIN_MS = 90_000;
 export function createAdaptiveBudget({ now = Date.now, deadline, isCurrent, log = {} }) {
   const expiresAt = Math.min(now() + ADAPTIVE_CHAIN_MS, deadline() - ADAPTIVE_FLOOR_MS);
-  // 2026-11-11: a failed Specialist goes straight to the Static policy (no
-  // Specialist repair, no reselection); Static keeps its own single repair.
-  const limits = { assessorRepair: 1, generatorRepair: 0, staticRepair: 1 };
+  // 2026-11-13: a rejected Specialist draft gets one repair of the same plan
+  // with the Validator's feedback (e.g. the message IDs a synthesis omitted)
+  // before the checkpoint returns to the Static policy. Still no reselection;
+  // Static keeps its own single repair.
+  const limits = { assessorRepair: 1, generatorRepair: 1, staticRepair: 1 };
   const counts = Object.fromEntries(Object.keys(limits).map(k => [k, 0]));
   const calls = [];
   log.recovery = { limits, counts, calls, expiresAt, maxModelCalls: 13 };
@@ -18,7 +20,7 @@ export function createAdaptiveBudget({ now = Date.now, deadline, isCurrent, log 
     return !reason;
   }
   return {
-    counts, calls, check,
+    limits, counts, calls, check,
     remainingTime: () => deadline() - now(),
     take(kind) {
       if (!check() || counts[kind] >= limits[kind]) return false;

@@ -1,4 +1,5 @@
 import { mockSynthesisCoverage } from "../test/participant_sim/fakes/synthesisCoverage.mjs";
+import { ledgerKind, mockLedgerExtraction, mockLedgerAudit, ledgerTargets } from "../test/participant_sim/fakes/ledgerMock.mjs";
 // Real callbacks with a fake Empirica store, controlled provider responses and
 // no external requests. These tests verify orchestration, not model quality.
 import test from "node:test";
@@ -68,16 +69,23 @@ const challengerReply = { role: "EVIDENCE_CHALLENGER", message: "Which public fa
 const synthesis = { role: "INFORMATION_SYNTHESISER", message: "1. Norvale has indoor signs.\n2. Displays are across the courtyard.\n3. Its app cannot send reminders.\nHow do you weigh these points?", groundingMessageIds: ["m0", "m2", "m3"] };
 const flags = (...failed) => Object.fromEntries(VALIDATOR_CRITERIA.map(k => [k, failed.includes(k)]));
 const provider = data => new Response(JSON.stringify({ choices: [{ message: { content: typeof data === "string" ? data : JSON.stringify(data) }, finish_reason: "stop" }] }), { headers: { "content-type": "application/json" } });
-async function run(w, { assessments = [need(w)], generators, validators = [], trigger, mutate } = {}) {
+async function run(w, { assessments = [need(w)], generators, validators = [], trigger, mutate, ledger = {} } = {}) {
   const harness = await getOfflineCallbacksHarness(), requests = [];
   const oldFetch = globalThis.fetch, oldTimeout = globalThis.setTimeout, timers = [];
   globalThis.setTimeout = (...args) => { const t = oldTimeout(...args); timers.push(t); return t; };
   let a = 0, g = 0, v = 0;
   globalThis.fetch = async (_url, options) => {
     const body = JSON.parse(options.body), system = body.messages[0].content;
-    const kind = system.startsWith("# assessor.md") ? "assessor" : system.startsWith("# validator.md") ? "validator" : "generator";
+    const kind = ledgerKind(system) ?? (system.startsWith("# assessor.md") ? "assessor" : system.startsWith("# validator.md") ? "validator" : "generator");
     requests.push({ kind, ...body });
     let data;
+    if (kind === "ledger_extract" || kind === "ledger_audit") {
+      await mutate?.(kind, w, requests);
+      const user = body.messages[1].content;
+      const custom = ledger[kind === "ledger_extract" ? "extract" : "audit"]?.(user, requests);
+      if (custom === "API_ERROR") return new Response("boom", { status: 500 });
+      return provider(custom ?? (kind === "ledger_extract" ? mockLedgerExtraction(user) : mockLedgerAudit(user)));
+    }
     if (kind === "assessor") data = asDetector(assessments[Math.min(a++, assessments.length - 1)]);
     else if (kind === "validator") data = mockSynthesisCoverage(validators[v++] ?? flags(), body.messages[1].content);
     else data = generators?.[g++] ?? (system.includes("# synthesiser.md") ? synthesis : system.includes("# challenger.md") ? challengerReply : staticReply);
@@ -111,15 +119,42 @@ test("equally urgent new scrutiny and integration candidates tie uniformly, at a
     }
   }
 });
-test("180s independent scan can integrate below six messages; an already-covered/empty scan does not emit Static", async () => {
+test("180s scan: a qualified integration and an empty scan both deliver the round's Synthesiser scoreboard; a round that already has one stays silent", async () => {
   for (const complete of [false, true]) {
     const w = world({ remaining: 180_000 }); w.game.set("messagesSinceLastPublish", 0);
     const raw = complete ? { ...none, integrationCandidate: null, integrationStatus: "already_covered" }
       : { ...need(w), integrationCandidate: need(w, "INTEGRATE"), integrationStatus: "qualified" };
     const r = await run(w, { assessments: [raw], trigger: { triggerSource: "time_180", triggerSources: ["time_180"] } });
-    assert.equal(r.published.length, complete ? 0 : 1);
-    assert.equal(r.requests.length, complete ? 1 : 3);
+    assert.equal(r.published.length, 1);
+    assert.equal(r.published[0].role, "INFORMATION_SYNTHESISER");
+    assert.deepEqual(r.requests.map(x => x.kind), ["assessor", "ledger_extract", "ledger_audit"]);
+    assert.equal(r.audit.selection.mode, complete ? "closeout_guarantee" : "closeout");
+    assert.equal(w.round.get("cognitiveInterventionHistory").at(-1).role, "synthesiser");
+    // The 120 s check finds the scoreboard already delivered and does not repeat it.
+    w.game.set("lastAttemptTimestamp", Date.now() - 31_000);
+    const later = await run(w, { assessments: [{ ...none, integrationCandidate: null, integrationStatus: "already_covered" }], trigger: { triggerSource: "time_120", triggerSources: ["time_120"] } });
+    assert.equal(later.published.length, 1, "no second scoreboard");
+    assert.equal(later.audit.reason, "closeout_no_qualified_integration");
   }
+});
+test("closeout guarantee waits for a participant who is summarising at 180 s and delivers at 120 s", async () => {
+  const chat = [...lines.map((text, i) => ({ text, sender: { id: names[i % 3], name: names[i % 3] } })), { text: "Let me bring these points together now; I am still writing the summary.", sender: { id: "A", name: "A" } }];
+  const w = world({ chat, remaining: 180_000 }); w.game.set("messagesSinceLastPublish", 0);
+  const pause = { need: "NONE", operation: null, target: null, rationale: "A is summarising.", defer: { reason: "participant_summary_in_progress", evidence: [{ messageId: "m6", span: chat[6].text }] } };
+  const first = await run(w, { assessments: [pause], trigger: { triggerSource: "time_180", triggerSources: ["time_180"] } });
+  assert.equal(first.published.length, 0);
+  assert.equal(first.audit.reason, "participant_summary_in_progress");
+  w.game.set("lastAttemptTimestamp", Date.now() - 31_000);
+  const second = await run(w, { assessments: [pause], trigger: { triggerSource: "time_120", triggerSources: ["time_120"] } });
+  assert.equal(second.published.length, 1);
+  assert.equal(second.audit.selection.mode, "closeout_guarantee");
+});
+test("closeout guarantee has nothing to deliver when fewer than two items were shared", async () => {
+  const w = world({ chat: [{ text: "hello", sender: { id: "A", name: "A" } }], remaining: 180_000 });
+  const r = await run(w, { assessments: [none], trigger: { triggerSource: "time_180", triggerSources: ["time_180"] },
+    ledger: { extract: user => ({ entries: ledgerTargets(user).map(messageId => ({ messageId, status: "no_task_information", points: [], sameAs: null, reason: "greeting" })), question: "How do you weigh these points together?" }) } });
+  assert.equal(r.published.length, 0);
+  assert.equal(r.audit.reason, "closeout_nothing_to_synthesise");
 });
 test("insufficient integration evidence is never relabelled into a Synthesiser plan", () => {
   const w = world(), raw = { ...need(w), integrationCandidate: { ...need(w, "INTEGRATE"), target: { ...need(w, "INTEGRATE").target, messageIds: ["m0"], evidence: [{ messageId: "m0", span: lines[0] }] } } };
@@ -139,22 +174,31 @@ test("Assessor missing criteria gets one structure repair followed by evidence v
   assert.equal(broken.requests.filter(r => r.kind === "assessor").length, 2);
 });
 // 2026-11-11: an Adaptive Specialist never repairs; any failure goes to Static.
-test("outside-plan grounding is not repaired; the Specialist failure reaches Static", async () => {
+test("outside-plan grounding is repaired once; a second failure reaches Static", async () => {
   const w = world(), invalid = { ...challengerReply, groundingMessageIds: ["m0"] };
-  const r = await run(w, { generators: [invalid, staticReply] });
-  assert.equal(r.audit.recovery.counts.generatorRepair, 0);
+  const r = await run(w, { generators: [invalid, invalid, staticReply] });
+  assert.equal(r.audit.recovery.counts.generatorRepair, 1);
   assert.equal(r.published.length, 1);
   assert.equal(r.audit.selectedRole, "STATIC");
   assert.equal(r.audit.fallbackRoute, "SPECIALIST_TO_STATIC_POLICY");
   assert.equal(r.audit.modelCallCount, r.requests.length);
 });
-test("a Validator-rejected Specialist goes to Static; Static keeps its own bounded repair", async () => {
-  const r = await run(world(), { validators: [flags("notGrounded"), flags("notGrounded"), flags()] });
+test("a Specialist rejected twice goes to Static; Specialist and Static each keep one bounded repair", async () => {
+  const r = await run(world(), { validators: [flags("notGrounded"), flags("notGrounded"), flags("notGrounded"), flags()] });
   assert.equal(r.audit.modelCallCount, r.requests.length);
-  assert.equal(r.audit.recovery.counts.generatorRepair, 0);
+  assert.equal(r.audit.recovery.counts.generatorRepair, 1);
   assert.equal(r.audit.recovery.counts.staticRepair, 1);
   assert.equal(r.audit.fallbackPublished, true);
-  assert.equal(r.requests.length, 7);
+  assert.equal(r.requests.length, 9);
+});
+test("a Specialist rejected once is repaired with the Validator feedback and published", async () => {
+  const r = await run(world(), { validators: [flags("notGrounded"), flags()] });
+  assert.equal(r.audit.recovery.counts.generatorRepair, 1);
+  assert.equal(r.audit.selectedRole, "challenger");
+  assert.equal(r.audit.fallbackRoute, undefined);
+  assert.equal(r.published.length, 1);
+  assert.equal(r.requests.length, 5, "assessor + Specialist/Validator + repair/Validator");
+  assert.match(r.requests[3].messages[1].content, /\[PRIOR_FAILED_CRITERIA\][\s\S]*notGrounded/);
 });
 test("a repetition rejection uses Static without a reassessment or redraw, even with another verified need", async () => {
   const w = world(), raw = { ...need(w), integrationCandidate: need(w, "INTEGRATE"), integrationStatus: "qualified" };
@@ -200,57 +244,68 @@ test("automatic Challenger runs allow ordinary appends, but Facilitator messages
   assert.equal(superseded.published.length, 0, "a newer Facilitator message always supersedes the older automatic result");
 });
 
-test("a correction during synthesis validation refreshes coverage before publishing", async () => {
+test("a correction posted while the scoreboard is being built is folded in before publishing", async () => {
   const w = world({ remaining: 180_000 });
   w.game.set("messagesSinceLastPublish", 0);
   const raw = { ...need(w), integrationCandidate: need(w, "INTEGRATE"), integrationStatus: "qualified" };
   const correction = "Correction: Norvale can send reminders after the update.";
-  const updated = { ...synthesis,
-    message: synthesis.message.replace("Its app cannot send reminders.", correction),
-    groundingMessageIds: [...synthesis.groundingMessageIds, "m6"] };
-  const result = await run(w, { assessments: [raw], generators: [synthesis, updated],
-    trigger: { triggerSource: "time_180", triggerSources: ["time_180"] },
+  const result = await run(w, { assessments: [raw], trigger: { triggerSource: "time_180", triggerSources: ["time_180"] },
     mutate(kind, { game, chat }, requests) {
-      if (kind === "validator" && requests.length === 3) game.append("chat_round_0", { ...chat[0], messageId: "correction", text: correction });
+      if (kind === "ledger_audit" && requests.length === 3) game.append("chat_round_0", { ...chat[0], messageId: "correction", text: correction });
     } });
-  assert.deepEqual(result.requests.map(request => request.kind), ["assessor", "generator", "validator", "generator", "validator"]);
+  assert.deepEqual(result.requests.map(request => request.kind), ["assessor", "ledger_extract", "ledger_audit", "ledger_extract", "ledger_audit"]);
+  assert.deepEqual(ledgerTargets(result.requests[3].messages[1].content), ["m6"], "only the new message needs an entry");
   assert.equal(result.published.length, 1);
-  assert.equal(result.published[0].text, updated.message);
+  assert.ok(result.published[0].text.includes(correction));
+  assert.ok(result.published[0].text.includes(lines[3]), "the corrected report is still represented");
   assert.equal(result.audit.synthesisContextRefreshed, true);
-  assert.ok(result.audit.plan.synthesisCoverage.sourceMessageIds.includes("m6"));
-  const validatorContext = result.requests.at(-1).messages[1].content;
-  assert.equal(validatorContext.split(lines[1]).length - 1, 1, "source text occurs only in the transcript");
-  assert.match(validatorContext, /"evidence":\[\{"messageId":"m0"\}/);
+  assert.equal(result.audit.synthesisLedger.messages, 7);
 });
 
-test("second-round Task A still gets a validated prompt when discussion keeps overtaking synthesis", async () => {
+test("second-round Task A still gets its scoreboard when discussion keeps overtaking it", async () => {
   const w = world({ taskIndex: 1, remaining: 120_000 });
   w.game.set("chat_round_0", [{ ...w.chat[0], text: "Previous round only" }]);
+  let update = 0;
   const result = await run(w, { assessments: [need(w, "INTEGRATE")],
-    mutate(kind, { game, chat }, requests) {
-      if (kind === "generator" && requests.length <= 3) {
-        game.append("chat_round_1", { ...chat[0], messageId: `update-${requests.length}`, text: `Public update ${requests.length}.` });
-      }
+    mutate(kind, { game, chat }) {
+      if (kind === "ledger_extract") game.append("chat_round_1", { ...chat[0], messageId: `update-${++update}`, text: `Public update ${update}.` });
     } });
-  assert.deepEqual(result.requests.map(request => request.kind), ["assessor", "generator", "generator", "generator", "validator"]);
-  assert.equal(result.audit.synthesisRefreshExhausted, true);
-  assert.equal(result.published[0]?.role, staticReply.role);
-  assert.match(result.requests.at(-1).messages[1].content, /Public update 3/);
+  assert.equal(result.published.length, 1, "after two refreshes it publishes what is complete as of its snapshot");
+  assert.equal(result.published[0].role, "INFORMATION_SYNTHESISER");
+  assert.match(result.published[0].text, /Public update 2\./);
+  assert.doesNotMatch(result.published[0].text, /Previous round only/);
+  assert.equal(result.audit.synthesisLedger.refresh, 2);
   assert.equal(w.game.get("chat_round_0").length, 1);
 });
 
-test("a timed synthesis overtaken twice stays eligible for retry", async () => {
+test("a timed scoreboard overtaken by new messages still publishes", async () => {
   const w = world({ remaining: 120_000 });
   w.game.set("messagesSinceLastPublish", 0);
   const raw = { ...need(w), integrationCandidate: need(w, "INTEGRATE"), integrationStatus: "qualified" };
   const result = await run(w, { assessments: [raw],
     trigger: { triggerSource: "time_120", triggerSources: ["time_120"] },
     mutate(kind, { game, chat }, requests) {
-      if (kind === "generator") game.append("chat_round_0", { ...chat[0], messageId: `update-${requests.length}`, text: "New public task information." });
+      if (kind === "ledger_extract") game.append("chat_round_0", { ...chat[0], messageId: `update-${requests.length}`, text: "New public task information." });
     } });
-  assert.equal(result.published.length, 0);
-  assert.equal(result.audit.reasonCode, "SYNTHESIS_CONTEXT_CHANGED");
-  assert.equal(result.result.deferred, true);
+  assert.equal(result.published.length, 1);
+  assert.equal(result.result.deferred, false);
+});
+
+test("a Facilitator reply posted while a timed scoreboard is being built defers it for the scheduler to retry", async () => {
+  const w = world({ remaining: 180_000 });
+  w.game.set("messagesSinceLastPublish", 0);
+  const result = await run(w, { assessments: [none], trigger: { triggerSource: "time_180", triggerSources: ["time_180"] },
+    mutate(kind, { game, chat }) {
+      if (kind === "ledger_audit") game.append("chat_round_0", { ...chat[0], messageId: "requested-reply", messageType: "facilitator", speakerType: "facilitator",
+        sender: { id: "ai", name: "Facilitator" }, facilitatorOrigin: "LLM_GENERATED", text: "Here is what you asked for." });
+    } });
+  const scoreboards = r => r.published.filter(m => m.role === "INFORMATION_SYNTHESISER");
+  assert.equal(scoreboards(result).length, 0);
+  assert.equal(result.result.deferred, true, "the closeout scheduler requeues it");
+  w.game.set("lastAttemptTimestamp", Date.now() - 31_000);
+  const retry = await run(w, { assessments: [none], trigger: { triggerSource: "time_180", triggerSources: ["time_180"] } });
+  assert.equal(scoreboards(retry).length, 1);
+  assert.deepEqual(retry.requests.map(r => r.kind), ["assessor"], "confirmed entries are reused; no new model call is needed for the ledger");
 });
 
 // 2026-11-11: C is silent across the last 12 public messages (silence rule).
@@ -273,9 +328,9 @@ test("a participation invitation is dropped if its target contributes before pub
 test("a Challenger cannot tag a participant outside its cited public evidence; the failure goes to Static", async () => {
   const w = world();
   const ungroundedMention = { ...challengerReply, message: "@[A], which public facts support the preference for Norvale?" };
-  const result = await run(w, { generators: [ungroundedMention, staticReply] });
+  const result = await run(w, { generators: [ungroundedMention, ungroundedMention, staticReply] });
   assert.equal(result.published[0]?.text, staticReply.message);
-  assert.equal(result.requests.filter(request => request.kind === "generator").length, 2);
+  assert.equal(result.requests.filter(request => request.kind === "generator").length, 3);
   assert.match(JSON.stringify(result.audit.specialistFailure), /UNSUPPORTED_MENTION_TARGET/);
 });
 
@@ -351,28 +406,113 @@ test("overlapping timed/message evaluations share the durable automatic lock and
 });
 
 
-test("a full synthesis above 55 words is preserved, gets a larger token budget, and can cite beyond detector seeds", async () => {
+test("a long scoreboard is preserved in full with a large token budget and accounts for every message", async () => {
   const extra = " The shuttle stops at the main hall only on weekdays and does not serve the riverside entrance on weekends.";
   const chat = lines.map((text, i) => ({ text: i === 0 ? text + extra : text,
     sender: { id: names[i % 3], name: names[i % 3] } }));
   const w = world({ chat });
-  const summary = chat.map(m => m.text).join(" ") + " How do you weigh all these reported points together?";
-  assert.ok(summary.split(/\s+/).length > 55);
-  const r = await run(w, { assessments: [need(w, "INTEGRATE")], generators: [{ role: "INFORMATION_SYNTHESISER", message: summary,
-    groundingMessageIds: chat.map((_, i) => `m${i}`) }] });
+  const r = await run(w, { assessments: [need(w, "INTEGRATE")] });
   assert.equal(r.published.length, 1);
-  assert.equal(r.published[0].content, summary);
+  for (const message of chat) assert.ok(r.published[0].content.includes(message.text), message.text);
+  assert.ok(r.published[0].content.split(/\s+/).length > 55);
   assert.equal(r.audit.plan.maxWords, null);
-  assert.deepEqual(r.audit.plan.evidenceIds, chat.map((_, i) => `m${i}`));
-  assert.ok((r.requests.find(x => x.kind === "generator").max_tokens ?? r.requests.find(x => x.kind === "generator").max_completion_tokens) >= 8192);
-  assert.equal(r.audit.validator.coverage.passed, true);
+  const extract = r.requests.find(x => x.kind === "ledger_extract");
+  assert.ok((extract.max_tokens ?? extract.max_completion_tokens) >= 8192);
+  assert.deepEqual(r.audit.synthesisLedger.accounted.map(e => e.messageId), chat.map((_, i) => `m${i}`));
+  assert.deepEqual(r.published[0].presentation.sections.map(section => section.title), ["Norvale", "Fenwick"], "authoritative option order");
 });
 
-test("an incomplete synthesis coverage audit cannot publish even when all boolean flags say pass", async () => {
+test("no model verdict can stop the scoreboard: unconfirmed, omitted or unavailable entries are quoted verbatim", async () => {
+  const cases = {
+    "auditor rejects every entry twice": { audit: user => mockLedgerAudit(user, () => "incomplete") },
+    "extractor returns nothing usable": { extract: () => ({ entries: [], question: "" }) },
+    "extractor is unavailable": { extract: () => "API_ERROR" },
+    "auditor is unavailable": { audit: () => "API_ERROR" },
+  };
+  for (const [label, ledger] of Object.entries(cases)) {
+    const w = world();
+    const r = await run(w, { assessments: [need(w, "INTEGRATE")], ledger });
+    assert.equal(r.published.length, 1, label);
+    assert.equal(r.audit.selectedRole, "synthesiser", label);
+    assert.equal(r.audit.fallbackRoute, undefined, label);
+    for (const text of lines) assert.ok(r.published[0].content.includes(`“${text}”`), `${label}: ${text}`);
+    assert.equal(r.audit.synthesisLedger.verbatim, lines.length, label);
+    assert.equal(w.round.get("synthesisLedger") && Object.keys(w.round.get("synthesisLedger")).length, 0, `${label}: unconfirmed entries are not cached`);
+  }
+});
+
+test("only the entries that fail are retried and, if still unconfirmed, quoted; the rest keep their wording", async () => {
   const w = world();
-  const r = await run(w, { assessments: [need(w, "INTEGRATE")],
-    validators: [{ ...flags(), synthesisCoverage: [] }, flags()] });
+  const r = await run(w, { assessments: [need(w, "INTEGRATE")], ledger: { audit: user => mockLedgerAudit(user, id => id === "m2" ? "unfaithful" : "ok") } });
+  assert.deepEqual(r.requests.map(x => x.kind), ["assessor", "ledger_extract", "ledger_audit", "ledger_extract", "ledger_audit"]);
+  assert.deepEqual(ledgerTargets(r.requests[3].messages[1].content), ["m2"]);
+  assert.match(r.requests[3].messages[1].content, /PREVIOUS_ATTEMPT_PROBLEMS[\s\S]*audit_unfaithful/);
   assert.equal(r.published.length, 1);
-  assert.equal(r.published[0].content, staticReply.message);
-  assert.equal(r.audit.selectedRole, "STATIC");
+  assert.ok(r.published[0].content.includes(`“${lines[2]}”`));
+  assert.ok(r.published[0].content.includes(`1. ${lines[0]}`) && !r.published[0].content.includes(`“${lines[0]}”`));
+  assert.deepEqual(r.audit.synthesisLedger.fallbacks, [{ messageId: "m2", reason: "audit_unfaithful" }]);
+});
+
+// ── 2026-11-14 scoreboard guarantee ─────────────────────────────────────────
+const tick = source => ({ triggerSource: source, triggerSources: [source] });
+test("the 120 s tick is the last chance: the scoreboard is built without a detector call and ahead of any other role", async () => {
+  const w = world({ remaining: 120_000 }); w.game.set("messagesSinceLastPublish", 0);
+  const r = await run(w, { assessments: [need(w)], trigger: tick("time_120") });
+  assert.deepEqual(r.requests.map(x => x.kind), ["ledger_extract", "ledger_audit"]);
+  assert.equal(r.published[0].role, "INFORMATION_SYNTHESISER");
+  assert.equal(r.audit.selection.guarantee, "closeout_guarantee_120");
+});
+test("a closeout tick that coincides with a message opportunity (recorded as a message trigger) still delivers the guarantee", async () => {
+  const w = world({ remaining: 120_000 }); w.game.set("messagesSinceLastPublish", 6);   // the tick is treated as a message checkpoint
+  const r = await run(w, { assessments: [need(w)], trigger: tick("time_120") });
+  assert.equal(r.audit.triggerSource, "message");
+  assert.equal(r.published[0].role, "INFORMATION_SYNTHESISER");
+  // At 180 s the detector's own choice for that message opportunity is kept; the guarantee waits for 120 s.
+  const earlier = world({ remaining: 180_000 }); earlier.game.set("messagesSinceLastPublish", 6);
+  const first = await run(earlier, { assessments: [need(earlier)], trigger: tick("time_180") });
+  assert.equal(first.published[0].role, "EVIDENCE_CHALLENGER");
+  for (const text of ["One more point about Halden parking.", "Fenwick has a second hall.", "Halden parking is free.", "Fenwick hall seats 200.", "Halden is ten minutes away.", "Fenwick has a cafe."])
+    earlier.game.append("chat_round_0", { ...earlier.chat[0], messageId: `late-${text.length}`, text });
+  earlier.game.set("humanMessageCount", 11); earlier.game.set("messagesSinceLastPublish", 6);
+  earlier.game.set("deadline", Date.now() + 120_000); earlier.game.set("lastAttemptTimestamp", Date.now() - 31_000);
+  const second = await run(earlier, { assessments: [none], trigger: tick("time_120") });
+  assert.equal(second.published.at(-1).role, "INFORMATION_SYNTHESISER");
+  assert.match(second.published.at(-1).text, /Halden parking is free\./);
+});
+test("when two participants are publicly ready to finish, the scoreboard is delivered at that checkpoint", async () => {
+  const chat = [...lines.slice(0, 4), "Let's choose Norvale, I am ready to submit.", "Yes, Norvale, ready to submit."].map((text, i) => ({ text, sender: { id: names[i % 3], name: names[i % 3] } }));
+  const w = world({ chat });
+  const quote = i => ({ messageId: `m${i}`, span: chat[i].text });
+  const closeout = { proposal: { active: true, optionLabel: "Norvale", evidence: [quote(4)] }, participants: [
+    { participantName: "A", reviewedThroughMessageId: "m3", stance: "uncommitted", optionLabel: null, evidence: [] },
+    { participantName: "B", reviewedThroughMessageId: "m4", stance: "ready", optionLabel: "Norvale", evidence: [quote(4)] },
+    { participantName: "C", reviewedThroughMessageId: "m5", stance: "ready", optionLabel: "Norvale", evidence: [quote(5)] }] };
+  const r = await run(w, { assessments: [{ ...none, closeout }] });
+  assert.equal(r.audit.earlyCloseout.active, true);
+  assert.equal(r.audit.selection.guarantee, "early_closeout_guarantee");
+  assert.equal(r.published[0].role, "INFORMATION_SYNTHESISER");
+  assert.doesNotMatch(r.published[0].text, /agree|decided|consensus/i, "the scoreboard reports information, not a decision");
+});
+test("a second scoreboard needs new information; otherwise the checkpoint takes the Static policy", async () => {
+  const w = world();
+  const first = await run(w, { assessments: [need(w, "INTEGRATE")] });
+  assert.equal(first.published[0].role, "INFORMATION_SYNTHESISER");
+  const advance = text => { w.game.append("chat_round_0", { ...w.chat[0], messageId: `later-${text.length}`, text });
+    w.game.set("humanMessageCount", w.game.get("chat_round_0").filter(m => m.speakerType === "human").length - 1);
+    w.game.set("lastAttemptTimestamp", Date.now() - 31_000); w.game.set("messagesSinceLastPublish", 5); };
+  advance("ok thanks");
+  const chatter = user => ({ question: "How do you weigh these points together?", entries: ledgerTargets(user).map(messageId => ({ messageId, status: "no_task_information", points: [], sameAs: null, reason: "thanks" })) });
+  // A differently framed integration target, so the detector-side repetition checks do not stop it first.
+  const other = () => ({ ...need(w, "INTEGRATE"), target: { label: "Fenwick and Norvale points side by side", optionLabels: ["Norvale", "Fenwick"], criteria: [],
+    messageIds: ["m0", "m1", "m3"], evidence: [0, 1, 3].map(i => ({ messageId: `m${i}`, span: w.chat[i].text })) },
+    semanticReview: { key: "Fenwick and Norvale side by side", matches: w.round.get("cognitiveInterventionHistory").map(h => ({ id: h.planId, relation: "different", responseEvidence: [], newEvidence: [] })) } });
+  const again = await run(w, { assessments: [other()], ledger: { extract: chatter } });
+  assert.equal(again.audit.synthesisLedger.newItemsSincePrevious, 0);
+  assert.equal(again.published.at(-1).role, staticReply.role);
+  assert.deepEqual(again.requests.map(x => x.kind), ["assessor", "ledger_extract", "ledger_audit", "generator", "validator"]);
+  assert.deepEqual(ledgerTargets(again.requests[1].messages[1].content), ["m7"], "earlier entries were cached; the scoreboard message itself is not a source");
+  advance("Fenwick has a covered walkway.");
+  const third = await run(w, { assessments: [other()] });
+  assert.equal(third.published.at(-1).role, "INFORMATION_SYNTHESISER");
+  assert.match(third.published.at(-1).text, /covered walkway/);
 });
