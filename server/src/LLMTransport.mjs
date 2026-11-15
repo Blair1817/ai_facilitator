@@ -82,6 +82,7 @@ export function buildChatCompletionPayload({
   endpoint = null,
   responseSchema = null,
   reasoningEffort = null,
+  responseFormat = null,
 }) {
   const parsedMax = Number.parseInt(maxTokens, 10);
   const safeMax = Number.isFinite(parsedMax) && parsedMax > 0 ? parsedMax : 1000;
@@ -105,8 +106,11 @@ export function buildChatCompletionPayload({
   }
   // Opt in only for the official API. Compatible gateways (including the
   // study's MiniMax deployment) do not necessarily support strict schemas.
-  if (endpoint && (responseSchema || reasoningEffort)) {
+  if (endpoint && (responseSchema || reasoningEffort || responseFormat)) {
     if (isOfficialOpenAIChatEndpoint(endpoint)) {
+      // 2026-11-15: JSON-object mode, as the Alsobay Static replica requested
+      // through the Responses API (text.format json_object).
+      if (responseFormat === "json_object" && !responseSchema) payload.response_format = { type: "json_object" };
       if (responseSchema) {
         payload.response_format = {
           type: "json_schema",

@@ -8,11 +8,14 @@ import { buildCanonicalMessage } from "./ExperimentPolicies.mjs";
 import { FACTOR_KEYS } from "./EvidenceChecker.js";
 import { VALIDATOR_CRITERIA } from "./SemanticValidator.js";
 import { readAppendOnlyAttribute } from "./AppendOnlyAttribute.mjs";
+import { isAlsobayPrompt } from "../test/participant_sim/fakes/alsobayMock.mjs";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 process.argv[1] = path.join(dirname, "fake-entry.js");
 
-function world(facilitation = "static") {
+// 2026-11-15: the generic dispatch tests run in the Adaptive condition; Static
+// is a 90 s timer (AlsobayStatic.test.mjs) and has no message-triggered pipeline.
+function world(facilitation = "adaptive") {
   const players = ["Alex", "Casey", "Jordan"].map((name, index) => makeFakePlayer({
     id: `reliability-${index}`,
     name,
@@ -94,6 +97,7 @@ function validatorPass() {
 
 function validResponseFor(body) {
   const system = body.messages[0].content;
+  if (isAlsobayPrompt(system)) return response({ MESSAGE: "What public evidence should the group compare next?", RATIONALE: "mock" });
   if (system.startsWith("# assessor.md")) return response(absentFactors());
   if (system.startsWith("# validator.md")) return response(validatorPass());
   return response({
@@ -156,8 +160,8 @@ const sdkModule={exports:{}};
 new Function('require','module','exports',sdkBuild.outputFiles[0].text)(createRequire(import.meta.url),sdkModule,sdkModule.exports);
 const {lockedAsyncSubscribe,Mutex,Subject}=sdkModule.exports;
 
-test('real SDK dispatch: human ACK and deadline advance run while Static Generator is unresolved',async()=>{
- const {Empirica,facilitatorTasks}=await getOfflineCallbacksHarness();const w=world('static');
+test('real SDK dispatch: human ACK and deadline advance run while an automatic model call is unresolved',async()=>{
+ const {Empirica,facilitatorTasks}=await getOfflineCallbacksHarness();const w=world();
  const listener=(kind,key)=>Empirica.attributeListeners.find(l=>l.kind===kind&&l.key===key).callback;
  const mutex=new Mutex(),automatic=new Subject(),human=new Subject(),deadline=new Subject();
  let release;let calls=0;const held=new Promise(resolve=>{release=resolve});let acknowledged=false,advanced=false;
@@ -194,7 +198,7 @@ test('stage end cancels a provider that never resolves and cleans up the in-flig
  assert.notEqual(readAppendOnlyAttribute(w.game,'llmLog').at(-1).outcome,'PENDING');
 });
 
-test('Static cannot publish a Generator result that crosses deadline while stage remains Task',async()=>{
+test('an automatic result that crosses the deadline cannot publish while the stage remains Task',async()=>{
  const {handleChat}=await getOfflineCallbacksHarness();const w=world();
  await withMockedFetch(async(_url,options)=>{w.game.set('deadline',Date.now()-1);return validResponseFor(JSON.parse(options.body))},()=>handleChat(undefined,{game:w.game}));
  assert.equal(published(w).length,0);assert.deepEqual(w.game.get('llmInFlight'),{});
@@ -244,16 +248,6 @@ test('two coalesced explicit requests each get one reply without double-counting
  assert.equal(w.game.get('messagesSinceLastPublish'),2);assert.deepEqual(w.game.get('llmInFlight'),{});
 });
 
-test('Static matched delay is cancellable by the total chain budget, with no provider call or stuck lock',{timeout:2000},async()=>{
- const {handleChat}=await getOfflineCallbacksHarness();const w=world();let calls=0;
- const priorDelay=process.env.STATIC_MATCHED_DELAY_MS,priorCap=process.env.LLM_CHAIN_TIMEOUT_MS;
- process.env.STATIC_MATCHED_DELAY_MS='60000';process.env.LLM_CHAIN_TIMEOUT_MS='20';
- try { await withMockedFetch(async()=>{calls++;throw Error('must not reach provider')},()=>handleChat(undefined,{game:w.game})); }
- finally {if(priorDelay===undefined)delete process.env.STATIC_MATCHED_DELAY_MS;else process.env.STATIC_MATCHED_DELAY_MS=priorDelay;
- if(priorCap===undefined)delete process.env.LLM_CHAIN_TIMEOUT_MS;else process.env.LLM_CHAIN_TIMEOUT_MS=priorCap;}
- assert.equal(calls,0);assert.deepEqual(w.game.get('llmInFlight'),{});
- assert.notEqual(readAppendOnlyAttribute(w.game,'llmLog').at(-1).outcome,'PENDING');
-});
 
 test('an interrupted recovery marker cannot prevent ending an overdue active stage',async()=>{
  const w=world();w.game.set('deadline',1);w.game.set('discussionAdvanceCommittedStageId',w.stage.id);

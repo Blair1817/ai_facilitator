@@ -159,7 +159,8 @@ test("formal replay/reconnect is idempotent while Round 2 receives one new openi
 
 test("opening publication neither enters Facilitator-request routing nor advances the six-message checkpoint", async () => {
   const { handleChat, handleFormalStageStart } = await getOfflineCallbacksHarness();
-  const world = formalWorld({ facilitation: "static", taskIndex: 0 });
+  // Adaptive: the condition with message checkpoints (Static is a 90 s timer).
+  const world = formalWorld({ facilitation: "adaptive", taskIndex: 0 });
   await withCapturedTimers(async () => handleFormalStageStart(world.stage));
 
   const originalFetch = globalThis.fetch;
@@ -193,7 +194,7 @@ test("opening publication neither enters Facilitator-request routing nor advance
       await handleChat(undefined, { game: world.game });
       assert.equal(world.game.get("humanMessageCount"), 6);
       assert.equal(world.game.get("attemptedThisRound"), 1);
-      assert.equal(providerCalls, 1);
+      assert.equal(providerCalls, 2, "the sixth message reaches the detector, then the Static-policy request");
     });
   } finally {
     globalThis.fetch = originalFetch;

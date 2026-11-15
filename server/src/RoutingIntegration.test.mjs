@@ -80,24 +80,17 @@ test("callbacks.js: no direct facilitation === \"LLM\" style comparison remains"
 // generation/validation/publication, but reach it from separate permission
 // paths: Static directly; Adaptive only after its controller returns ACT.
 
-test("callbacks.js: Static bypasses Adaptive assessment while both conditions reuse the same shared generation implementation", () => {
-  const handleChatSource = callbacksSource.slice(callbacksSource.indexOf("async function handleChat"));
-  const staticStart = handleChatSource.indexOf('if (facilitation === "static")');
-  const staticEnd = handleChatSource.indexOf('if (facilitation !== "adaptive")', staticStart);
-  const detectorStart = handleChatSource.indexOf("assessSemanticFactors(", staticEnd);
+test("callbacks.js: Static (Alsobay et al.) bypasses every Adaptive stage; Adaptive routes share one generation implementation", () => {
+  const handleChatSource = callbacksSource.slice(callbacksSource.indexOf("async function processChat"));
+  const staticStart = handleChatSource.indexOf('if (facilitation === "static") {');
+  const staticEnd = handleChatSource.indexOf("\n  }\n", staticStart);
   const staticBlock = handleChatSource.slice(staticStart, staticEnd);
-
-  assert.ok(staticStart !== -1 && staticEnd !== -1 && detectorStart !== -1);
-  assert.ok(staticStart < detectorStart, "Static must branch before the Adaptive LLM detector");
-  assert.match(staticBlock, /buildGeneratorContext\([\s\S]*?"static"[\s\S]*?null[\s\S]*?null/);
-  assert.match(staticBlock, /runSharedGeneration\(/);
-  assert.match(staticBlock, /return;/, "Static must return before entering the Adaptive assessment path");
-  assert.doesNotMatch(staticBlock, /extractFeatures|getCandidateRoles|assessSemanticFactors|checkEvidence|evaluateGate|chooseRole|compilePlan/);
-
+  assert.ok(staticStart !== -1 && staticStart < handleChatSource.indexOf("assessSemanticFactors("));
+  assert.match(staticBlock, /return;/, "a participant message in Static never enters the automatic path");
+  assert.doesNotMatch(staticBlock, /extractFeatures|getCandidateRoles|assessSemanticFactors|checkEvidence|evaluateGate|chooseRole|compilePlan|runSharedGeneration/);
   assert.equal([...callbacksSource.matchAll(/async function runSharedGeneration\(/g)].length, 1, "there must still be exactly one shared generation implementation");
-  // Phase 4 design (audit-phase1.md v3): the Adaptive path has TWO
-  // Requested Generalist, pure Static, Adaptive Specialist and shared Adaptive Static fallback.
-  assert.equal([...handleChatSource.matchAll(/runSharedGeneration\(/g)].length, 4, "requested Generalist and all automatic routes must share the same generation implementation");
+  // Requested Generalist and Adaptive Specialist; the Static policy is the Alsobay request.
+  assert.equal([...handleChatSource.matchAll(/runSharedGeneration\(/g)].length, 2);
 });
 
 test("callbacks.js: all routes share one transport and Generator invocation", () => {

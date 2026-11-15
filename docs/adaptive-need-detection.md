@@ -216,3 +216,7 @@ Supersedes the Synthesiser parts of the sections above (one-shot scoreboard gene
 **What is still a model judgement.** Wording quality; whether a message is "no task information" (two independent calls must agree, otherwise it is quoted); whether a point is faithful (same rule). **What cannot be guaranteed.** A scoreboard for a group that ends the discussion before any checkpoint and before 180 s remain, or that has shared fewer than two information items.
 
 **Audit/export.** `routingDecision: "ADAPTIVE_LEDGER_SYNTHESIS"`, `synthesisLedger` (counts, per-message accounting, fallbacks with reasons, model calls, latency), `selection.guarantee`. `transcript.md` prints a "Synthesis ledger" line and any "Ledger fallbacks".
+
+## 2026-11-15 Static-policy turn
+
+The Adaptive Static-policy turn (no eligible Specialist, or a Specialist that failed twice) now sends the Alsobay et al. request used by the Static condition and posts its `MESSAGE` without validation. See [static-alsobay-replication.md](static-alsobay-replication.md). The grounding-ID repair described above no longer applies to it.

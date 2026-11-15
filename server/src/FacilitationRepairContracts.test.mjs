@@ -35,26 +35,30 @@ test("Static and Generalist prompt files are both startup dependencies", () => {
 
 // Actual bounded recovery behavior is exercised in AdaptivePipeline and
 // AdaptiveRecovery tests; this contract checks shared prompt/publication wiring.
-test("Adaptive recovery uses the same Static generator/validator path", () => {
+test("Adaptive recovery uses the same Alsobay et al. request as the Static condition", () => {
   const start = callbacksSource.indexOf("async function fallback()");
   const end = callbacksSource.indexOf("async function generate(selection)", start);
   const fallback = callbacksSource.slice(start, end);
   assert.ok(start > 0 && end > start);
   assert.match(fallback, /selectedRole = "STATIC"/);
-  assert.match(fallback, /buildGeneratorContext\([^;]*"static", null, null\)/);
-  assert.match(fallback, /runSharedGeneration\(/);
+  assert.match(fallback, /alsobayRequestMessages\(game, /);
+  assert.match(fallback, /parseAlsobayResponse\(/);
+  assert.match(fallback, /responseFormat: "json_object"/);
+  assert.doesNotMatch(fallback, /runSharedGeneration\(|validateCandidate\(/);
   assert.match(fallback, /role: "STATIC"/);
   assert.match(callbacksSource, /recordPublish\(game, \{ role: result\.role/);
 });
 
-test("@Facilitator routes to a participant-requested Generalist before automatic policies", () => {
-  const handleStart = callbacksSource.indexOf("async function handleChat");
-  const handleBody = callbacksSource.slice(handleStart);
-  const requestRoute = handleBody.indexOf("if (isMentionCheckpoint)");
+test("@Facilitator routes to the condition's request path before any automatic policy", () => {
+  const handleBody = callbacksSource.slice(callbacksSource.indexOf("async function processChat"));
+  const staticRoute = handleBody.indexOf('if (facilitation === "static") {');
+  const requestRoute = handleBody.indexOf("if (isMentionCheckpoint) {");
   const automaticAttempt = handleBody.indexOf("recordAttempt(game, humanMessageCount, now)");
-  const staticRoute = handleBody.indexOf('if (facilitation === "static")');
-
-  assert.ok(requestRoute >= 0 && requestRoute < automaticAttempt && automaticAttempt < staticRoute);
+  // Static (Alsobay et al.): the same prompt, required to respond, before any pacing.
+  assert.ok(staticRoute >= 0 && staticRoute < handleBody.indexOf("shouldEvaluateCheckpoint({"));
+  assert.match(handleBody.slice(staticRoute, requestRoute), /return runAlsobayStatic\(game, \{ kind: "request"/);
+  // Adaptive: the participant-requested Generalist before the automatic attempt.
+  assert.ok(requestRoute > staticRoute && requestRoute < automaticAttempt);
   assert.match(handleBody, /getRequestedGeneralistPromptBundle\(\)/);
   assert.match(handleBody, /routingDecision\s*=\s*"REQUESTED_GENERALIST"/);
   assert.match(handleBody, /postParticipantRequestFallback\(/);

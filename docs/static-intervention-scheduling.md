@@ -1,3 +1,5 @@
+> **Superseded on 2026-11-15.** The Static condition no longer uses the message-triggered scheduler described below; it replicates Alsobay et al. (see [static-alsobay-replication.md](static-alsobay-replication.md)). `StaticInterventionScheduler.mjs`, `StaticRetryFeedback.mjs` and the Static matched delay were removed. This file is kept as a record of the earlier design.
+
 # Static intervention scheduling and publication
 
 Implemented on `fix/static-20261030`, based on `93ee969` and integrated with

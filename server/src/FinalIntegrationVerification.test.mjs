@@ -12,6 +12,7 @@ import { readAppendOnlyAttribute } from "./AppendOnlyAttribute.mjs";
 // 2026-10-26: the detector now reports independent candidates; legacy
 // single-need fixtures below are converted where the detector output is used.
 import { toDetectorOutput } from "../test/participant_sim/fakes/detectorOutput.mjs";
+import { isAlsobayPrompt } from "../test/participant_sim/fakes/alsobayMock.mjs";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 process.argv[1] = path.join(dirname, "fake-entry.js");
@@ -302,12 +303,12 @@ test("Adaptive NONE result publishes a Static-policy message, not an abstention 
     const system = JSON.parse(options.body).messages[0].content;
     if (system.startsWith("# assessor.md")) { phases.push("assessor"); return providerResponse(toDetectorOutput(NO_NEED)); }
     if (system.startsWith("# validator.md")) { phases.push("validator"); return providerResponse(validatorFlags()); }
-    phases.push("generator");
-    assert.match(system, /# static\.md/);
-    return providerResponse({ role: "STATIC", message: "What else from your notes should the group hear?", groundingMessageIds: [] });
+    phases.push("static");
+    assert.ok(isAlsobayPrompt(system));
+    return providerResponse({ MESSAGE: "What else from your notes should the group hear?", RATIONALE: "r" });
   }, () => handleChat(undefined, { game: w.game }));
 
-  assert.deepEqual(phases, ["assessor", "generator", "validator"]);
+  assert.deepEqual(phases, ["assessor", "static"], "one Alsobay request, no Validator");
   assert.equal(published(w.game).length, 1);
   const audit = readAppendOnlyAttribute(w.game, "llmLog").at(-1);
   assert.equal(audit.gateDecision, "static_policy");
@@ -329,12 +330,12 @@ test("schema-invalid detector output never reaches a Specialist and falls back t
     const system = JSON.parse(options.body).messages[0].content;
     if (system.startsWith("# assessor.md")) { phases.push("assessor"); return providerResponse(invalid); }
     if (system.startsWith("# validator.md")) { phases.push("validator"); return providerResponse(validatorFlags()); }
-    phases.push("generator");
-    assert.match(system, /# static\.md/, "no Specialist prompt may be used after a detector failure");
-    return providerResponse({ role: "STATIC", message: "What else from your notes should the group hear?", groundingMessageIds: [] });
+    phases.push("static");
+    assert.ok(isAlsobayPrompt(system), "no Specialist prompt may be used after a detector failure");
+    return providerResponse({ MESSAGE: "What else from your notes should the group hear?", RATIONALE: "r" });
   }, () => handleChat(undefined, { game: w.game }));
 
-  assert.deepEqual(phases, ["assessor", "assessor", "generator", "validator"]);
+  assert.deepEqual(phases, ["assessor", "assessor", "static"]);
   assert.equal(published(w.game).length, 1);
   const audit = readAppendOnlyAttribute(w.game, "llmLog").at(-1);
   assert.match(audit.detectorError, /^ASSESSOR_SCHEMA_FAILURE:/);
@@ -359,9 +360,9 @@ test("invalid Generator output cannot reach participants", async () => {
   }, () => handleChat(undefined, { game: w.game }));
 
   assert.equal(validatorCalled, false, "deterministically invalid output is rejected before semantic validation");
-  assert.equal(published(w.game).length, 0);
+  assert.equal(published(w.game).length, 0, "nor can it pass as the Static-policy reply, which needs a MESSAGE");
   const audit = readAppendOnlyAttribute(w.game, "llmLog").at(-1);
-  assert.equal(audit.failureStage, "schema");
+  assert.equal(audit.specialistFailure.failureStage, "schema");
   assert.equal(audit.outcome, "SILENT");
 });
 
@@ -388,7 +389,7 @@ test("schema-invalid Validator output cannot reach participants", async () => {
 });
 
 test("a provider result cannot publish after the Game has ended even if an old Task reference remains", async () => {
-  const { handleChat } = await getOfflineCallbacksHarness();
+  const { runAlsobayStatic } = await getOfflineCallbacksHarness();
   const w = world("static");
   let ended = false;
   await withFetch(async (_url, options) => {
@@ -397,17 +398,12 @@ test("a provider result cannot publish after the Game has ended even if an old T
       ended = true;
       w.game.set("endedAt", new Date().toISOString());
     }
-    if (system.startsWith("# validator.md")) return providerResponse(validatorFlags());
-    return providerResponse({
-      role: "STATIC",
-      message: "What public evidence should the group compare next?",
-      groundingMessageIds: [],
-    });
-  }, () => handleChat(undefined, { game: w.game }));
+    return providerResponse({ MESSAGE: "What public evidence should the group compare next?", RATIONALE: "r" });
+  }, () => runAlsobayStatic(w.game, { kind: "interval", tickIndex: 1 }));
 
   assert.equal(ended, true);
   assert.equal(published(w.game).length, 0);
-  assert.match(readAppendOnlyAttribute(w.game, "llmLog").at(-1).reason, /stage ended|Game ended/i);
+  assert.match(readAppendOnlyAttribute(w.game, "llmLog").at(-1).reason, /PHASE_ENDED/);
 });
 
 test("configured timeout covers a stalled response body, aborts the signal, releases in-flight state, and does not log credentials", async () => {
@@ -415,7 +411,7 @@ test("configured timeout covers a stalled response body, aborts the signal, rele
   const priorKey = process.env.OPENAI_API_KEY;
   process.env.LLM_REQUEST_TIMEOUT_MS = "5";
   process.env.OPENAI_API_KEY = "integration-secret-must-not-log";
-  const { handleChat } = await getOfflineCallbacksHarness();
+  const { runAlsobayStatic } = await getOfflineCallbacksHarness();
   const w = world("static");
   let signal;
   try {
@@ -430,7 +426,7 @@ test("configured timeout covers a stalled response body, aborts the signal, rele
         text: () => new Promise(() => {}),
       };
     }, async (errors) => {
-      await handleChat(undefined, { game: w.game });
+      await runAlsobayStatic(w.game, { kind: "interval", tickIndex: 1 });
       assert.doesNotMatch(JSON.stringify(errors), /integration-secret-must-not-log/);
     });
   } finally {
@@ -444,6 +440,6 @@ test("configured timeout covers a stalled response body, aborts the signal, rele
   assert.deepEqual(w.game.get("llmInFlight"), {});
   assert.equal(published(w.game).length, 0);
   const audit = readAppendOnlyAttribute(w.game, "llmLog").at(-1);
-  assert.equal(audit.failureStage, "generator_api");
-  assert.match(audit.reason, /timed out after 5ms/);
+  assert.match(audit.reason, /^API Error: .*timed out after 5ms/);
+  assert.doesNotMatch(JSON.stringify(audit), /integration-secret-must-not-log/);
 });

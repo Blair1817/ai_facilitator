@@ -275,8 +275,8 @@ test("round questionnaires preserve payloads on player.round and leave the globa
 });
 
 test("stale async Discussion results are discarded after their originating stage or Round ends", () => {
-  assert.match(callbacksSource, /game\.currentRound\?\.id !== originatingRoundId/);
-  assert.match(callbacksSource, /game\.currentStage\?\.id !== originatingStageId/);
+  assert.match(callbacksSource, /game\.currentRound\?\.id === originatingRoundId/);
+  assert.match(callbacksSource, /canPublishTestResult\(game, origin\)/);
   assert.match(callbacksSource, /Discarded stale AI result after the originating Discussion stage ended/);
   assert.match(callbacksSource, /isCurrent: \(\) => canPublishFacilitatorResult\(game, logEntry\)/);
   assert.match(callbacksSource, /if \(!budget\.check\(\)\) return null/);

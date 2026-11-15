@@ -1,3 +1,4 @@
+import { isAlsobayPrompt, toAlsobayReply } from "../test/participant_sim/fakes/alsobayMock.mjs";
 import { mockSynthesisCoverage } from "../test/participant_sim/fakes/synthesisCoverage.mjs";
 import { ledgerKind, mockLedgerExtraction, mockLedgerAudit, ledgerTargets } from "../test/participant_sim/fakes/ledgerMock.mjs";
 // Real callbacks with a fake Empirica store, controlled provider responses and
@@ -89,6 +90,7 @@ async function run(w, { assessments = [need(w)], generators, validators = [], tr
     if (kind === "assessor") data = asDetector(assessments[Math.min(a++, assessments.length - 1)]);
     else if (kind === "validator") data = mockSynthesisCoverage(validators[v++] ?? flags(), body.messages[1].content);
     else data = generators?.[g++] ?? (system.includes("# synthesiser.md") ? synthesis : system.includes("# challenger.md") ? challengerReply : staticReply);
+    if (kind === "generator" && isAlsobayPrompt(system)) { requests.at(-1).kind = "static"; data = toAlsobayReply(data); }
     await mutate?.(kind, w, requests);
     return provider(data);
   };
@@ -183,13 +185,13 @@ test("outside-plan grounding is repaired once; a second failure reaches Static",
   assert.equal(r.audit.fallbackRoute, "SPECIALIST_TO_STATIC_POLICY");
   assert.equal(r.audit.modelCallCount, r.requests.length);
 });
-test("a Specialist rejected twice goes to Static; Specialist and Static each keep one bounded repair", async () => {
-  const r = await run(world(), { validators: [flags("notGrounded"), flags("notGrounded"), flags("notGrounded"), flags()] });
+test("a Specialist rejected twice goes to the Static policy, which posts its one Alsobay reply", async () => {
+  const r = await run(world(), { validators: [flags("notGrounded"), flags("notGrounded")] });
   assert.equal(r.audit.modelCallCount, r.requests.length);
   assert.equal(r.audit.recovery.counts.generatorRepair, 1);
-  assert.equal(r.audit.recovery.counts.staticRepair, 1);
+  assert.equal(r.audit.recovery.counts.staticRepair, 0);
   assert.equal(r.audit.fallbackPublished, true);
-  assert.equal(r.requests.length, 9);
+  assert.deepEqual(r.requests.map(x => x.kind), ["assessor", "generator", "validator", "generator", "validator", "static"]);
 });
 test("a Specialist rejected once is repaired with the Validator feedback and published", async () => {
   const r = await run(world(), { validators: [flags("notGrounded"), flags()] });
@@ -330,7 +332,8 @@ test("a Challenger cannot tag a participant outside its cited public evidence; t
   const ungroundedMention = { ...challengerReply, message: "@[A], which public facts support the preference for Norvale?" };
   const result = await run(w, { generators: [ungroundedMention, ungroundedMention, staticReply] });
   assert.equal(result.published[0]?.text, staticReply.message);
-  assert.equal(result.requests.filter(request => request.kind === "generator").length, 3);
+  assert.equal(result.requests.filter(request => request.kind === "generator").length, 2, "Challenger and its repair");
+  assert.equal(result.requests.filter(request => request.kind === "static").length, 1);
   assert.match(JSON.stringify(result.audit.specialistFailure), /UNSUPPORTED_MENTION_TARGET/);
 });
 
@@ -509,7 +512,7 @@ test("a second scoreboard needs new information; otherwise the checkpoint takes 
   const again = await run(w, { assessments: [other()], ledger: { extract: chatter } });
   assert.equal(again.audit.synthesisLedger.newItemsSincePrevious, 0);
   assert.equal(again.published.at(-1).role, staticReply.role);
-  assert.deepEqual(again.requests.map(x => x.kind), ["assessor", "ledger_extract", "ledger_audit", "generator", "validator"]);
+  assert.deepEqual(again.requests.map(x => x.kind), ["assessor", "ledger_extract", "ledger_audit", "static"]);
   assert.deepEqual(ledgerTargets(again.requests[1].messages[1].content), ["m7"], "earlier entries were cached; the scoreboard message itself is not a source");
   advance("Fenwick has a covered walkway.");
   const third = await run(w, { assessments: [other()] });

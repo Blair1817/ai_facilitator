@@ -1,0 +1,70 @@
+factors:
+    - name: facilitation
+      desc: What type of facilitation is enabled in the game?
+      values:
+        - value: none
+        - value: human
+        - value: LLM
+    - name: llmRequestInterval
+      desc: How frequently LLM requests are sent via API, in seconds
+      values:
+        - value: 90
+    - name: fullInfo
+      desc: Do participants have full information about the options?
+      values:
+        - value: true
+        - value: false
+    - name: requireLLMMessage
+      desc: 'Is the LLM required to respond to each timed request, or can it choose not to? '
+      values:
+        - value: true
+        - value: false
+    - name: hiddenInfoCue
+      desc: Are the participants shown a cue about different players having different information?
+      values:
+        - value: true
+        - value: false
+    - name: introDuration
+      desc: Duration of the introduction chat stage, in minutes
+      values:
+        - value: 1
+    - name: gameDuration
+      desc: Duration of the game in minutes
+      values:
+        - value: 10
+    - name: playerCount
+      desc: playerCount determines the number of Players are in a Game.
+      values:
+        - value: 5
+        - value: 6
+treatments:
+    - name: noFacilitator_noCue
+      factors:
+        facilitation: none
+        gameDuration: 10
+        introDuration: 1
+        llmRequestInterval: 90
+        playerCount: 5
+    - name: noFacilitator_withCue
+      factors:
+        facilitation: none
+        gameDuration: 10
+        hiddenInfoCue: true
+        introDuration: 1
+        llmRequestInterval: 90
+        playerCount: 5
+    - name: llmFacilitation_noCue
+      factors:
+        facilitation: LLM
+        gameDuration: 10
+        introDuration: 1
+        llmRequestInterval: 90
+        playerCount: 5
+        requireLLMMessage: true
+    - name: humanFacilitation_noCue
+      factors:
+        facilitation: human
+        gameDuration: 10
+        introDuration: 1
+        llmRequestInterval: 90
+        playerCount: 6

@@ -1,3 +1,4 @@
+import { isAlsobayPrompt, toAlsobayReply } from "../test/participant_sim/fakes/alsobayMock.mjs";
 import { mockSynthesisCoverage } from "../test/participant_sim/fakes/synthesisCoverage.mjs";
 import { ledgerKind, mockLedgerExtraction, mockLedgerAudit } from "../test/participant_sim/fakes/ledgerMock.mjs";
 import test from "node:test";
@@ -69,6 +70,7 @@ async function run(w, { invalidComparison = false, skipDuringValidation = false,
       data = { role, message: role === "EVIDENCE_CHALLENGER" ? "Which task facts support the stated preference for City B?" : "What public information would help the group move forward?", groundingMessageIds: role === "EVIDENCE_CHALLENGER" ? ["m0"] : [] };
       if (overlongFirstSpecialist && role === "EVIDENCE_CHALLENGER" && requests.filter(r => r.messages[0].content.includes("# challenger.md")).length === 1) data.message = Array(51).fill("word").join(" ");
       if (output) data = output;
+      if (isAlsobayPrompt(system)) data = toAlsobayReply(data);
     }
     return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(data) }, finish_reason: "stop" }], usage: { total_tokens: 10 } }), { headers: { "content-type": "application/json" } });
   };
@@ -92,10 +94,9 @@ test("real callbacks execute v3.2 Assessor -> quoted target -> Challenger plan -
 test("real callbacks send impossible comparison to the Static policy before any Specialist Generator call", async () => {
   const r = await run(world(), { invalidComparison: true });
   assert.equal(r.published.length, 1);
-  assert.equal(r.requests.length, 3);
-  assert.match(r.requests[1].messages[0].content, /# static.md/);
-  assert.doesNotMatch(r.requests[1].messages[1].content, /\[PLAN_PREFLIGHT\]|\[TARGET\]/);
-  assert.doesNotMatch(r.requests[2].messages[1].content, /\[INTERVENTION_PLAN\]/);
+  assert.equal(r.requests.length, 2, "detector + one Alsobay Static request");
+  assert.ok(isAlsobayPrompt(r.requests[1].messages[0].content));
+  assert.doesNotMatch(JSON.stringify(r.requests[1].messages), /\[PLAN_PREFLIGHT\]|\[TARGET\]|\[INTERVENTION_PLAN\]/);
   assert.equal(r.log.at(-1).fallbackKind, "evidence_check_failed");
   assert.equal(r.log.at(-1).integrationObservation.qualified, false);
 });
@@ -103,13 +104,12 @@ test("real callbacks send impossible comparison to the Static policy before any 
 test("a twice-rejected Specialist goes to Static after one repair, without plan/history leakage", async () => {
   const r = await run(world(), { rejectSpecialist: true });
   assert.equal(r.published.length, 1);
-  assert.equal(r.requests.length, 7, "assessor + Specialist/Validator + repair/Validator + Static/Validator");
+  assert.equal(r.requests.length, 6, "assessor + Specialist/Validator + repair/Validator + one Alsobay Static request");
   assert.match(r.requests[1].messages[0].content, /# challenger.md/);
   assert.match(r.requests[3].messages[0].content, /# challenger.md/);
   assert.match(r.requests[3].messages[1].content, /\[PRIOR_FAILED_CRITERIA\]/);
-  assert.match(r.requests[5].messages[0].content, /# static.md/);
-  assert.doesNotMatch(r.requests[5].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
-  assert.doesNotMatch(r.requests[6].messages[1].content, /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
+  assert.ok(isAlsobayPrompt(r.requests[5].messages[0].content));
+  assert.doesNotMatch(JSON.stringify(r.requests[5].messages), /\[INTERVENTION_PLAN\]|\[PLAN_PREFLIGHT\]/);
   assert.equal(r.log.at(-1).fallbackRoute, "SPECIALIST_TO_STATIC_POLICY");
   assert.equal(r.log.at(-1).selectedRole, "STATIC");
 });
@@ -119,55 +119,10 @@ test("test-mode stage skip during real Validator await prevents stale AI publica
   assert.equal(r.published.length, 0);
   assert.equal(w.round.get("cognitiveInterventionHistory"), undefined);
 });
-test("Static real callbacks bypass the Adaptive Assessor and use the 50-word control bundle", async () => {
+test("Static real callbacks make no request on a participant message (the 90 s timer drives Static)", async () => {
   const r = await run(world("static"));
-  assert.equal(r.requests.length, 2);
-  assert.equal(r.published.length, 1);
-  assert.match(r.requests[0].messages[0].content, /at most 40 English words \(hard ceiling 50\)/);
-  assert.doesNotMatch(r.requests[0].messages[0].content, /# specialist_common.md/);
-});
-test("Static real callbacks can publish grounded scoreboard-only messages without a closing question (mock LLM)", async () => {
-  // Real schema, grounding-ID and publication checks; semantic audits are mocked.
-  const messages = [
-    "City A transport is 12 minutes and cost is 25000. City B transport is 18 minutes and cost is 32000.",
-    { summary: "Here are the publicly shared figures.", sections: [
-      { title: "City A", body: "Transport: 12 minutes. Cost: 25000." },
-      { title: "City B", body: "Transport: 18 minutes. Cost: 32000." },
-    ], question: "" },
-  ];
-  for (const message of messages) {
-    const output = { role: "STATIC", message, groundingMessageIds: ["m1", "m2", "m3", "m4"] };
-    const r = await run(world("static"), { output });
-    assert.equal(r.requests.length, 2, "Generator + Validator, without repair or Assessor");
-    assert.equal(r.published.length, 1);
-    assert.match(r.requests[0].messages[0].content, /neutral scoreboard summary can stand alone without a question/);
-    assert.match(r.requests[1].messages[0].content, /summary need not\s+include a question or invitation to contribute/);
-    assert.doesNotMatch(r.published[0].content, /\?/);
-    for (const fact of ["12 minutes", "25000", "18 minutes", "32000"]) {
-      assert.ok(r.published[0].content.includes(fact));
-    }
-    if (typeof message === "object") assert.deepEqual(r.published[0].presentation, message);
-  }
-});
-test("Static Validator excludes timer reminders from participant-authored context", async () => {
-  const w = world("static");
-  const chat = w.game.get("chat_round_0");
-  chat.splice(chat.length - 1, 0, buildCanonicalMessage({
-    messageId: "timer-fixture",
-    groupId: w.game.id,
-    speakerId: "system-timer_reminder",
-    roundIndex: 0,
-    stage: "Discussion",
-    messageType: "timer_reminder",
-    speakerType: "timer_reminder",
-    timestamp: Date.now(),
-    sequencePosition: 7,
-    content: "TIMER_CONTEXT_MUST_NOT_APPEAR",
-    sender: { id: "system-timer_reminder", name: "Timer" },
-  }));
-  const r = await run(w);
-  assert.equal(r.requests.length, 2);
-  assert.doesNotMatch(r.requests[1].messages[1].content, /TIMER_CONTEXT_MUST_NOT_APPEAR/);
+  assert.equal(r.requests.length, 0);
+  assert.equal(r.published.length, 0);
 });
 test("formal Adaptive Assessor receives the explicit complete-current-round scope", async () => {
   const r = await run(world("adaptive"));
@@ -249,7 +204,7 @@ test("schemas resolve from the active versioned route, not stale root descriptio
 test("an over-long Specialist uses its single repair; a later rejection falls back to Static, which still publishes", async () => {
   const r = await run(world(), { rejectSpecialist: true, overlongFirstSpecialist: true });
   assert.equal(r.requests.filter(r => r.messages[0].content.includes("# challenger.md")).length, 2);
-  assert.equal(r.requests.length, 6, "assessor + over-long Specialist + shortened Specialist/Validator + Static/Validator");
+  assert.equal(r.requests.length, 5, "assessor + over-long Specialist + shortened Specialist/Validator + one Alsobay Static request");
   assert.equal(r.published.length, 1);
   assert.equal(r.log.at(-1).totalGeneratorAttempts, 3);
   assert.equal(r.log.at(-1).fallbackRoute, "SPECIALIST_TO_STATIC_POLICY");

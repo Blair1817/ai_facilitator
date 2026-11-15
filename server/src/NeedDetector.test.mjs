@@ -1,3 +1,4 @@
+import { isAlsobayPrompt, toAlsobayReply } from "../test/participant_sim/fakes/alsobayMock.mjs";
 import { mockSynthesisCoverage } from "../test/participant_sim/fakes/synthesisCoverage.mjs";
 // 2026-10-21 categorical need detector redesign.
 //
@@ -266,6 +267,7 @@ async function runCheckpoint(w, detector, generatorFor, { onFetch, validatorFor 
       return provider(asDetector(detector));
     }
     if (system.startsWith("# validator.md")) { calls.push("validator"); return provider(mockSynthesisCoverage(validatorFor?.(body) ?? passFlags(), body.messages[1].content)); }
+    if (isAlsobayPrompt(system)) { calls.push("static"); return provider(toAlsobayReply(generatorFor("static", body))); }
     const prompt = /# (static|expander|challenger|synthesiser|generalist)\.md/.exec(system)?.[1] ?? "unknown";
     calls.push(prompt);
     return provider(generatorFor(prompt, body));
@@ -320,7 +322,7 @@ test("end-to-end: a message below the six-message gate starts no background dete
 test("end-to-end: a participant who is only quiet overall is not invited; the checkpoint uses the detector", async () => {
   const w = world("adaptive", CHAT);
   const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "No content need." }, () => STATIC_REPLY);
-  assert.deepEqual(r.calls, ["detector", "static", "validator"]);
+  assert.deepEqual(r.calls, ["detector", "static"]);
   assert.deepEqual(r.audit.quietParticipants, ["Jordan"], "quiet remains detector context");
   assert.deepEqual(r.audit.silenceRule.eligible, []);
   assert.equal(w.round.get("participationInvites"), undefined);
@@ -351,7 +353,7 @@ test("end-to-end: a fabricated quotation never reaches a Specialist and uses the
     optionLabels: [], criteria: [],
   });
   const r = await runCheckpoint(w, detector, () => STATIC_REPLY);
-  assert.deepEqual(r.calls, ["detector", "static", "validator"]);
+  assert.deepEqual(r.calls, ["detector", "static"]);
   assert.equal(r.audit.gateDecision, "static_policy");
   assert.equal(r.audit.fallbackKind, "evidence_check_failed");
   assert.equal(r.audit.checkedDetectorFactors.downgradedReason, "INVALID_EVIDENCE");
@@ -377,58 +379,14 @@ test("robustness: non-deferral detector outcomes retain one message per checkpoi
     assert.ok(r.calls.length <= 5, `${name}: bounded provider calls (${r.calls.join(",")})`);
     assert.equal(w.game.get("publishedThisRound"), 1, name);
   }
+  // Static (Alsobay et al.) speaks only on its 90 s timer, never on a participant message.
   const s = world("static", CHAT);
   const staticRun = await runCheckpoint(s, null, () => STATIC_REPLY);
-  assert.equal(staticRun.published.length, 1);
-  assert.deepEqual(staticRun.calls, ["static", "validator"]);
+  assert.equal(staticRun.published.length, 0);
+  assert.deepEqual(staticRun.calls, []);
 });
 
-test("Static matched delay: applied and logged when configured; a stage change during the delay makes no provider call", async () => {
-  const prior = process.env.STATIC_MATCHED_DELAY_MS;
-  process.env.STATIC_MATCHED_DELAY_MS = "40";
-  try {
-    const w = world("static", CHAT);
-    const started = Date.now();
-    const r = await runCheckpoint(w, null, () => STATIC_REPLY);
-    assert.ok(Date.now() - started >= 40);
-    assert.equal(r.audit.staticMatchedDelayMs, 40);
-    assert.equal(r.published.length, 1);
 
-    const stale = world("static", CHAT);
-    const { handleChat } = await getOfflineCallbacksHarness();
-    let requests = 0;
-    const priorFetch = globalThis.fetch;
-    globalThis.fetch = async () => { requests += 1; return provider(STATIC_REPLY); };
-    try {
-      const pending = handleChat(undefined, { game: stale.game });
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      stale.game.currentStage = new FakeStage({ name: "FinalDecision" }, stale.round);
-      await pending;
-    } finally { globalThis.fetch = priorFetch; }
-    assert.equal(requests, 0);
-    assert.equal(published(stale.game).length, 0);
-    assert.match(readAppendOnlyAttribute(stale.game, "llmLog").at(-1).reason, /matched delay/);
-  } finally {
-    if (prior === undefined) delete process.env.STATIC_MATCHED_DELAY_MS;
-    else process.env.STATIC_MATCHED_DELAY_MS = prior;
-  }
-});
-
-test("Adaptive never waits for the Static matched delay", async () => {
-  const prior = process.env.STATIC_MATCHED_DELAY_MS;
-  process.env.STATIC_MATCHED_DELAY_MS = "60000";
-  try {
-    const w = world("adaptive", CHAT);
-    const started = Date.now();
-    const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "" }, () => STATIC_REPLY);
-    assert.ok(Date.now() - started < 30_000);
-    assert.equal(r.audit.staticMatchedDelayMs, undefined);
-    assert.equal(r.published.length, 1);
-  } finally {
-    if (prior === undefined) delete process.env.STATIC_MATCHED_DELAY_MS;
-    else process.env.STATIC_MATCHED_DELAY_MS = prior;
-  }
-});
 
 test("schema accepts independent candidates and rejects a detector participation candidate", () => {
   assert.equal(validateAgainstAssessorSchema(toDetectorOutput(need("ELICIT", "participation_gap", target(CHAT, [5], { participantName: "Jordan" })))).ok, false);
@@ -500,7 +458,7 @@ test("end-to-end: a silent participant is invited without a detector call, at mo
   const next = (n) => { for (let i = 0; i < n; i++) appendHuman(w, i % 2 ? "Casey" : "Alex", `More detail ${appended}.`); w.game.set("lastAttemptTimestamp", Date.now() - 31_000); };
   next(6);
   const spaced = await runCheckpoint(w, none, reply);
-  assert.deepEqual(spaced.calls, ["detector", "static", "validator"], "not again within 12 messages");
+  assert.deepEqual(spaced.calls, ["detector", "static"], "not again within 12 messages");
   next(6);
   const again = await runCheckpoint(w, none, prompt => prompt === "expander"
     ? { ...EXPANDER_REPLY("Jordan"), message: "@[Jordan], would you like to add anything you have read, good or bad? No worries if not." } : STATIC_REPLY);
@@ -508,12 +466,12 @@ test("end-to-end: a silent participant is invited without a detector call, at mo
   assert.equal(w.round.get("participationInvites").Jordan.count, 2);
   next(6); await runCheckpoint(w, none, reply); next(6);
   const capped = await runCheckpoint(w, none, reply);
-  assert.deepEqual(capped.calls, ["detector", "static", "validator"], "cap of two invitations per round");
+  assert.deepEqual(capped.calls, ["detector", "static"], "cap of two invitations per round");
   assert.equal(w.round.get("participationInvites").Jordan.count, 2);
 
   const staticWorld = world("static", SILENT_JORDAN);
   const s = await runCheckpoint(staticWorld, null, () => STATIC_REPLY);
-  assert.deepEqual(s.calls, ["static", "validator"]);
+  assert.deepEqual(s.calls, [], "Static has no silence rule and no message-triggered turn");
 });
 
 test("end-to-end: an invitation is withdrawn for Static if the invitee posts before publication", async () => {
@@ -521,7 +479,7 @@ test("end-to-end: an invitation is withdrawn for Static if the invitee posts bef
   const r = await runCheckpoint(w, null, prompt => prompt === "expander" ? EXPANDER_REPLY("Jordan") : STATIC_REPLY, { onFetch: (system) => {
     if (system.startsWith("# validator.md") && !w.game.get("chat_round_0").some(m => m.sender?.name === "Jordan" && m.messageId?.startsWith("extra-"))) appendHuman(w, "Jordan", "Actually, I can add something.");
   } });
-  assert.deepEqual(r.calls, ["expander", "validator", "static", "validator"]);
+  assert.deepEqual(r.calls, ["expander", "validator", "static"]);
   assert.equal(r.published.length, 1);
   assert.doesNotMatch(r.published[0].text ?? r.published[0].content, /@\[Jordan\]/);
   assert.equal(r.audit.selectedRole, "STATIC");
@@ -537,31 +495,27 @@ test("end-to-end: the detector receives option mention counts and no priority fi
   assert.doesNotMatch(input, /"priority"|fixedIntegrationPriority/);
 });
 
-test("end-to-end: an @Facilitator reply is not an intervention and does not reset the six-message gate", async () => {
+test("end-to-end: a Static @Facilitator request gets the Alsobay reply, which is not an intervention; later messages trigger nothing", async () => {
   const lines = [...CHAT.slice(0, 5), msg("Casey", "@[Facilitator] can you recap the transport facts?")];
   const w = world("static", lines);
-  const r = await runCheckpoint(w, null, () => ({ role: "GENERALIST", message: "City A transport is 12 minutes and City B is 18 minutes, as shared.", groundingMessageIds: ["m2", "m3"] }));
+  const r = await runCheckpoint(w, null, () => ({ MESSAGE: "City A transport is 12 minutes and City B is 18 minutes, as shared.", RATIONALE: "recap" }));
+  assert.deepEqual(r.calls, ["static"], "one request, no Validator");
   assert.equal(r.published.length, 1);
+  assert.equal(r.published[0].text, "City A transport is 12 minutes and City B is 18 minutes, as shared.");
   assert.equal(r.published[0].countsAsIntervention, false);
   assert.equal(w.game.get("totalInterventions") || 0, 0);
   assert.equal(w.game.get("totalParticipantRequestReplies"), 1);
-  assert.equal(w.game.get("messagesSinceLastPublish"), 6, "the six-message gate is untouched");
-
+  assert.equal(r.audit.directlyRequested, true);
   appendHuman(w, "Alex", "Thanks, that helps.");
-  const waiting = await runCheckpoint(w, null, () => STATIC_REPLY);
-  assert.deepEqual(waiting.calls, [], "One post-reply speaker cannot bypass the round-level recovery condition");
-  assert.equal(w.game.get("messagesSinceLastPublish"), 7, "Waiting preserves the already satisfied six-message gate");
   appendHuman(w, "Casey", "I can add another public point.");
   const next = await runCheckpoint(w, null, () => STATIC_REPLY);
-  assert.deepEqual(next.calls, ["static", "validator"]);
-  assert.equal(published(w.game).at(-1).countsAsIntervention, true);
-  assert.equal(w.game.get("totalInterventions"), 1);
+  assert.deepEqual(next.calls, []);
 });
 
 test("end-to-end: a fixed silence nudge during generation does not discard the automatic result", async () => {
-  const w = world("static", [...CHAT, msg("Jordan", "City A has trains.")]);
-  const r = await runCheckpoint(w, null, () => STATIC_REPLY, { onFetch: (system) => {
-    if (!system.startsWith("# validator.md")) return;
+  const w = world("adaptive", [...CHAT, msg("Jordan", "City A has trains.")]);
+  const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "none" }, () => STATIC_REPLY, { onFetch: (system) => {
+    if (!isAlsobayPrompt(system)) return;
     w.game.get("chat_round_0").push({ messageId: `facilitator-nudge-${Date.now()}`, stage: "Discussion", messageType: "facilitator",
       speakerType: "facilitator", facilitatorOrigin: "DETERMINISTIC_FIXED", countsAsIntervention: false,
       text: "No rush — feel free to keep sharing your thoughts whenever you’re ready.", sender: { id: "ai", name: "Facilitator" } });
@@ -606,7 +560,7 @@ test("end-to-end: a rejected invitation is spaced like a published one instead o
   const rejectInvite = body => /@\[Jordan\]/.test(body.messages[1].content.split("[TASK_GENERAL_CONTEXT]")[0])
     ? { ...passFlags(), hiddenInformationInference: true } : null;
   const first = await runCheckpoint(w, none, reply, { validatorFor: rejectInvite });
-  assert.deepEqual(first.calls, ["expander", "validator", "expander", "validator", "static", "validator"], "one repair, then Static");
+  assert.deepEqual(first.calls, ["expander", "validator", "expander", "validator", "static"], "one repair, then Static");
   assert.equal(first.audit.fallbackRoute, "SPECIALIST_TO_STATIC_POLICY");
   assert.deepEqual(first.audit.silenceRule.unpublishedAttempt, ["Jordan"]);
   assert.deepEqual({ count: w.round.get("participationInvites").Jordan.count, failed: w.round.get("participationInvites").Jordan.failedAttempts }, { count: 0, failed: 1 });
@@ -614,28 +568,27 @@ test("end-to-end: a rejected invitation is spaced like a published one instead o
   const next = (n) => { for (let i = 0; i < n; i++) appendHuman(w, i % 2 ? "Casey" : "Alex", `Further detail ${i} after ${staticCount}.`); w.game.set("lastAttemptTimestamp", Date.now() - 31_000); };
   next(6);
   const spaced = await runCheckpoint(w, none, reply, { validatorFor: rejectInvite });
-  assert.deepEqual(spaced.calls, ["detector", "static", "validator"], "the detector gets the next checkpoint");
+  assert.deepEqual(spaced.calls, ["detector", "static"], "the detector gets the next checkpoint");
   next(6);
   const retried = await runCheckpoint(w, none, reply);
   assert.deepEqual(retried.calls, ["expander", "validator"], "retried once the spacing window has passed");
   assert.equal(w.round.get("participationInvites").Jordan.count, 1);
 });
 
-test("end-to-end: the Adaptive Static turn repairs a candidate that cites an unknown message ID", async () => {
+test("end-to-end: the Adaptive Static-policy turn posts the Alsobay MESSAGE as returned, without validation", async () => {
   const w = world("adaptive", CHAT);
-  let attempt = 0;
-  const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "No content need." },
-    () => ++attempt === 1 ? { ...STATIC_REPLY, groundingMessageIds: ["m999"] } : STATIC_REPLY);
-  assert.deepEqual(r.calls, ["detector", "static", "static", "validator"]);
-  assert.equal(r.audit.groundingIdRepairAttempted, true);
+  const long = Array(80).fill("word").join(" ");
+  const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "No content need." }, () => ({ MESSAGE: long, RATIONALE: "r" }));
+  assert.deepEqual(r.calls, ["detector", "static"]);
   assert.equal(r.published.length, 1);
+  assert.equal(r.published[0].text, long, "no word limit");
+  assert.equal(r.audit.staticPolicy, "alsobay_2a0c688");
 });
 
-test("end-to-end: the Adaptive Static turn also repairs an unknown message ID combined with an over-long message", async () => {
+test("end-to-end: an Adaptive Static-policy reply without a MESSAGE is not posted and is not retried", async () => {
   const w = world("adaptive", CHAT);
-  let attempt = 0;
-  const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "No content need." },
-    () => ++attempt === 1 ? { ...STATIC_REPLY, message: Array(60).fill("word").join(" ") + "?", groundingMessageIds: ["m999"] } : STATIC_REPLY);
-  assert.deepEqual(r.calls, ["detector", "static", "static", "validator"]);
-  assert.equal(r.published.length, 1);
+  const r = await runCheckpoint(w, { need: "NONE", operation: null, target: null, rationale: "No content need." }, () => ({ RATIONALE: "forgot the message" }));
+  assert.deepEqual(r.calls, ["detector", "static"]);
+  assert.equal(r.published.length, 0);
+  assert.match(r.audit.reason, /MESSAGE/);
 });

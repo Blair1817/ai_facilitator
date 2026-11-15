@@ -5,8 +5,6 @@ import { createDiscussionDeadline } from "./DiscussionDeadline.mjs";
 import { createAdaptiveBudget, ADAPTIVE_FLOOR_MS, runAdaptiveSelection } from "./AdaptiveRecovery.mjs";
 import { selectAdaptiveAssessment } from "./AdaptiveEvidence.mjs";
 import { createCloseoutScheduler } from "./AdaptiveCloseoutScheduler.mjs";
-import { createStaticInterventionScheduler } from "./StaticInterventionScheduler.mjs";
-import { buildStaticRetryUserContent } from "./StaticRetryFeedback.mjs";
 import { createFacilitatorPublicationCoordinator } from "./FacilitatorPublication.mjs";
 import { isPublicParticipantMessage, countPublicMessagesByName, quietParticipants, silentInWindow, countOptionMentions, SILENCE_WINDOW, PARTICIPATION_INVITE_CAP } from "./CognitiveOperations.mjs";
 import { acceptIndependentDecision, finalizeIndependentDecision } from "./FinalDecisionSubmission.mjs";
@@ -33,6 +31,7 @@ import {
 } from "./LLMTransport.mjs";
 import { buildSynthesisPointContract, decodeSynthesisPoints } from "./SynthesisPointContract.mjs";
 import { buildSynthesisLedger, renderSynthesisLedger, LEDGER_CALL_TIMEOUT_MS } from "./SynthesisLedger.mjs";
+import { ALSOBAY_SOURCE_COMMIT, alsobayTaskSentence, buildAlsobayMessages, parseAlsobayResponse, lastSenderIsFacilitator, alsobayTranscript, createAlsobayStaticScheduler } from "./AlsobayStatic.mjs";
 import { assessSemanticFactors } from "./SemanticAssessor.js";
 import { checkNeedAssessment } from "./EvidenceChecker.js";
 import { compilePlan } from "./PolicyCompiler.js";
@@ -121,7 +120,6 @@ async function finalizeAuditLog(store, entry) {
   const formalRoundIndex = auditRound?.get("taskIndex") ?? entry.roundIndex;
   const chat = Number.isInteger(formalRoundIndex) ? [...(store.get(`chat_round_${formalRoundIndex}`) || [])] : [];
   const completed = await finalizeAuditLogBase(store, entry, () => Empirica.flush());
-  staticInterventionScheduler.wake(store);
   if (!auditRound) return;
   queueResearchMirror("intervention", async () => {
     const persistence = researchPersistence();
@@ -159,7 +157,6 @@ async function whileFacilitatorPublishesVisibleResponse(game, logEntry, task, ca
     if (automaticBlock) return automaticBlock;
     const candidateBlock = candidateBlockReason?.();
     if (candidateBlock) return candidateBlock;
-    if (logEntry.opportunityId && !staticInterventionScheduler.canCommit(game, logEntry)) return "DUPLICATE_SUPPRESSED";
     return null;
   };
   const rejectStale = reasonCode => {
@@ -179,12 +176,6 @@ async function whileFacilitatorPublishesVisibleResponse(game, logEntry, task, ca
       const posted = await task();
       if (posted) {
         logEntry.reasonCode = "PUBLISHED";
-        if (logEntry.opportunityId) {
-          recordStaticPublication(game, { messageId: logEntry.publishedMessageId, timestamp: Date.now() });
-          staticInterventionScheduler.published(game, logEntry);
-        }
-        if (logEntry.facilitation === "static" && logEntry.participantRequested)
-          staticInterventionScheduler.requestedPublished(game, logEntry.publishedMessageId);
       }
       return posted;
     } finally {
@@ -233,42 +224,9 @@ const openaiModel = process.env.OPENAI_MODEL || "MiniMax-Text-01";
 const _llmBase = process.env.LLM_API_ENDPOINT || "https://api.minimax.chat/v1";
 const llmAPIEndpoint = _llmBase.endsWith("/chat/completions") ? _llmBase : `${_llmBase.replace(/\/$/, "")}/chat/completions`;
 const llmMaxOutputTokens = Number.parseInt(process.env.LLM_MAX_OUTPUT_TOKENS ?? "1000", 10);
-// 2026-10-21: matched-latency delay for Static checkpoints. Adaptive makes
-// one extra LLM call (the need detector) before generating, so Static waits
-// this long before its own generation to keep checkpoint-to-message timing
-// comparable across conditions. Default 0 (off); if used, set it to the
-// median Adaptive `detectorLatency` observed in pilot logs. Read at
-// call time so tests and operators can change it without a rebuild.
-function staticMatchedDelayMs() {
-  // 2026-10-25: default 0 (was a 6000 ms placeholder). A delay lengthens the
-  // window in which new messages arrive; set it only from measured latency.
-  return Math.max(0, Number(process.env.STATIC_MATCHED_DELAY_MS ?? 0) || 0);
-}
 const CALLBACKS_INSTANCE_ID = randomUUID();
 const AUTOMATIC_PIPELINE_GROUP = "AUTOMATIC_INTERVENTION";
 const facilitatorPublication = createFacilitatorPublicationCoordinator();
-function recordStaticPublication(game, message) {
-  if ((game.get("interventionHistory") || []).some(item => item.messageId === message.messageId)) return;
-  recordPublish(game, { role: "STATIC", humanMessageCountAtPublish: game.get("humanMessageCount") || 0, messageId: message.messageId, now: message.timestamp });
-  // A committed transcript entry is authoritative after a restart between
-  // append and bookkeeping. Restore counters without counting it twice.
-  const transcript = game.get(`chat_round_${game.currentRound?.get("taskIndex")}`) || [];
-  const publishedIndex = transcript.findIndex(item => item.messageId === message.messageId);
-  game.set("messagesSinceLastPublish", transcript.slice(publishedIndex + 1).filter(isFormalHumanMessage).length);
-  game.set("messagesSinceLastIntervention", game.get("messagesSinceLastPublish"));
-  game.set("publishedThisRound", Math.max(game.get("publishedThisRound") || 0,
-    transcript.filter(item => item.countsAsIntervention === true).length));
-  const allAutomatic = [0, 1].flatMap(index => game.get(`chat_round_${index}`) || []).filter(item => item.countsAsIntervention === true);
-  game.set("totalInterventions", Math.max(game.get("totalInterventions") || 0, allAutomatic.length));
-}
-export const staticInterventionScheduler = createStaticInterventionScheduler({
-  instanceId: CALLBACKS_INSTANCE_ID,
-  run: (game, staticRetry) => handleChat(undefined, { game, staticRetry }),
-  hasRequestedResponse: game => facilitatorPublication.hasRequested(game),
-  onPublicationRecovered: recordStaticPublication,
-  flush: () => Empirica.flush(),
-  onError: error => console.warn("Static scheduling callback failed", { message: error.message }),
-});
 export const discussionDeadline = createDiscussionDeadline({ flush: () => Empirica.flush(), onEnd: stage => cancelStagePipelines(stage.id) });
 export const facilitatorTasks = createBackgroundTasks({ onError: (error, key) => {
   console.warn("Facilitator background task failed", { key, message: error?.message || String(error) });
@@ -300,10 +258,16 @@ export const adaptiveCloseoutScheduler = createCloseoutScheduler({
   flush: () => Empirica.flush(),
   onError: error => console.warn("Adaptive closeout callback failed", { message: error.message }),
 });
+// 2026-11-15: the Static condition replicates Alsobay et al. (2a0c688): one
+// request every 90 s from the start of the Task stage (AlsobayStatic.mjs).
+export const alsobayStaticScheduler = createAlsobayStaticScheduler({
+  run: (game, { tickIndex }) => runAlsobayStatic(game, { kind: "interval", tickIndex }),
+  onError: error => console.warn("Alsobay Static request failed", { message: error.message }),
+});
 Empirica.on("game", "deadline", (_ctx, { game }) => {
   discussionDeadline.register(game);
   adaptiveCloseoutScheduler.register(game);
-  staticInterventionScheduler.wake(game);
+  alsobayStaticScheduler.register(game);
 });
 // Kind listeners replay loaded scopes, unlike onStageStart which may already
 // have a persisted ran flag after a callbacks restart.
@@ -313,10 +277,8 @@ function restoreGameRuntime(game) {
   loadedGames.set(game.id, game);
   discussionDeadline.register(game);
   adaptiveCloseoutScheduler.register(game);
-  facilitatorTasks.launch(`${game.id}:restore`, async () => {
-    await recoverInterruptedInFlight(game, CALLBACKS_INSTANCE_ID, Date.now(), () => Empirica.flush());
-    staticInterventionScheduler.wake(game);
-  });
+  alsobayStaticScheduler.register(game);
+  facilitatorTasks.launch(`${game.id}:restore`, () => recoverInterruptedInFlight(game, CALLBACKS_INSTANCE_ID, Date.now(), () => Empirica.flush()));
 }
 Empirica.on("game", (_ctx, { game }) => restoreGameRuntime(game));
 Empirica.on("stage", (_ctx, { stage }) => {
@@ -337,7 +299,7 @@ function publicContextFingerprint(chat) {
 // Preserve the original prefix and respect Facilitator/request supersession.
 // Synthesis additionally checks for participant appends before publication.
 function automaticContextReason(game, logEntry) {
-  if (logEntry.facilitation === "static" && facilitatorPublication.hasRequested(game)) return "REQUEST_SUPERSEDED";
+  if (logEntry.facilitation === "static" && !logEntry.alsobayStatic && facilitatorPublication.hasRequested(game)) return "REQUEST_SUPERSEDED";
   if (!logEntry.publicContextFingerprint) return null;
   let snapshot;
   try { snapshot = JSON.parse(logEntry.publicContextFingerprint); } catch { return "STALE_CONTEXT"; }
@@ -353,14 +315,6 @@ function automaticContextReason(game, logEntry) {
 function automaticContextStillUsable(game, logEntry) {
   return automaticContextReason(game, logEntry) === null;
 }
-function staticCandidateStillCurrent(game, logEntry) {
-  if (!logEntry.opportunityId) return true;
-  const reason = !canPublishFacilitatorResult(game, logEntry) ? "PHASE_ENDED" : automaticContextReason(game, logEntry);
-  if (!reason) return true;
-  logEntry.reasonCode = reason;
-  logEntry.reason = `Static candidate discarded: ${reason}`;
-  return false;
-}
 
 
 // ── LLM API call ──────────────────────────────────────────────────────────────
@@ -374,6 +328,7 @@ async function requestChatCompletion(messages, maxTokens = llmMaxOutputTokens, o
     endpoint: llmAPIEndpoint,
     responseSchema: options.responseSchema,
     reasoningEffort: options.reasoningEffort,
+    responseFormat: options.responseFormat,
     // Strict audit schemas and reasoning overrides are provider-scoped in
     // LLMTransport. MiniMax's unsupported response_format remains omitted;
     // every provider response still passes the existing local parsers.
@@ -648,13 +603,8 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
     logEntry.outcome = "SILENT";
     return { published: false, attempts: generatorAttempts };
   }
-  function retainContentFailure(stage, candidate, failedCriteria, feedback) {
-    if (!logEntry.opportunityId || candidate == null || !failedCriteria?.length) return;
-    logEntry.staticContentFailures = [...(logEntry.staticContentFailures || []), structuredClone({
-      attemptId: logEntry.attemptId, generationAttempt: generatorAttempts,
-      stage, candidate, failedCriteria, feedback,
-    })];
-  }
+  // Retained content failures fed the retired Static retry scheduler.
+  function retainContentFailure() {}
   // Returns false if the originating round/stage has changed (a later
   // attempt would be responding to a stale world). True if the same
   // stage is still active.
@@ -718,7 +668,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
         },
       ];
     }
-    if (!isOriginatingStageActive() || !staticCandidateStillCurrent(game, logEntry)) return { discarded: true };
+    if (!isOriginatingStageActive()) return { discarded: true };
     if (!llmResponse.success) {
       logEntry.failureStage = "generator_api";
       return { silent: true, reason: `API Error: ${llmResponse.error}` };
@@ -850,7 +800,6 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   // the unavailable case, so no repair is triggered. The caller logs
   // this strongly and goes silent.
   async function runValidator(candidate, priorFailedCriteria = null, priorCandidate = null) {
-    if (logEntry.opportunityId) staticInterventionScheduler.progress(game, logEntry, "VALIDATING");
     const validatorStartedAt = Date.now();
     const result = await validateCandidate({
       chat: built.metadata.condition === "static" ? chat : chat.filter(isFormalContextMessage),
@@ -944,7 +893,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   let candidateBlock = candidateBlockReason();
   if (candidateBlock) return rejectStaleCandidate(candidateBlock);
   const v1 = await runValidator(a1.candidate);
-  if (!isOriginatingStageActive() || !staticCandidateStillCurrent(game, logEntry)) {
+  if (!isOriginatingStageActive()) {
     logEntry.reason ||= "Discarded stale Validator result after the originating Discussion stage ended";
     logEntry.outcome = "SILENT";
     return { published: false, attempts: generatorAttempts };
@@ -959,7 +908,6 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   }
   logEntry.validator = v1.verdict;
   if (v1.verdict.passed) {
-    if (logEntry.opportunityId) staticInterventionScheduler.progress(game, logEntry, "READY_TO_PUBLISH");
     logEntry.llmAction = a1.candidate;
     logEntry.visibleWordCount = a1.candidate.message.trim().split(/\s+/).filter(Boolean).length;
     const posted = await postGeneratorResultIfValid(game, chatKey, a1.candidate, built.metadata.generationRole, logEntry, candidateBlockReason);
@@ -1000,7 +948,7 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   candidateBlock = candidateBlockReason();
   if (candidateBlock) return rejectStaleCandidate(candidateBlock);
   const v2 = await runValidator(a2.candidate, v1.verdict.failedCriteria, a1.candidate);
-  if (!isOriginatingStageActive() || !staticCandidateStillCurrent(game, logEntry)) {
+  if (!isOriginatingStageActive()) {
     logEntry.reason ||= "Discarded stale repair Validator result after the originating Discussion stage ended";
     logEntry.outcome = "SILENT";
     return { published: false, attempts: generatorAttempts };
@@ -1016,7 +964,6 @@ async function runSharedGeneration(game, chatKey, built, logEntry, originatingRo
   logEntry.validatorRepair = v2.verdict;
   logEntry.attempts = 2;
   if (v2.verdict.passed) {
-    if (logEntry.opportunityId) staticInterventionScheduler.progress(game, logEntry, "READY_TO_PUBLISH");
     logEntry.llmAction = a2.candidate;
     logEntry.visibleWordCount = a2.candidate.message.trim().split(/\s+/).filter(Boolean).length;
     const posted = await postGeneratorResultIfValid(game, chatKey, a2.candidate, built.metadata.generationRole, logEntry, candidateBlockReason);
@@ -1284,7 +1231,7 @@ Empirica.onGameStart(({ game }) => {
 Empirica.onRoundStart(({ round }) => {
   const game = round.currentGame;
   adaptiveCloseoutScheduler.cancel(game, "round_started");
-  staticInterventionScheduler.cancel(game, "PHASE_ENDED");
+  alsobayStaticScheduler.cancel(game);
   round.set("callbacksInitializedAt", Date.now());
   round.set("callbacksInstanceId", CALLBACKS_INSTANCE_ID);
   if (round.get("isPractice") === true) {
@@ -1594,7 +1541,7 @@ export function handleFormalStageStart(stage) {
   const game = stage.currentGame;
   const stageName = stage.get("name");
   if (stage.round.get("isPractice") && stageName !== "FinalDecision") return;
-  if (stage.get("formalStageStartHandled")) { discussionDeadline.register(game); adaptiveCloseoutScheduler.register(game); staticInterventionScheduler.wake(game); return; }
+  if (stage.get("formalStageStartHandled")) { discussionDeadline.register(game); adaptiveCloseoutScheduler.register(game); alsobayStaticScheduler.register(game); return; }
   stage.set("formalStageStartHandled", true);
   stage.set("callbacksInitializedAt", Date.now());
   stage.set("callbacksInstanceId", CALLBACKS_INSTANCE_ID);
@@ -1614,6 +1561,7 @@ export function handleFormalStageStart(stage) {
     game.set("deadline",      now + gameDuration * 60 * 1000);
     discussionDeadline.register(game);
     adaptiveCloseoutScheduler.register(game);
+    alsobayStaticScheduler.register(game);
     const chatKey = `chat_round_${stage.round.get("taskIndex")}`;
     const durationMs = gameDuration * 60 * 1000;
     const reminderMinutes = Math.ceil(gameDuration / 2);
@@ -1875,7 +1823,7 @@ async function postGeneratorResultIfValid(game, chatKey, llmAction, expectedRole
     logEntry.publishedHumanMessageCount = game.get("humanMessageCount") || 0;
     const practice = logEntry.phase === "practice";
     const publishedMessage = appendCanonicalMessage(game, chatKey, {
-      messageId: logEntry.opportunityId ? `facilitator-${logEntry.opportunityId}` : `facilitator-${game.currentRound?.id}-${publishedAt}-${randomUUID()}`,
+      messageId: `facilitator-${game.currentRound?.id}-${publishedAt}-${randomUUID()}`,
       groupId: game.id,
       speakerId: "ai",
       roundIndex: practice ? game.currentRound?.get("index") : game.currentRound?.get("taskIndex"),
@@ -2056,7 +2004,72 @@ async function handlePracticeFacilitatorRequest(game, requestMessage) {
 export async function handleChat(env, props) {
   return withPipelineLifetime(props.game, () => processChat(env, props));
 }
-async function processChat(env, { game, adaptiveTrigger = null, staticRetry = null, requestedMessage = null }) {
+function alsobayRequestMessages(game, chat, now = Date.now()) {
+  const round = game.currentRound;
+  const optionLabels = (round?.get("decisionOptions") || []).map(o => o?.label).filter(Boolean);
+  return buildAlsobayMessages({ chat, attendees: game.players.map(p => p.get("name")),
+    taskSentence: alsobayTaskSentence(round?.get("taskVersion"), optionLabels),
+    now, taskStartTime: game.get("taskStartTime"), deadline: game.get("deadline") });
+}
+
+/** Static condition: one Alsobay et al. request (a 90 s tick or an
+ * @[Facilitator] message). Posted as returned; no validation or retry. */
+export async function runAlsobayStatic(game, { kind, tickIndex = null, requestedMessage = null, humanMessageCount = null }) {
+  const round = game.currentRound, stage = game.currentStage;
+  if (!round || round.get("isPractice") || round.get("facilitation") !== "static" || stage?.get("name") !== "Task") return;
+  const roundIndex = round.get("taskIndex");
+  const chatKey = `chat_round_${roundIndex}`;
+  const deadline = game.get("deadline"), taskStartTime = game.get("taskStartTime");
+  if (!Number.isFinite(deadline) || !Number.isFinite(taskStartTime)) return;
+  const directlyRequested = kind === "request";
+  if (directlyRequested) {
+    const handled = round.get("handledFacilitatorRequests") || [];
+    if (requestedMessage?.messageId && !handled.includes(requestedMessage.messageId)) round.set("handledFacilitatorRequests", [...handled, requestedMessage.messageId]);
+  }
+  const now = Date.now();
+  const chat = game.get(chatKey) || [];
+  const logEntry = {
+    auditRequestId: `${game.id}:${roundIndex}:alsobay:${directlyRequested ? `request:${requestedMessage?.messageId ?? now}` : `interval:${tickIndex}`}:${randomUUID()}`,
+    stageId: stage.id, roundId: round.id, originatingRoundId: round.id, originatingStageId: stage.id, roundIndex,
+    facilitation: "static", alsobayStatic: true, staticPolicy: `alsobay_${ALSOBAY_SOURCE_COMMIT}`,
+    timestamp: now, remainingTime: deadline - now, timeElapsed: now - taskStartTime,
+    intervalTriggered: !directlyRequested, tickIndex, directlyRequested, requireLLMMessage: true,
+    requestMade: false, requestSuccess: false, messageAdded: false, outcome: "SILENT", reason: "", model: openaiModel,
+    humanMessageCount: humanMessageCount ?? game.get("humanMessageCount") ?? 0,
+    triggerSource: directlyRequested ? "message" : "alsobay_interval", triggerSources: [directlyRequested ? "message" : "alsobay_interval"],
+    triggerType: directlyRequested ? "PARTICIPANT_REQUEST" : "AUTOMATIC_CHECKPOINT",
+    mentionDetected: directlyRequested, participantRequested: directlyRequested,
+    routingDecision: "ALSOBAY_STATIC", selectedRole: "STATIC",
+  };
+  if (!directlyRequested) {
+    if (!alsobayTranscript(chat).length) { logEntry.reason = "No chat messages available"; await finalizeAuditLog(game, logEntry); return; }
+    if (lastSenderIsFacilitator(chat)) { logEntry.reason = "Last message was from AI, no request made"; await finalizeAuditLog(game, logEntry); return; }
+  }
+  logEntry.serverInstanceId = CALLBACKS_INSTANCE_ID;
+  try {
+    await beginInFlight(game, { ...logEntry, outcome: "PENDING" }, () => Empirica.flush());
+    const messages = alsobayRequestMessages(game, chat, now);
+    logEntry.messagesOAIFormat = messages;
+    logEntry.requestMade = true;
+    const response = await getLLMResponse(messages, llmMaxOutputTokens, { responseFormat: "json_object" });
+    if (!response.success) { logEntry.reason = `API Error: ${response.error}`; return; }
+    logEntry.generatorRawResponses = [{ attempt: 1, rawText: response.rawText }];
+    const parsed = parseAlsobayResponse(response.rawText);
+    if (!parsed.ok) { logEntry.reason = parsed.error; if (parsed.llmAction) logEntry.llmAction = parsed.llmAction; return; }
+    logEntry.requestSuccess = true;
+    logEntry.llmAction = parsed.llmAction;
+    const candidate = { role: "STATIC", message: parsed.llmAction.MESSAGE };
+    logEntry.visibleWordCount = candidate.message.trim().split(/\s+/).filter(Boolean).length;
+    const posted = await postGeneratorResultIfValid(game, chatKey, candidate, "STATIC", logEntry, null);
+    logEntry.outcome = posted ? "PUBLISHED" : "SILENT";
+  } catch (error) {
+    logEntry.reason = `Unexpected Error: ${error.message}`;
+  } finally {
+    await finalizeAuditLog(game, logEntry);
+  }
+}
+
+async function processChat(env, { game, adaptiveTrigger = null, requestedMessage = null }) {
   if (game.currentRound?.get("isPractice")) return;
 
   const previousCallbacksInstanceId = game.get("activeCallbacksInstanceId");
@@ -2082,7 +2095,6 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
   // the current Round, never from game.get("treatment") -- treatment-level
   // metadata must never override the Round-level facilitation assignment.
   const facilitation = currentRound?.get("facilitation");
-  if (staticRetry && (facilitation !== "static" || !staticInterventionScheduler.ready(game, staticRetry.opportunityId))) return;
   if (!facilitation) {
     recordOperationalEvent(game, { type: "MISSING_ROUND_FACILITATION", roundId: currentRound?.id ?? null });
     Empirica.flush();
@@ -2091,14 +2103,14 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
 
   const players = game.players;
   const chat = game.get(chatKey) || [];
-  if (!chat.length && !adaptiveTrigger && !staticRetry) return;
+  if (!chat.length && !adaptiveTrigger) return;
 
   const humans = chat.filter(isFormalHumanMessage);
   const lastMessage = humans.at(-1);
-  if (!adaptiveTrigger && !staticRetry && !isFormalHumanMessage(lastMessage)) return;
+  if (!adaptiveTrigger && !isFormalHumanMessage(lastMessage)) return;
   // Non-human append events cannot consume a checkpoint. A real new human
   // tail or a replay of its transcript is handled idempotently below.
-  if (!adaptiveTrigger && !staticRetry && !requestedMessage && !isFormalHumanMessage(chat.at(-1))
+  if (!adaptiveTrigger && !requestedMessage && !isFormalHumanMessage(chat.at(-1))
     && (game.get("humanMessageCount") || 0) >= humans.length) return;
 
   const currentStageName = game.currentStage?.get("name");
@@ -2123,7 +2135,7 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
     if (!humans.some(m => m.messageId === requestedMessage.messageId)) return;
     currentRound.set("handledFacilitatorRequests", [...handled, requestedMessage.messageId]);
   }
-  if (!adaptiveTrigger && !staticRetry) {
+  if (!adaptiveTrigger) {
     const cursor = game.get("humanMessageCursor");
     const previousId = cursor?.roundId === currentRound.id ? cursor.messageId : game.get("lastProcessedHumanMessageId");
     if (previousId === lastMessage.messageId && previousId && !requestedMessage) return;
@@ -2145,7 +2157,7 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
   // A real human message breaks any silence -- rearm the watchdog so a
   // LATER lull (the group goes quiet again after this) can still be
   // caught, same delay as the opening case.
-  if (!adaptiveTrigger && !staticRetry) armSilenceWatchdog(game.currentStage, chatKey);
+  if (!adaptiveTrigger) armSilenceWatchdog(game.currentStage, chatKey);
 
   // ── Increment the opportunity counter (Phase 3: also tracked as
   // messagesSinceLastPublish; the legacy messagesSinceLastIntervention
@@ -2182,9 +2194,14 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
   const latestHumanText = requestedMessage ? (requestedMessage.text ?? requestedMessage.content ?? "") : latestHumanMessages.length > 0
     ? latestHumanMessages[latestHumanMessages.length - 1].text
     : "";
-  const isMentionCheckpoint = !adaptiveTrigger && !staticRetry && containsFacilitatorMention(latestHumanText);
-  const staticAutomatic = facilitation === "static" && !isMentionCheckpoint;
-  const opportunity = staticAutomatic ? staticInterventionScheduler.observe(game) : null;
+  const isMentionCheckpoint = !adaptiveTrigger && containsFacilitatorMention(latestHumanText);
+  // 2026-11-15: Static replicates Alsobay et al. Participant messages never
+  // trigger an automatic message (the 90 s timer does); an @[Facilitator]
+  // message gets the same prompt, required to respond, immediately.
+  if (facilitation === "static") {
+    if (!isMentionCheckpoint) return;
+    return runAlsobayStatic(game, { kind: "request", requestedMessage: requestedMessage ?? humans.at(-1), humanMessageCount });
+  }
 
   let trigger = shouldEvaluateCheckpoint({
     store: game,
@@ -2196,11 +2213,6 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
     isMentionCheckpoint,
     config: facilitation === "adaptive" ? { ...CHECKPOINT_DEFAULTS, minTimeForInterventionMs: ADAPTIVE_FLOOR_MS } : CHECKPOINT_DEFAULTS,
   });
-  if (staticRetry) trigger = { trigger: staticInterventionScheduler.ready(game, staticRetry.opportunityId), reason: "static_retry" };
-  if (staticAutomatic && opportunity?.status === "PENDING") {
-    const blocked = staticInterventionScheduler.blockReason(game);
-    if (blocked && blocked !== "LOCK_BUSY") trigger = { trigger: false, reason: blocked };
-  }
   // Explicit IDs, claimed above, replace the count-based dedup when two
   // requests share one batch-delivered human-count boundary.
   if (requestedMessage && isMentionCheckpoint) trigger = { trigger: true, reason: "participant_request" };
@@ -2222,7 +2234,7 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
   // non-trigger outcomes (opportunity/cooldown/time-floor/dedup). Keep the
   // same id for a later beginInFlight/finalize lifecycle when the checkpoint
   // does trigger.
-  const auditRequestId = `${game.id}:${roundIndex}:${humanMessageCount}:${now}${adaptiveTrigger || staticRetry || requestedMessage ? `:${randomUUID()}` : ""}`;
+  const auditRequestId = `${game.id}:${roundIndex}:${humanMessageCount}:${now}${adaptiveTrigger || requestedMessage ? `:${randomUUID()}` : ""}`;
   let logEntry = {
     stageId: originatingStageId, roundId: currentRound.id,
     auditRequestId,
@@ -2253,8 +2265,6 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
     originatingRoundId,
     originatingStageId,
   };
-  if (staticAutomatic && opportunity) logEntry.opportunityId = opportunity.opportunityId;
-  if (staticAutomatic && trigger.trigger) staticInterventionScheduler.decorate(game, logEntry);
 
   // Phase 3: capture the full AgentState snapshot for the audit log
   // (architecture doc §6 节点 13: "记录 features, evidence-use relations,
@@ -2269,11 +2279,6 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
   await recoverInterruptedInFlight(game, CALLBACKS_INSTANCE_ID, Date.now(), () => Empirica.flush());
 
   if (!trigger.trigger) {
-    if (staticAutomatic) {
-      logEntry.reasonCode = trigger.reason.startsWith("cooldown") ? "COOLDOWN_ACTIVE"
-        : /^[A-Z_]+$/.test(trigger.reason) ? trigger.reason : "DUPLICATE_SUPPRESSED";
-      staticInterventionScheduler.defer(game, logEntry.reasonCode);
-    }
     // Not an error -- just "not yet" / "this round is full" / etc.
     // Still log so the audit can see the trigger conditions per
     // human message.
@@ -2295,10 +2300,6 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
     logEntry.reasonCode = "STATE_COMMIT_ERROR";
     logEntry.reason = `In-flight state commit failed: ${error.message}`;
     logEntry.outcome = "SILENT_ERROR";
-    if (staticAutomatic && staticInterventionScheduler.started(game, logEntry)) {
-      recordAttempt(game, humanMessageCount, now);
-      staticInterventionScheduler.complete(game, logEntry);
-    }
     try {
       if (isMentionCheckpoint && canPublishFacilitatorResult(game, logEntry)) {
         recordParticipantRequest(game, humanMessageCount);
@@ -2307,14 +2308,13 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
       }
     } finally {
       try { await finalizeAuditLog(game, logEntry); }
-      finally { facilitatorPublication.requestedFinished(game, logEntry); staticInterventionScheduler.wake(game); }
+      finally { facilitatorPublication.requestedFinished(game, logEntry); }
     }
     return;
   }
   if (!beganInFlight) {
     if (isMentionCheckpoint) facilitatorPublication.requestedFinished(game, logEntry);
     logEntry.reasonCode = "LOCK_BUSY";
-    if (staticAutomatic) staticInterventionScheduler.defer(game, "LOCK_BUSY");
     logEntry.outcome = "SILENT_AUTOMATIC_IN_FLIGHT";
     logEntry.reason = "Skipped automatic checkpoint because an earlier automatic intervention pipeline is still in flight";
     await finalizeAuditLog(game, logEntry);
@@ -2378,7 +2378,7 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
       else if (canPublishFacilitatorResult(game, logEntry)) await postParticipantRequestFallback(game, chatKey, logEntry);
     } finally {
       try { await finalizeAuditLog(game, logEntry); }
-      finally { facilitatorPublication.requestedFinished(game, logEntry); staticInterventionScheduler.wake(game); }
+      finally { facilitatorPublication.requestedFinished(game, logEntry); }
     }
     return;
   }
@@ -2387,81 +2387,6 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
   // is part of this so a re-entrant call for the same humanMessageCount
   // (e.g. a duplicate Empirica event) cannot double-trigger. ──
   recordAttempt(game, humanMessageCount, now);
-
-  // Static and Adaptive share the checkpoint pacing above. Static's fixed
-  // policy requires a message attempt at every eligible checkpoint, so it bypasses every discussion-state
-  // assessment step and goes directly to the shared Generator/validation/
-  // publication path. A blocked prompt or technical failure remains SILENT
-  // and logged; it is not a discussion-state ABSTAIN and never fabricates a
-  // fallback participant-facing message.
-  if (facilitation === "static") {
-    try {
-      if (!staticInterventionScheduler.started(game, logEntry)) {
-        logEntry.reasonCode = "DUPLICATE_SUPPRESSED";
-        return;
-      }
-      // Persist the attempt budget before the first long model call so a
-      // callbacks restart cannot reset this opportunity's bounded retry count.
-      await Empirica.flush();
-      logEntry.routingDecision = "STATIC_REQUIRED_MESSAGE";
-      logEntry.publicContextFingerprint = publicContextFingerprint(chat);
-      // 2026-10-21: matched-latency delay (see staticMatchedDelayMs()).
-      const matchedDelayMs = staticMatchedDelayMs();
-      if (matchedDelayMs > 0) {
-        logEntry.staticMatchedDelayMs = matchedDelayMs;
-        await delayWithinPipeline(matchedDelayMs);
-        if (
-          game.currentRound?.id !== originatingRoundId ||
-          game.currentStage?.id !== originatingStageId ||
-          game.currentStage?.get("name") !== "Task"
-        ) {
-          logEntry.reason = "Discarded Static checkpoint: the originating Discussion stage ended during the matched delay";
-          logEntry.reasonCode = "PHASE_ENDED";
-          return;
-        }
-      }
-      if (!staticCandidateStillCurrent(game, logEntry)) return;
-      // Re-read after persistence/matched-delay awaits. A retry must generate
-      // and validate against the latest public transcript, not the old draft's
-      // context or a snapshot captured before those awaits.
-      const generationChat = game.get(chatKey) || [];
-      const generationNow = Date.now();
-      logEntry.publicContextFingerprint = publicContextFingerprint(generationChat);
-      const built = buildGeneratorContext(
-        game,
-        players,
-        generationChat,
-        Math.max(0, game.get("deadline") - generationNow),
-        generationNow - game.get("taskStartTime"),
-        "static",
-        null,
-        null,
-      );
-      built.userContent = buildStaticRetryUserContent(built.userContent,
-        staticInterventionScheduler.failureFeedback(game, logEntry));
-      await runSharedGeneration(
-        game,
-        chatKey,
-        built,
-        logEntry,
-        originatingRoundId,
-        originatingStageId,
-        generationChat,
-      );
-      // Static publication accounting is committed with the opportunity under
-      // the short publication mutex, not after releasing that mutex.
-    } catch (error) {
-      logEntry.reasonCode = logEntry.messageAdded ? "PUBLISHED" : "STATE_COMMIT_ERROR";
-      logEntry.reason = `Static pipeline failed: ${error.message}`;
-      logEntry.coordinationError = error.message;
-      logEntry.outcome = logEntry.messageAdded ? "PUBLISHED" : "SILENT_ERROR";
-    } finally {
-      if (!logEntry.messageAdded && !canPublishFacilitatorResult(game, logEntry)) logEntry.reasonCode = "PHASE_ENDED";
-      staticInterventionScheduler.complete(game, logEntry);
-      await finalizeAuditLog(game, logEntry);
-    }
-    return;
-  }
 
   // Fail closed on an unexpected Round condition without sending it through
   // either policy. The real S1-S4 table assigns only static/adaptive.
@@ -2585,16 +2510,40 @@ async function processChat(env, { game, adaptiveTrigger = null, staticRetry = nu
       stateScores: gate.scores, perRole: gate.perRole, abstentionKind: gate.abstentionKind, fallbackKind: gate.fallbackKind });
     return checked;
   }
+  // 2026-11-15: the Adaptive Static-policy turn uses the same Alsobay et al.
+  // request as the Static condition (one call, no validation, MESSAGE posted).
   async function fallback() {
     logEntry.selectedRole = "STATIC";
     logEntry.routingDecision = "ADAPTIVE_STATIC_POLICY";
+    logEntry.staticPolicy = `alsobay_${ALSOBAY_SOURCE_COMMIT}`;
     delete logEntry.validator;
     delete logEntry.validatorRepair;
     delete logEntry.failureStage;
-    const currentChat = game.get(chatKey) || [];
-    const built = buildGeneratorContext(game, players, currentChat, budget.remainingTime(), Date.now() - game.get("taskStartTime"), "static", null, null);
-    const result = await runSharedGeneration(game, chatKey, built, logEntry, originatingRoundId, originatingStageId, currentChat, { adaptiveBudget: budget });
-    return { ...result, role: "STATIC", outcome: logEntry.outcome };
+    const messages = alsobayRequestMessages(game, game.get(chatKey) || []);
+    logEntry.messagesOAIFormat = messages;
+    logEntry.requestMade = true;
+    const response = await budget.call("generator", timing => getLLMResponse(messages, llmMaxOutputTokens, { responseFormat: "json_object", ...timing }));
+    if (!response.success) {
+      logEntry.failureStage = "generator_api";
+      logEntry.reason = `API Error: ${response.error}`;
+      logEntry.outcome = "SILENT";
+      return { published: false, role: "STATIC", outcome: logEntry.outcome };
+    }
+    logEntry.requestSuccess = true;
+    logEntry.generatorRawResponses = [...(logEntry.generatorRawResponses || []), { attempt: 1, rawText: response.rawText }];
+    const parsed = parseAlsobayResponse(response.rawText);
+    if (!parsed.ok) {
+      logEntry.failureStage = "parse";
+      logEntry.reason = parsed.error;
+      logEntry.outcome = "SILENT";
+      return { published: false, role: "STATIC", outcome: logEntry.outcome };
+    }
+    logEntry.llmAction = parsed.llmAction;
+    const candidate = { role: "STATIC", message: parsed.llmAction.MESSAGE };
+    logEntry.visibleWordCount = candidate.message.trim().split(/\s+/).filter(Boolean).length;
+    const posted = await postGeneratorResultIfValid(game, chatKey, candidate, "STATIC", logEntry, null);
+    logEntry.outcome = posted ? "PUBLISHED" : "SILENT";
+    return { published: posted, role: "STATIC", candidate, outcome: logEntry.outcome };
   }
   // 2026-11-14: the Synthesiser is built from a per-message ledger
   // (SynthesisLedger.mjs). Every public participant message is accounted for
@@ -2835,7 +2784,7 @@ Empirica.onStageEnded(({ stage }) => {
     cancelStagePipelines(stage.id);
     discussionDeadline.cancel(stage.currentGame);
     adaptiveCloseoutScheduler.cancel(stage.currentGame, "stage_ended");
-    staticInterventionScheduler.cancel(stage.currentGame, "PHASE_ENDED");
+    alsobayStaticScheduler.cancel(stage.currentGame);
   }
   const round = stage.round;
   const game = stage.currentGame;
@@ -2894,7 +2843,7 @@ Empirica.onStageEnded(({ stage }) => {
 
 Empirica.onRoundEnded(({ round }) => {
   const game = round.currentGame;
-  staticInterventionScheduler.cancel(game, "PHASE_ENDED");
+  alsobayStaticScheduler.cancel(game);
   if (round.get("isPractice") === true) return;
   const endedAt = new Date().toISOString();
   queueResearchMirror("round_ended", async () => {
@@ -2923,7 +2872,7 @@ Empirica.onGameEnded(({ game }) => {
   adaptiveCloseoutScheduler.cancel(game, "game_ended");
   loadedGames.delete(game.id);
   adaptiveCloseoutScheduler.cancel(game, "game_ended");
-  staticInterventionScheduler.cancel(game, "PHASE_ENDED");
+  alsobayStaticScheduler.cancel(game);
   const storedEndedAt = game.get("endedAt");
   const endedAt = typeof storedEndedAt === "string" && storedEndedAt.trim()
     ? storedEndedAt
