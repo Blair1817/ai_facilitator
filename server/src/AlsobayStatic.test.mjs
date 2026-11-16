@@ -1,6 +1,8 @@
-// The Static condition must behave exactly like Alsobay et al.'s facilitator
-// (microsoft/ai_facilitator 2a0c688, treatment llmFacilitation_noCue). The
-// original sources are kept verbatim in test/fixtures/alsobay_2a0c688.
+// The Static facilitator must send exactly Alsobay et al.'s request and post its
+// reply as the original did (microsoft/ai_facilitator 2a0c688, treatment
+// llmFacilitation_noCue). The original sources are kept verbatim in
+// test/fixtures/alsobay_2a0c688. WHEN Static speaks is this study's control
+// variable: the shared six-message checkpoint, not the original 90 s timer.
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -14,7 +16,6 @@ import { buildChatCompletionPayload } from "./LLMTransport.mjs";
 import { llmSystemPrompts as originalPrompts } from "../test/fixtures/alsobay_2a0c688/LLMConfig.mjs";
 import {
   alsobaySystemPrompt, alsobayTaskSentence, formatDuration, buildAlsobayMessages, parseAlsobayResponse,
-  nextAlsobayTick, createAlsobayStaticScheduler, ALSOBAY_REQUEST_INTERVAL_MS, ALSOBAY_STOP_BEFORE_END_MS,
 } from "./AlsobayStatic.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -89,20 +90,8 @@ test("JSON-object output: MESSAGE is posted as returned; anything else is not po
 });
 
 // ── Timing ──────────────────────────────────────────────────────────────────
-test("a request every 90 s from the Task start, none in the last 20 s (the original setInterval and its clearing timeout)", () => {
-  assert.match(originalCallbacks, /\}, llmRequestInterval \* 1000\);/);
-  assert.match(originalCallbacks, /\(gameDuration \* 60 - 20\) \* 1000/);
-  assert.equal(ALSOBAY_REQUEST_INTERVAL_MS, 90_000);
-  assert.equal(ALSOBAY_STOP_BEFORE_END_MS, 20_000);
-  const ticks = [];
-  for (let next = nextAlsobayTick({ taskStartTime: 0, deadline: 900_000, now: 0 }); next; next = nextAlsobayTick({ taskStartTime: 0, deadline: 900_000, now: next.at, completedThrough: next.index }))
-    ticks.push(next.at / 1000);
-  assert.deepEqual(ticks, [90, 180, 270, 360, 450, 540, 630, 720, 810], "15-minute discussion");
-  assert.equal(nextAlsobayTick({ taskStartTime: 0, deadline: 900_000, now: 400_000 }).at, 450_000, "after a restart, continue at the next tick");
-  assert.equal(nextAlsobayTick({ taskStartTime: 0, deadline: 600_000, now: 0, completedThrough: 6 }), null, "10-minute game: 90…540 s");
-});
 
-function world({ facilitation = "static", lines = ["everyone got the city page?", "Rovenna looks solid", "the hotels are close"], remaining = 600_000 } = {}) {
+function world({ facilitation = "static", lines = ["everyone got the city page?", "Rovenna looks solid", "the hotels are close", "Talwick has a train", "Meridia has rooms", "what about Blue?"], remaining = 600_000 } = {}) {
   const players = ["Green", "Pink", "Blue"].map((name, i) => makeFakePlayer({ id: `p${i}`, name, hexCode: "ffffff" }));
   const game = new FakeGame({}, players);
   const task = config.tasks[0];
@@ -114,7 +103,8 @@ function world({ facilitation = "static", lines = ["everyone got the city page?"
   game.set("chat_round_0", lines.map((text, i) => buildCanonicalMessage({ messageId: `h${i}`, groupId: game.id, participantId: players[i % 3].id, roundIndex: 0,
     stage: "Discussion", messageType: "human", speakerType: "human", timestamp: Date.now() - 1000 * (lines.length - i), sequencePosition: i, content: text,
     sender: { id: players[i % 3].id, name: players[i % 3].get("name") } })));
-  game.set("humanMessageCount", lines.length);
+  game.set("humanMessageCount", Math.max(0, lines.length - 1));
+  game.set("messagesSinceLastPublish", Math.max(0, lines.length - 1));
   return { game, round, stage, players };
 }
 async function withProvider(reply, task) {
@@ -131,34 +121,13 @@ async function withProvider(reply, task) {
 const posted = w => w.game.get("chat_round_0").filter(m => m.sender?.id === "ai");
 const log = w => readAppendOnlyAttribute(w.game, "llmLog");
 
-test("the scheduler fires each due tick once, skips when the Facilitator spoke last, and stops at stage end", async () => {
-  const timers = [];
-  let clock = 0;
-  const ran = [];
-  const w = world();
-  w.game.set("taskStartTime", 0); w.game.set("deadline", 900_000);
-  const scheduler = createAlsobayStaticScheduler({ now: () => clock, setTimer: (fn, delay) => { const t = { fn, at: clock + delay }; timers.push(t); return t; },
-    clearTimer: t => { if (t) t.cleared = true; }, run: async (_game, { tickIndex }) => { ran.push(tickIndex); } });
-  const fire = async () => { const t = timers.filter(x => !x.cleared && !x.done).sort((a, b) => a.at - b.at)[0]; if (!t) return false; clock = t.at; t.done = true; await t.fn(); return true; };
-  assert.ok(scheduler.register(w.game));
-  assert.equal(scheduler.register(w.game), scheduler.register(w.game), "idempotent");
-  await fire(); await fire();
-  assert.deepEqual(ran, [1, 2]);
-  // A callbacks restart re-registers; the tick already run is not repeated.
-  scheduler.cancel(w.game); w.round.set("alsobayStaticLastTick", 2); clock = 185_000;
-  scheduler.register(w.game); await fire();
-  assert.deepEqual(ran, [1, 2, 3]);
-  w.stage.set("ended", true); await fire();
-  assert.deepEqual(ran, [1, 2, 3], "no request after the Task stage ended");
-  assert.equal(scheduler.register(world({ facilitation: "adaptive" }).game), null, "Adaptive rounds never get the timer");
-});
 
 // ── End to end through the real callbacks ───────────────────────────────────
-test("a tick posts the model's MESSAGE verbatim as an automatic intervention and logs the original fields", async () => {
-  const { runAlsobayStatic } = await getOfflineCallbacksHarness();
+test("an automatic Static turn posts the model's MESSAGE verbatim as an automatic intervention and logs the original fields", async () => {
+  const { handleChat } = await getOfflineCallbacksHarness();
   const w = world();
   const MESSAGE = "Let's track what we know so far:\nRovenna: hotels close to venues.\n@[Blue], what do you have on Meridia or Talwick?";
-  const requests = await withProvider({ MESSAGE, RATIONALE: "Blue has not spoken." }, () => runAlsobayStatic(w.game, { kind: "interval", tickIndex: 1 }));
+  const requests = await withProvider({ MESSAGE, RATIONALE: "Blue has not spoken." }, () => handleChat(undefined, { game: w.game }));
   assert.equal(requests.length, 1, "one request, no Validator, no retry");
   assert.deepEqual(requests[0].messages.map(m => m.role), ["system", "system", "system", "system", "user"]);
   assert.equal(requests[0].messages[0].content, originalPrompts("LLM", true).replace(ORIGINAL_TASK, "which of three cities (Talwick, Rovenna, Meridia) should host the International Youth Games"));
@@ -166,7 +135,7 @@ test("a tick posts the model's MESSAGE verbatim as an automatic intervention and
   assert.equal(requests[0].max_completion_tokens ?? requests[0].max_tokens, 1000);
   assert.deepEqual(posted(w).map(m => [m.content, m.role, m.facilitatorTrigger, m.countsAsIntervention]), [[MESSAGE, "STATIC", "AUTOMATIC_CHECKPOINT", true]]);
   const entry = log(w).at(-1);
-  assert.equal(entry.intervalTriggered, true); assert.equal(entry.directlyRequested, false); assert.equal(entry.requireLLMMessage, true);
+  assert.equal(entry.directlyRequested, false); assert.equal(entry.requireLLMMessage, true); assert.equal(entry.triggerSource, "message");
   assert.equal(entry.requestMade, true); assert.equal(entry.requestSuccess, true); assert.equal(entry.messageAdded, true);
   assert.deepEqual(entry.llmAction, { MESSAGE, RATIONALE: "Blue has not spoken." });
   assert.equal(entry.messagesOAIFormat.length, 5);
@@ -174,26 +143,39 @@ test("a tick posts the model's MESSAGE verbatim as an automatic intervention and
   assert.equal(w.game.get("totalInterventions"), 1);
 });
 
-test("a tick makes no request when the latest message is from the Facilitator; timer reminders do not count as a message", async () => {
-  const { runAlsobayStatic } = await getOfflineCallbacksHarness();
-  const w = world();
-  w.game.get("chat_round_0").push({ messageId: "f", stage: "Discussion", messageType: "facilitator", speakerType: "facilitator", facilitatorOrigin: "DETERMINISTIC_FIXED",
-    text: "No rush.", content: "No rush.", timestamp: Date.now(), sender: { id: "ai", name: "Facilitator" } },
-    { messageId: "t", stage: "Discussion", messageType: "timer_reminder", speakerType: "timer_reminder", text: "8 minutes remain.", content: "8 minutes remain.", timestamp: Date.now(), sender: { id: "system-timer_reminder", name: "Timer" } });
-  const requests = await withProvider({ MESSAGE: "x", RATIONALE: "r" }, () => runAlsobayStatic(w.game, { kind: "interval", tickIndex: 2 }));
-  assert.equal(requests.length, 0);
-  assert.equal(log(w).at(-1).reason, "Last message was from AI, no request made");
-  assert.equal(log(w).at(-1).requestMade, false);
-  const empty = world({ lines: [] });
-  await withProvider({ MESSAGE: "x" }, () => runAlsobayStatic(empty.game, { kind: "interval", tickIndex: 1 }));
-  assert.equal(log(empty).at(-1).reason, "No chat messages available");
+test("Static automatic turns use the study's shared checkpoint: six participant messages, the cooldown, and one pipeline at a time", async () => {
+  const { handleChat } = await getOfflineCallbacksHarness();
+  const lines = Array.from({ length: 5 }, (_, i) => `Point ${i}.`);
+  const w = world({ lines });
+  w.game.set("humanMessageCount", 0); w.game.set("messagesSinceLastPublish", 0);
+  const send = text => w.game.get("chat_round_0").push(buildCanonicalMessage({ messageId: `x-${text}`, groupId: w.game.id, participantId: "p0", roundIndex: 0,
+    stage: "Discussion", messageType: "human", speakerType: "human", timestamp: Date.now(), sequencePosition: 99, content: text, sender: { id: "p0", name: "Green" } }));
+  let requests = await withProvider({ MESSAGE: "first", RATIONALE: "r" }, () => handleChat(undefined, { game: w.game }));
+  assert.equal(requests.length, 0, "five messages: below the six-message gate");
+  send("Point 5.");
+  requests = await withProvider({ MESSAGE: "first", RATIONALE: "r" }, () => handleChat(undefined, { game: w.game }));
+  assert.equal(requests.length, 1, "the sixth message opens the checkpoint");
+  assert.equal(w.game.get("messagesSinceLastPublish"), 0, "a Static publication resets the shared gate");
+  for (let i = 6; i < 11; i++) send(`Point ${i}.`);
+  requests = await withProvider({ MESSAGE: "second", RATIONALE: "r" }, () => handleChat(undefined, { game: w.game }));
+  assert.equal(requests.length, 0, "five new messages are not enough");
+  send("Point 11.");
+  requests = await withProvider({ MESSAGE: "second", RATIONALE: "r" }, () => handleChat(undefined, { game: w.game }));
+  assert.equal(requests.length, 0, "the shared 15-second cooldown still applies");
+  assert.match(log(w).at(-1).reason, /cooldown/);
+  w.game.set("lastAttemptTimestamp", Date.now() - 31_000);
+  send("Point 12.");
+  requests = await withProvider({ MESSAGE: "second", RATIONALE: "r" }, () => handleChat(undefined, { game: w.game }));
+  assert.equal(requests.length, 1);
+  assert.deepEqual(posted(w).map(m => m.content), ["first", "second"]);
 });
 
 test("a provider error or a reply without MESSAGE posts nothing and is not retried", async () => {
-  const { runAlsobayStatic } = await getOfflineCallbacksHarness();
+  const { handleChat } = await getOfflineCallbacksHarness();
   for (const reply of ["ERROR", "not json", { RATIONALE: "no message" }]) {
-    const w = world();
-    const requests = await withProvider(reply, () => runAlsobayStatic(w.game, { kind: "interval", tickIndex: 1 }));
+    const w = world({ lines: Array.from({ length: 6 }, (_, i) => `Point ${i}.`) });
+    w.game.set("humanMessageCount", 5); w.game.set("messagesSinceLastPublish", 5);
+    const requests = await withProvider(reply, () => handleChat(undefined, { game: w.game }));
     assert.equal(requests.length, 1, String(reply));
     assert.equal(posted(w).length, 0, String(reply));
     assert.equal(log(w).at(-1).messageAdded, false);
@@ -216,10 +198,10 @@ test("@[Facilitator] in Static: the same prompt, required to respond, answered a
 });
 
 test("Static and the Adaptive Static-policy turn send the identical request for the same discussion", async () => {
-  const { handleChat, runAlsobayStatic } = await getOfflineCallbacksHarness();
+  const { handleChat } = await getOfflineCallbacksHarness();
   const lines = Array.from({ length: 6 }, (_, i) => `Point ${i} about Rovenna and Talwick.`);
   const s = world({ lines });
-  const staticRequests = await withProvider({ MESSAGE: "ok", RATIONALE: "r" }, () => runAlsobayStatic(s.game, { kind: "interval", tickIndex: 1 }));
+  const staticRequests = await withProvider({ MESSAGE: "ok", RATIONALE: "r" }, () => handleChat(undefined, { game: s.game }));
   const a = world({ facilitation: "adaptive", lines });
   a.game.set("humanMessageCount", 5); a.game.set("messagesSinceLastPublish", 5);
   const adaptiveRequests = await withProvider(body => body.messages[0].content.startsWith("# assessor.md")

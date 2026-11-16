@@ -51,12 +51,12 @@ test("Adaptive recovery uses the same Alsobay et al. request as the Static condi
 
 test("@Facilitator routes to the condition's request path before any automatic policy", () => {
   const handleBody = callbacksSource.slice(callbacksSource.indexOf("async function processChat"));
-  const staticRoute = handleBody.indexOf('if (facilitation === "static") {');
+  const staticRoute = handleBody.indexOf('if (facilitation === "static" && isMentionCheckpoint) {');
   const requestRoute = handleBody.indexOf("if (isMentionCheckpoint) {");
   const automaticAttempt = handleBody.indexOf("recordAttempt(game, humanMessageCount, now)");
   // Static (Alsobay et al.): the same prompt, required to respond, before any pacing.
   assert.ok(staticRoute >= 0 && staticRoute < handleBody.indexOf("shouldEvaluateCheckpoint({"));
-  assert.match(handleBody.slice(staticRoute, requestRoute), /return runAlsobayStatic\(game, \{ kind: "request"/);
+  assert.match(handleBody.slice(staticRoute, requestRoute), /return runAlsobayStatic\(game, \{ requestedMessage/);
   // Adaptive: the participant-requested Generalist before the automatic attempt.
   assert.ok(requestRoute > staticRoute && requestRoute < automaticAttempt);
   assert.match(handleBody, /getRequestedGeneralistPromptBundle\(\)/);

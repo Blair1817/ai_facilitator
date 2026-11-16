@@ -146,16 +146,16 @@ async function withMockedFetch(fetchImpl, task) {
   }
 }
 
-// One Static (Alsobay et al.) 90 s tick through the real callbacks.
-async function tick(w, tickIndex = 1) {
-  const { runAlsobayStatic } = await getOfflineCallbacksHarness();
-  return runAlsobayStatic(w.game, { kind: "interval", tickIndex });
+// One automatic Static checkpoint (the sixth message) through the real callbacks.
+async function tick(w) {
+  const { handleChat } = await getOfflineCallbacksHarness();
+  return handleChat(undefined, { game: w.game });
 }
 function published(w) {
   return w.game.get("chat_round_0").filter((message) => message.sender?.id === "ai");
 }
 
-test("formal stage transitions during the detector, the Static-policy request or a Static tick prevent publication", async () => {
+test("formal stage transitions during the detector, the Static-policy request or a Static request prevent publication", async () => {
   const { handleChat } = await getOfflineCallbacksHarness();
   for (const [condition, phase] of [["adaptive", "assessor"], ["adaptive", "static"], ["static", "static"]]) {
     const w = world(condition);
@@ -261,7 +261,7 @@ test("a participant-requested timeout: Adaptive keeps its safe fallback; Static,
   }
 });
 
-test("participant messages during a Static request trigger nothing and do not discard its reply", async () => {
+test("messages during a Static request start no second automatic request and do not discard its reply", async () => {
   const { handleChat } = await getOfflineCallbacksHarness();
   const w = world("static");
   let resolveFirst;
@@ -279,7 +279,7 @@ test("participant messages during a Static request trigger nothing and do not di
     chat.push(humanMessage(w.game, w.players[1], "Another later fact.", 7));
     chat.push(humanMessage(w.game, w.players[2], "And one more.", 8));
     await handleChat(undefined, { game: w.game });
-    assert.equal(requests, 1, "a participant message never reaches the provider in Static");
+    assert.equal(requests, 1, "one automatic pipeline at a time, as in Adaptive");
     resolveFirst(response(ALSOBAY_REPLY));
     await first;
   });
@@ -312,7 +312,7 @@ test("duplicate chat callbacks for one @[Facilitator] message get one Static rep
   assert.equal(published(w)[0].facilitatorTrigger, "PARTICIPANT_REQUEST");
 });
 
-test("a Static @[Facilitator] request is answered immediately during a slow tick, and both replies are posted as in the original", async () => {
+test("a Static @[Facilitator] request is answered immediately during a slow automatic request, and both replies are posted as in the original", async () => {
   const { handleChat } = await getOfflineCallbacksHarness();
   const w = world("static");
   let resolveAutomatic;

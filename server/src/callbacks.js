@@ -31,7 +31,7 @@ import {
 } from "./LLMTransport.mjs";
 import { buildSynthesisPointContract, decodeSynthesisPoints } from "./SynthesisPointContract.mjs";
 import { buildSynthesisLedger, renderSynthesisLedger, LEDGER_CALL_TIMEOUT_MS } from "./SynthesisLedger.mjs";
-import { ALSOBAY_SOURCE_COMMIT, alsobayTaskSentence, buildAlsobayMessages, parseAlsobayResponse, lastSenderIsFacilitator, alsobayTranscript, createAlsobayStaticScheduler } from "./AlsobayStatic.mjs";
+import { ALSOBAY_SOURCE_COMMIT, alsobayTaskSentence, buildAlsobayMessages, parseAlsobayResponse } from "./AlsobayStatic.mjs";
 import { assessSemanticFactors } from "./SemanticAssessor.js";
 import { checkNeedAssessment } from "./EvidenceChecker.js";
 import { compilePlan } from "./PolicyCompiler.js";
@@ -258,16 +258,9 @@ export const adaptiveCloseoutScheduler = createCloseoutScheduler({
   flush: () => Empirica.flush(),
   onError: error => console.warn("Adaptive closeout callback failed", { message: error.message }),
 });
-// 2026-11-15: the Static condition replicates Alsobay et al. (2a0c688): one
-// request every 90 s from the start of the Task stage (AlsobayStatic.mjs).
-export const alsobayStaticScheduler = createAlsobayStaticScheduler({
-  run: (game, { tickIndex }) => runAlsobayStatic(game, { kind: "interval", tickIndex }),
-  onError: error => console.warn("Alsobay Static request failed", { message: error.message }),
-});
 Empirica.on("game", "deadline", (_ctx, { game }) => {
   discussionDeadline.register(game);
   adaptiveCloseoutScheduler.register(game);
-  alsobayStaticScheduler.register(game);
 });
 // Kind listeners replay loaded scopes, unlike onStageStart which may already
 // have a persisted ran flag after a callbacks restart.
@@ -277,7 +270,6 @@ function restoreGameRuntime(game) {
   loadedGames.set(game.id, game);
   discussionDeadline.register(game);
   adaptiveCloseoutScheduler.register(game);
-  alsobayStaticScheduler.register(game);
   facilitatorTasks.launch(`${game.id}:restore`, () => recoverInterruptedInFlight(game, CALLBACKS_INSTANCE_ID, Date.now(), () => Empirica.flush()));
 }
 Empirica.on("game", (_ctx, { game }) => restoreGameRuntime(game));
@@ -1231,7 +1223,6 @@ Empirica.onGameStart(({ game }) => {
 Empirica.onRoundStart(({ round }) => {
   const game = round.currentGame;
   adaptiveCloseoutScheduler.cancel(game, "round_started");
-  alsobayStaticScheduler.cancel(game);
   round.set("callbacksInitializedAt", Date.now());
   round.set("callbacksInstanceId", CALLBACKS_INSTANCE_ID);
   if (round.get("isPractice") === true) {
@@ -1541,7 +1532,7 @@ export function handleFormalStageStart(stage) {
   const game = stage.currentGame;
   const stageName = stage.get("name");
   if (stage.round.get("isPractice") && stageName !== "FinalDecision") return;
-  if (stage.get("formalStageStartHandled")) { discussionDeadline.register(game); adaptiveCloseoutScheduler.register(game); alsobayStaticScheduler.register(game); return; }
+  if (stage.get("formalStageStartHandled")) { discussionDeadline.register(game); adaptiveCloseoutScheduler.register(game); return; }
   stage.set("formalStageStartHandled", true);
   stage.set("callbacksInitializedAt", Date.now());
   stage.set("callbacksInstanceId", CALLBACKS_INSTANCE_ID);
@@ -1561,7 +1552,6 @@ export function handleFormalStageStart(stage) {
     game.set("deadline",      now + gameDuration * 60 * 1000);
     discussionDeadline.register(game);
     adaptiveCloseoutScheduler.register(game);
-    alsobayStaticScheduler.register(game);
     const chatKey = `chat_round_${stage.round.get("taskIndex")}`;
     const durationMs = gameDuration * 60 * 1000;
     const reminderMinutes = Math.ceil(gameDuration / 2);
@@ -2012,56 +2002,54 @@ function alsobayRequestMessages(game, chat, now = Date.now()) {
     now, taskStartTime: game.get("taskStartTime"), deadline: game.get("deadline") });
 }
 
-/** Static condition: one Alsobay et al. request (a 90 s tick or an
- * @[Facilitator] message). Posted as returned; no validation or retry. */
-export async function runAlsobayStatic(game, { kind, tickIndex = null, requestedMessage = null, humanMessageCount = null }) {
+/** One Alsobay et al. request, used by the Static condition and by the
+ * Adaptive Static-policy turn's Static counterpart: the current transcript,
+ * the original prompt, MESSAGE posted as returned; no validation, repair or
+ * retry. The caller owns the audit entry, its in-flight record and
+ * finalisation. */
+async function alsobayStaticTurn(game, chatKey, logEntry) {
+  Object.assign(logEntry, { alsobayStatic: true, staticPolicy: `alsobay_${ALSOBAY_SOURCE_COMMIT}`, requireLLMMessage: true,
+    routingDecision: "ALSOBAY_STATIC", selectedRole: "STATIC" });
+  const messages = alsobayRequestMessages(game, game.get(chatKey) || []);
+  logEntry.messagesOAIFormat = messages;
+  logEntry.requestMade = true;
+  const response = await getLLMResponse(messages, llmMaxOutputTokens, { responseFormat: "json_object" });
+  if (!response.success) { logEntry.failureStage = "generator_api"; logEntry.reason = `API Error: ${response.error}`; return false; }
+  logEntry.generatorRawResponses = [{ attempt: 1, rawText: response.rawText }];
+  const parsed = parseAlsobayResponse(response.rawText);
+  if (!parsed.ok) { logEntry.failureStage = "parse"; logEntry.reason = parsed.error; if (parsed.llmAction) logEntry.llmAction = parsed.llmAction; return false; }
+  logEntry.requestSuccess = true;
+  logEntry.llmAction = parsed.llmAction;
+  const candidate = { role: "STATIC", message: parsed.llmAction.MESSAGE };
+  logEntry.visibleWordCount = candidate.message.trim().split(/\s+/).filter(Boolean).length;
+  const posted = await postGeneratorResultIfValid(game, chatKey, candidate, "STATIC", logEntry, null);
+  logEntry.outcome = posted ? "PUBLISHED" : "SILENT";
+  return posted;
+}
+
+/** Static @[Facilitator]: the same request, required to respond, sent at once. */
+export async function runAlsobayStatic(game, { requestedMessage = null, humanMessageCount = null } = {}) {
   const round = game.currentRound, stage = game.currentStage;
   if (!round || round.get("isPractice") || round.get("facilitation") !== "static" || stage?.get("name") !== "Task") return;
   const roundIndex = round.get("taskIndex");
   const chatKey = `chat_round_${roundIndex}`;
   const deadline = game.get("deadline"), taskStartTime = game.get("taskStartTime");
   if (!Number.isFinite(deadline) || !Number.isFinite(taskStartTime)) return;
-  const directlyRequested = kind === "request";
-  if (directlyRequested) {
-    const handled = round.get("handledFacilitatorRequests") || [];
-    if (requestedMessage?.messageId && !handled.includes(requestedMessage.messageId)) round.set("handledFacilitatorRequests", [...handled, requestedMessage.messageId]);
-  }
+  const handled = round.get("handledFacilitatorRequests") || [];
+  if (requestedMessage?.messageId && !handled.includes(requestedMessage.messageId)) round.set("handledFacilitatorRequests", [...handled, requestedMessage.messageId]);
   const now = Date.now();
-  const chat = game.get(chatKey) || [];
   const logEntry = {
-    auditRequestId: `${game.id}:${roundIndex}:alsobay:${directlyRequested ? `request:${requestedMessage?.messageId ?? now}` : `interval:${tickIndex}`}:${randomUUID()}`,
+    auditRequestId: `${game.id}:${roundIndex}:alsobay:request:${requestedMessage?.messageId ?? now}:${randomUUID()}`,
     stageId: stage.id, roundId: round.id, originatingRoundId: round.id, originatingStageId: stage.id, roundIndex,
-    facilitation: "static", alsobayStatic: true, staticPolicy: `alsobay_${ALSOBAY_SOURCE_COMMIT}`,
-    timestamp: now, remainingTime: deadline - now, timeElapsed: now - taskStartTime,
-    intervalTriggered: !directlyRequested, tickIndex, directlyRequested, requireLLMMessage: true,
-    requestMade: false, requestSuccess: false, messageAdded: false, outcome: "SILENT", reason: "", model: openaiModel,
+    facilitation: "static", timestamp: now, remainingTime: deadline - now, timeElapsed: now - taskStartTime,
+    directlyRequested: true, requestMade: false, requestSuccess: false, messageAdded: false, outcome: "SILENT", reason: "", model: openaiModel,
     humanMessageCount: humanMessageCount ?? game.get("humanMessageCount") ?? 0,
-    triggerSource: directlyRequested ? "message" : "alsobay_interval", triggerSources: [directlyRequested ? "message" : "alsobay_interval"],
-    triggerType: directlyRequested ? "PARTICIPANT_REQUEST" : "AUTOMATIC_CHECKPOINT",
-    mentionDetected: directlyRequested, participantRequested: directlyRequested,
-    routingDecision: "ALSOBAY_STATIC", selectedRole: "STATIC",
+    triggerSource: "message", triggerSources: ["message"], triggerType: "PARTICIPANT_REQUEST",
+    mentionDetected: true, participantRequested: true, serverInstanceId: CALLBACKS_INSTANCE_ID,
   };
-  if (!directlyRequested) {
-    if (!alsobayTranscript(chat).length) { logEntry.reason = "No chat messages available"; await finalizeAuditLog(game, logEntry); return; }
-    if (lastSenderIsFacilitator(chat)) { logEntry.reason = "Last message was from AI, no request made"; await finalizeAuditLog(game, logEntry); return; }
-  }
-  logEntry.serverInstanceId = CALLBACKS_INSTANCE_ID;
   try {
     await beginInFlight(game, { ...logEntry, outcome: "PENDING" }, () => Empirica.flush());
-    const messages = alsobayRequestMessages(game, chat, now);
-    logEntry.messagesOAIFormat = messages;
-    logEntry.requestMade = true;
-    const response = await getLLMResponse(messages, llmMaxOutputTokens, { responseFormat: "json_object" });
-    if (!response.success) { logEntry.reason = `API Error: ${response.error}`; return; }
-    logEntry.generatorRawResponses = [{ attempt: 1, rawText: response.rawText }];
-    const parsed = parseAlsobayResponse(response.rawText);
-    if (!parsed.ok) { logEntry.reason = parsed.error; if (parsed.llmAction) logEntry.llmAction = parsed.llmAction; return; }
-    logEntry.requestSuccess = true;
-    logEntry.llmAction = parsed.llmAction;
-    const candidate = { role: "STATIC", message: parsed.llmAction.MESSAGE };
-    logEntry.visibleWordCount = candidate.message.trim().split(/\s+/).filter(Boolean).length;
-    const posted = await postGeneratorResultIfValid(game, chatKey, candidate, "STATIC", logEntry, null);
-    logEntry.outcome = posted ? "PUBLISHED" : "SILENT";
+    await alsobayStaticTurn(game, chatKey, logEntry);
   } catch (error) {
     logEntry.reason = `Unexpected Error: ${error.message}`;
   } finally {
@@ -2195,12 +2183,11 @@ async function processChat(env, { game, adaptiveTrigger = null, requestedMessage
     ? latestHumanMessages[latestHumanMessages.length - 1].text
     : "";
   const isMentionCheckpoint = !adaptiveTrigger && containsFacilitatorMention(latestHumanText);
-  // 2026-11-15: Static replicates Alsobay et al. Participant messages never
-  // trigger an automatic message (the 90 s timer does); an @[Facilitator]
-  // message gets the same prompt, required to respond, immediately.
-  if (facilitation === "static") {
-    if (!isMentionCheckpoint) return;
-    return runAlsobayStatic(game, { kind: "request", requestedMessage: requestedMessage ?? humans.at(-1), humanMessageCount });
+  // Static sends the Alsobay et al. request. Its automatic turns use the shared
+  // six-message checkpoint below, the study's control timing (2026-11-16); an
+  // @[Facilitator] message gets the same request, required to respond, at once.
+  if (facilitation === "static" && isMentionCheckpoint) {
+    return runAlsobayStatic(game, { requestedMessage: requestedMessage ?? humans.at(-1), humanMessageCount });
   }
 
   let trigger = shouldEvaluateCheckpoint({
@@ -2387,6 +2374,21 @@ async function processChat(env, { game, adaptiveTrigger = null, requestedMessage
   // is part of this so a re-entrant call for the same humanMessageCount
   // (e.g. a duplicate Empirica event) cannot double-trigger. ──
   recordAttempt(game, humanMessageCount, now);
+
+  if (facilitation === "static") {
+    logEntry.directlyRequested = false;
+    logEntry.triggerType = "AUTOMATIC_CHECKPOINT";
+    try {
+      if (await alsobayStaticTurn(game, chatKey, logEntry)) {
+        recordPublish(game, { role: "STATIC", humanMessageCountAtPublish: logEntry.publishedHumanMessageCount, messageId: logEntry.publishedMessageId, now: Date.now() });
+      }
+    } catch (error) {
+      logEntry.reason = `Unexpected Error: ${error.message}`;
+    } finally {
+      await finalizeAuditLog(game, logEntry);
+    }
+    return;
+  }
 
   // Fail closed on an unexpected Round condition without sending it through
   // either policy. The real S1-S4 table assigns only static/adaptive.
@@ -2784,7 +2786,6 @@ Empirica.onStageEnded(({ stage }) => {
     cancelStagePipelines(stage.id);
     discussionDeadline.cancel(stage.currentGame);
     adaptiveCloseoutScheduler.cancel(stage.currentGame, "stage_ended");
-    alsobayStaticScheduler.cancel(stage.currentGame);
   }
   const round = stage.round;
   const game = stage.currentGame;
@@ -2843,7 +2844,6 @@ Empirica.onStageEnded(({ stage }) => {
 
 Empirica.onRoundEnded(({ round }) => {
   const game = round.currentGame;
-  alsobayStaticScheduler.cancel(game);
   if (round.get("isPractice") === true) return;
   const endedAt = new Date().toISOString();
   queueResearchMirror("round_ended", async () => {
@@ -2872,7 +2872,6 @@ Empirica.onGameEnded(({ game }) => {
   adaptiveCloseoutScheduler.cancel(game, "game_ended");
   loadedGames.delete(game.id);
   adaptiveCloseoutScheduler.cancel(game, "game_ended");
-  alsobayStaticScheduler.cancel(game);
   const storedEndedAt = game.get("endedAt");
   const endedAt = typeof storedEndedAt === "string" && storedEndedAt.trim()
     ? storedEndedAt

@@ -379,11 +379,10 @@ test("robustness: non-deferral detector outcomes retain one message per checkpoi
     assert.ok(r.calls.length <= 5, `${name}: bounded provider calls (${r.calls.join(",")})`);
     assert.equal(w.game.get("publishedThisRound"), 1, name);
   }
-  // Static (Alsobay et al.) speaks only on its 90 s timer, never on a participant message.
   const s = world("static", CHAT);
   const staticRun = await runCheckpoint(s, null, () => STATIC_REPLY);
-  assert.equal(staticRun.published.length, 0);
-  assert.deepEqual(staticRun.calls, []);
+  assert.equal(staticRun.published.length, 1);
+  assert.deepEqual(staticRun.calls, ["static"], "one Alsobay request at the same checkpoint");
 });
 
 
@@ -471,7 +470,7 @@ test("end-to-end: a silent participant is invited without a detector call, at mo
 
   const staticWorld = world("static", SILENT_JORDAN);
   const s = await runCheckpoint(staticWorld, null, () => STATIC_REPLY);
-  assert.deepEqual(s.calls, [], "Static has no silence rule and no message-triggered turn");
+  assert.deepEqual(s.calls, ["static"], "Static has no silence rule; its checkpoint sends the Alsobay request");
 });
 
 test("end-to-end: an invitation is withdrawn for Static if the invitee posts before publication", async () => {
@@ -495,7 +494,7 @@ test("end-to-end: the detector receives option mention counts and no priority fi
   assert.doesNotMatch(input, /"priority"|fixedIntegrationPriority/);
 });
 
-test("end-to-end: a Static @Facilitator request gets the Alsobay reply, which is not an intervention; later messages trigger nothing", async () => {
+test("end-to-end: a Static @Facilitator reply is not an intervention and does not reset the six-message gate", async () => {
   const lines = [...CHAT.slice(0, 5), msg("Casey", "@[Facilitator] can you recap the transport facts?")];
   const w = world("static", lines);
   const r = await runCheckpoint(w, null, () => ({ MESSAGE: "City A transport is 12 minutes and City B is 18 minutes, as shared.", RATIONALE: "recap" }));
@@ -505,11 +504,14 @@ test("end-to-end: a Static @Facilitator request gets the Alsobay reply, which is
   assert.equal(r.published[0].countsAsIntervention, false);
   assert.equal(w.game.get("totalInterventions") || 0, 0);
   assert.equal(w.game.get("totalParticipantRequestReplies"), 1);
-  assert.equal(r.audit.directlyRequested, true);
+  assert.equal(w.game.get("messagesSinceLastPublish"), 6, "the six-message gate is untouched");
+  w.game.set("lastAttemptTimestamp", Date.now() - 31_000);
   appendHuman(w, "Alex", "Thanks, that helps.");
-  appendHuman(w, "Casey", "I can add another public point.");
   const next = await runCheckpoint(w, null, () => STATIC_REPLY);
-  assert.deepEqual(next.calls, []);
+  assert.deepEqual(next.calls, ["static"]);
+  assert.equal(published(w.game).at(-1).countsAsIntervention, true);
+  assert.equal(w.game.get("totalInterventions"), 1);
+  assert.equal(w.game.get("messagesSinceLastPublish"), 0);
 });
 
 test("end-to-end: a fixed silence nudge during generation does not discard the automatic result", async () => {

@@ -119,10 +119,11 @@ test("test-mode stage skip during real Validator await prevents stale AI publica
   assert.equal(r.published.length, 0);
   assert.equal(w.round.get("cognitiveInterventionHistory"), undefined);
 });
-test("Static real callbacks make no request on a participant message (the 90 s timer drives Static)", async () => {
+test("Static real callbacks send one Alsobay request at the shared checkpoint, with no Assessor or Validator", async () => {
   const r = await run(world("static"));
-  assert.equal(r.requests.length, 0);
-  assert.equal(r.published.length, 0);
+  assert.equal(r.requests.length, 1);
+  assert.ok(isAlsobayPrompt(r.requests[0].messages[0].content));
+  assert.equal(r.published.length, 1);
 });
 test("formal Adaptive Assessor receives the explicit complete-current-round scope", async () => {
   const r = await run(world("adaptive"));

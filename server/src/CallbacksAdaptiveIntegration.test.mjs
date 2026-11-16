@@ -142,8 +142,8 @@ test("every in-flight lifecycle mutation is awaited and committed through the se
     ...handleChatBody.matchAll(/(await\s+)?finalizeAuditLog\(game, logEntry\);/g),
   ];
   // Requested replies finalise in finally before releasing their publication
-  // reservation; the Alsobay Static request has two early exits and a finally.
-  assert.equal(finalizations.length, 9, "Every terminal route, including a failed initial commit, retains an awaited lifecycle commit");
+  // reservation; the Static checkpoint and the Static request each finalise in finally.
+  assert.equal(finalizations.length, 8, "Every terminal route, including a failed initial commit, retains an awaited lifecycle commit");
   assert.ok(
     finalizations.every((match) => match[1] === "await "),
     "no terminal callback path may release its lifecycle commit without awaiting it",
@@ -153,17 +153,21 @@ test("every in-flight lifecycle mutation is awaited and committed through the se
   assert.doesNotMatch(handleChatBody, /(^|\n)\s*(?!await\s+)recoverInterruptedInFlight\(/m);
 });
 
-test("routing: Static leaves the message checkpoint before the shared pacing and any Adaptive function, and answers only @[Facilitator]", () => {
-  const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function processChat"));
-  const staticStart = handleChatBody.indexOf('if (facilitation === "static") {');
-  const staticEnd = handleChatBody.indexOf("\n  }\n", staticStart);
-  const staticBlock = handleChatBody.slice(staticStart, staticEnd);
-  assert.ok(staticStart !== -1 && staticStart < handleChatBody.indexOf("shouldEvaluateCheckpoint({"));
-  assert.match(staticBlock, /if \(!isMentionCheckpoint\) return;/);
-  assert.match(staticBlock, /return runAlsobayStatic\(game, \{ kind: "request"/);
-  const alsobay = callbacksSource.slice(callbacksSource.indexOf("export async function runAlsobayStatic"), callbacksSource.indexOf("async function processChat"));
+test("routing: Static uses the shared checkpoint, then sends only the Alsobay request, without any Adaptive function", () => {
+  const body = callbacksSource.slice(callbacksSource.indexOf("async function processChat"));
+  const mention = body.indexOf('if (facilitation === "static" && isMentionCheckpoint) {');
+  const checkpoint = body.indexOf("shouldEvaluateCheckpoint({");
+  const attempt = body.indexOf("recordAttempt(game, humanMessageCount, now);");
+  const staticStart = body.indexOf('if (facilitation === "static") {', attempt);
+  const staticEnd = body.indexOf("\n    return;\n  }\n", staticStart);
+  const detector = body.indexOf("assessSemanticFactors(");
+  assert.ok(mention !== -1 && mention < checkpoint && checkpoint < attempt && attempt < staticStart && staticEnd > staticStart && staticEnd < detector);
+  const staticBlock = body.slice(staticStart, staticEnd);
+  assert.match(staticBlock, /await alsobayStaticTurn\(game, chatKey, logEntry\)/);
+  assert.match(staticBlock, /recordPublish\(game, \{ role: "STATIC"/);
+  const alsobay = callbacksSource.slice(callbacksSource.indexOf("async function alsobayStaticTurn"), callbacksSource.indexOf("async function processChat"));
   for (const forbiddenCall of ["assessSemanticFactors(", "checkEvidence(", "evaluateGate(", "chooseRole(", "compilePlan(", "validateCandidate(", "runSharedGeneration("]) {
-    assert.equal(alsobay.includes(forbiddenCall), false, `the Alsobay Static request must not call ${forbiddenCall}`);
+    assert.equal(alsobay.includes(forbiddenCall) || staticBlock.includes(forbiddenCall), false, `Static must not call ${forbiddenCall}`);
   }
 });
 
@@ -251,14 +255,14 @@ test("Static, Adaptive, and participant-requested replies share publication-only
   assert.match(fallbackBody, /whileFacilitatorPublishesVisibleResponse\([\s\S]*?appendCanonicalMessage\(/);
 });
 
-test("routing: ordinary Adaptive message opportunities use one shared checkpoint manager without an attempt cap", () => {
-  const handleChatBody = callbacksSource.slice(callbacksSource.indexOf("async function processChat"));
-  const checkpointIndex = handleChatBody.indexOf("shouldEvaluateCheckpoint({");
-  const staticIndex = handleChatBody.indexOf('if (facilitation === "static") {');
-  const adaptiveDetectorIndex = handleChatBody.indexOf("assessSemanticFactors(");
-  assert.ok(staticIndex !== -1 && staticIndex < checkpointIndex && checkpointIndex < adaptiveDetectorIndex);
-  assert.equal([...handleChatBody.matchAll(/shouldEvaluateCheckpoint\(\{/g)].length, 1, "there must be one shared checkpoint manager call");
-  assert.doesNotMatch(handleChatBody, /bypassAutomaticPacingAndCap|interventionCapPerRound|cap_reached/);
+test("routing: Static and Adaptive message opportunities share one checkpoint manager without an attempt cap", () => {
+  const body = callbacksSource.slice(callbacksSource.indexOf("async function processChat"));
+  const checkpointIndex = body.indexOf("shouldEvaluateCheckpoint({");
+  const staticIndex = body.indexOf('if (facilitation === "static") {', checkpointIndex);
+  const adaptiveDetectorIndex = body.indexOf("assessSemanticFactors(");
+  assert.ok(checkpointIndex !== -1 && checkpointIndex < staticIndex && staticIndex < adaptiveDetectorIndex);
+  assert.equal([...body.matchAll(/shouldEvaluateCheckpoint\(\{/g)].length, 1, "there must be one shared checkpoint manager call, not one per condition");
+  assert.doesNotMatch(body, /bypassAutomaticPacingAndCap|interventionCapPerRound|cap_reached/);
 });
 
 test("stale Validator results are rejected before either publication path", () => {

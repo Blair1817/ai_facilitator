@@ -389,7 +389,7 @@ test("schema-invalid Validator output cannot reach participants", async () => {
 });
 
 test("a provider result cannot publish after the Game has ended even if an old Task reference remains", async () => {
-  const { runAlsobayStatic } = await getOfflineCallbacksHarness();
+  const { handleChat } = await getOfflineCallbacksHarness();
   const w = world("static");
   let ended = false;
   await withFetch(async (_url, options) => {
@@ -399,7 +399,7 @@ test("a provider result cannot publish after the Game has ended even if an old T
       w.game.set("endedAt", new Date().toISOString());
     }
     return providerResponse({ MESSAGE: "What public evidence should the group compare next?", RATIONALE: "r" });
-  }, () => runAlsobayStatic(w.game, { kind: "interval", tickIndex: 1 }));
+  }, () => handleChat(undefined, { game: w.game }));
 
   assert.equal(ended, true);
   assert.equal(published(w.game).length, 0);
@@ -411,7 +411,7 @@ test("configured timeout covers a stalled response body, aborts the signal, rele
   const priorKey = process.env.OPENAI_API_KEY;
   process.env.LLM_REQUEST_TIMEOUT_MS = "5";
   process.env.OPENAI_API_KEY = "integration-secret-must-not-log";
-  const { runAlsobayStatic } = await getOfflineCallbacksHarness();
+  const { handleChat } = await getOfflineCallbacksHarness();
   const w = world("static");
   let signal;
   try {
@@ -426,7 +426,7 @@ test("configured timeout covers a stalled response body, aborts the signal, rele
         text: () => new Promise(() => {}),
       };
     }, async (errors) => {
-      await runAlsobayStatic(w.game, { kind: "interval", tickIndex: 1 });
+      await handleChat(undefined, { game: w.game });
       assert.doesNotMatch(JSON.stringify(errors), /integration-secret-must-not-log/);
     });
   } finally {
