@@ -236,7 +236,7 @@ test("Assessor context excludes the Facilitator opening from participant evidenc
 test("the publication and client plain-text contracts preserve both blank-line separators", () => {
   assert.equal((DISCUSSION_OPENING_MESSAGE.match(/\n\n/g) ?? []).length, 2);
   assert.match(facilitatorContentSource, /ai-facilitator-message-content/);
-  assert.match(facilitatorContentSource, /renderPlainText\(message\.content \?\? message\.text\)/);
+  assert.match(facilitatorContentSource, /MentionText\(\{ text: message\.content \?\? message\.text, names \}\)/);
   assert.match(clientCssSource, /\.ai-facilitator-message-content\s*\{[\s\S]*?white-space:\s*pre-line;/);
 });
 

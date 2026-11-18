@@ -193,6 +193,7 @@ export function ChatHistory({ scope, attribute }) {
 }
 
 function MessageComp({ attribute }) {
+    const players = usePlayers();
     const msg = attribute.value;
     const ts = attribute.createdAt;
 
@@ -212,7 +213,7 @@ function MessageComp({ attribute }) {
                         <span className="ai-facilitator-message-title">Facilitator</span>
                         <span className="ai-facilitator-message-time">{ts && relTime(ts)}</span>
                     </header>
-                    <FacilitatorMessageContent message={msg} renderPlainText={renderMessageWithMentions} />
+                    <FacilitatorMessageContent message={msg} names={(players ?? []).map((p) => p.get("name"))} />
                 </article>
             </div>
         );

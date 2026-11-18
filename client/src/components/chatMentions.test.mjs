@@ -109,3 +109,15 @@ test("Practice offers the same participants plus an explicitly selectable Facili
     { id: "ai", display: "Facilitator" },
   ]);
 });
+
+test("Facilitator (Static) mentions render in the formats an unvalidated model may emit", async () => {
+  const { splitFacilitatorMentions } = await import("./chatMentions.mjs");
+  const names = ["Green", "Blue", "Pink"];
+  const mentions = (text) => splitFacilitatorMentions(text, names).filter((p) => typeof p !== "string").map((p) => p.mention);
+  assert.deepEqual(mentions("@[Blue], what do you think?"), ["Blue"]);
+  assert.deepEqual(mentions("@[ Blue ] and @[Pink]"), ["Blue", "Pink"]);
+  assert.deepEqual(mentions("@Blue and @pink, please share."), ["Blue", "pink"]);
+  assert.deepEqual(mentions("@[Blue, Pink] could you compare?"), ["Blue, Pink"]);
+  assert.deepEqual(mentions("email a@Bluestone or @Nobody or @[]"), []);
+  assert.deepEqual(splitFacilitatorMentions("Hi @[Blue]!", names), ["Hi ", { mention: "Blue" }, "!"]);
+});
