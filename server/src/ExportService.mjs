@@ -562,6 +562,7 @@ export class ExportService {
     const first = SCOPES_PAGE_SIZE;
     let cursor = null;
     const visited = new Set();
+    const seenScopeIds = new Set();
     const filterArg =
       filters == null
         ? undefined
@@ -579,6 +580,14 @@ export class ExportService {
       this.signal?.throwIfAborted();
       for (const edge of page?.edges || []) {
         this.signal?.throwIfAborted();
+        // 2026-11-18: cursor pages can overlap while a live game is still
+        // writing, which duplicated a whole round in the export. Yield each
+        // scope once.
+        const id = edge?.node?.id;
+        if (id != null) {
+          if (seenScopeIds.has(id)) continue;
+          seenScopeIds.add(id);
+        }
         yield edge.node;
       }
       if (!page?.pageInfo?.hasNextPage) break;
@@ -628,7 +637,7 @@ export class ExportService {
       const bi = numberOrZero(scopeAttributes(b).index);
       return ai - bi;
     });
-    return roundScopes.map((s) => s.id);
+    return [...new Set(roundScopes.map((s) => s.id))];
   }
 }
 
@@ -689,8 +698,22 @@ export function redactGameBundle(bundle) {
     }
     return { ...r, perPlayer };
   });
-  const llmLog = (bundle.llmLog || []).map((e) => redactDeep(e));
+  const llmLog = (bundle.llmLog || []).map((e) => redactAuditValue(e));
   return { game, players, rounds, llmLog };
+}
+
+// Structural audit keys (IDs, hashes, fingerprints) are never participant text.
+// 2026-11-18: redacting them turned millisecond timestamps inside audit IDs
+// into [REDACTED_PHONE] and broke joins with the research mirror.
+const STRUCTURAL_AUDIT_KEY = /^(?:id|ids)$|(?:Id|Ids|ID|IDs|Hash|Fingerprint)$/;
+
+function redactAuditValue(value) {
+  if (typeof value === "string" || !value || typeof value !== "object") return redactDeep(value);
+  if (Array.isArray(value)) return value.map(redactAuditValue);
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+    key,
+    STRUCTURAL_AUDIT_KEY.test(key) ? item : redactAuditValue(item),
+  ]));
 }
 
 export function renderQuestionnaireCsv(bundle) {

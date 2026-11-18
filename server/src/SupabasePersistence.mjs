@@ -33,7 +33,7 @@ export function redactPII(value) {
   return value
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[REDACTED_EMAIL]")
     .replace(/\b(?:https?:\/\/|www\.)\S+/gi, "[REDACTED_URL]")
-    .replace(/(?:\+?\d[\d ().-]{7,}\d)/g, "[REDACTED_PHONE]")
+    .replace(/(?<![\p{L}\p{N}:_-])(?:\+?\d[\d ().-]{7,}\d)(?![\p{L}\p{N}_-])/gu, "[REDACTED_PHONE]")
     .replace(/\b(Prolific(?:\s+(?:participant\s+)?ID)?|PID)\s*[:=#-]?\s*[A-Z0-9_-]{5,}\b/gi, "$1 [REDACTED_RECRUITMENT_ID]")
     .replace(/@(?!\[)[A-Z0-9_.-]{2,}/gi, "[REDACTED_HANDLE]")
     .replace(/\b(my (?:real )?name is|call me)\s+[A-Z][A-Za-z'-]*(?:\s+[A-Z][A-Za-z'-]*)?/gi, "$1 [REDACTED_NAME]");

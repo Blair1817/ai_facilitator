@@ -1118,3 +1118,42 @@ test("production game-ended handler persists an idempotent Tajriba endedAt", () 
   assert.match(handler, /if \(endedAt !== storedEndedAt\) game\.set\("endedAt", endedAt\)/);
   assert.match(handler, /occurred_at: endedAt/);
 });
+
+test("overlapping store pages do not duplicate rounds in the bundle (2026-11-18 export regression)", async () => {
+  const fx = fixture();
+  const admin = makeMockAdmin(fx.scopes);
+  const scopes = admin.scopes.bind(admin);
+  admin.scopes = async (args) => {
+    const page = await scopes(args);
+    const isRoundQuery = (args?.filter || []).some((f) => f?.kinds?.includes("round"));
+    // Simulate a cursor page that repeats a round already returned.
+    return isRoundQuery && page?.edges?.length > 1 ? { ...page, edges: [...page.edges, page.edges[1]] } : page;
+  };
+  const svc = new ExportService({ admin, defaultRedact: true });
+  const bundle = await svc.getGameBundle("GAME1");
+  assert.deepEqual(bundle.game.rounds, ["PRACTICE", "R0", "R1"]);
+  assert.equal(bundle.rounds.length, 2);
+  assert.deepEqual(bundle.rounds.map((r) => r.taskIndex), [0, 1]);
+});
+
+test("redactGameBundle keeps audit IDs and timestamps intact but still redacts free text", () => {
+  const auditId = "GAME1:0:6:1795026256007";
+  const requestId = "GAME1:1:alsobay:request:P1-3ef4f80f-0d6f-4b7d-8646-37357aa90367:aa61f0bf";
+  const redacted = redactGameBundle({
+    game: {}, players: [], rounds: [],
+    llmLog: [{
+      id: auditId,
+      auditRequestId: requestId,
+      publishedMessageId: "facilitator-R0-1795026268806",
+      reason: "participant wrote +44 7700 900123",
+      agentState: { eligibleMessageIds: ["msg-1795026256007"], publicContextFingerprint: "1795026256007" },
+    }],
+  });
+  const [entry] = redacted.llmLog;
+  assert.equal(entry.id, auditId);
+  assert.equal(entry.auditRequestId, requestId);
+  assert.equal(entry.publishedMessageId, "facilitator-R0-1795026268806");
+  assert.deepEqual(entry.agentState.eligibleMessageIds, ["msg-1795026256007"]);
+  assert.equal(entry.agentState.publicContextFingerprint, "1795026256007");
+  assert.match(entry.reason, /\[REDACTED_PHONE\]/);
+});

@@ -99,10 +99,32 @@ export function verifiedParticipationTargets(chat, rosterNames = []) {
   return silentInWindow(chat, rosterNames);
 }
 
-/** Number of public participant messages mentioning each option label (case-insensitive). */
+// Generic words that do not identify an option on their own ("Fenwick
+// University" is referred to as "Fenwick"; "City A" keeps its full label).
+const GENERIC_OPTION_WORDS = new Set(["university", "college", "campus", "city", "town", "the", "of"]);
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Whole-word, case-insensitive patterns for an option: its full label plus each
+ * distinctive word of at least three letters. */
+export function optionMentionPattern(label) {
+  const full = String(label ?? "").trim().replace(/\s+/g, " ");
+  if (!full) return null;
+  const words = full.split(" ").filter((w) => w.length >= 3 && !GENERIC_OPTION_WORDS.has(w.toLowerCase()));
+  const alternatives = [...new Set([full, ...words])].map(escapeRegExp);
+  return new RegExp(`(?<![\\p{L}\\p{N}])(?:${alternatives.join("|")})(?![\\p{L}\\p{N}])`, "iu");
+}
+
+/** Number of public participant messages mentioning each option (case-insensitive;
+ * 2026-11-18: short names such as "Fenwick" count for "Fenwick University"). */
 export function countOptionMentions(chat, optionLabels = []) {
   const messages = (Array.isArray(chat) ? chat : []).filter(isPublicParticipantMessage);
   return Object.fromEntries((Array.isArray(optionLabels) ? optionLabels : [])
     .filter((label) => typeof label === "string" && label.trim())
-    .map((label) => [label, messages.filter((m) => String(m?.text ?? m?.content ?? "").toLowerCase().includes(label.toLowerCase())).length]));
+    .map((label) => {
+      const pattern = optionMentionPattern(label);
+      return [label, messages.filter((m) => pattern.test(String(m?.text ?? m?.content ?? ""))).length];
+    }));
 }

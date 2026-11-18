@@ -594,3 +594,19 @@ test("end-to-end: an Adaptive Static-policy reply without a MESSAGE is not poste
   assert.equal(r.published.length, 0);
   assert.match(r.audit.reason, /MESSAGE/);
 });
+
+test("option mentions count short names as whole words (2026-11-18: 'Fenwick' for 'Fenwick University')", () => {
+  const m = (text) => msg("Alex", text);
+  const chat = [
+    m("I want to choose Fenwick"),
+    m("public surveys show substantial resident opposition for fenwick"),
+    m("Halden I like the name"),
+    m("Norvale University has a coach service"),
+    m("Fenwicks is not a campus"),
+    m("the university and the city"),
+  ];
+  assert.deepEqual(countOptionMentions(chat, ["Norvale University", "Halden University", "Fenwick University"]),
+    { "Norvale University": 1, "Halden University": 1, "Fenwick University": 2 });
+  assert.deepEqual(countOptionMentions([m("City A is close"), m("a city")], ["City A"]), { "City A": 1 },
+    "generic words and one-letter suffixes are not used on their own");
+});

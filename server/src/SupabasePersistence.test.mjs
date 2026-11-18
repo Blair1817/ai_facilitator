@@ -197,3 +197,10 @@ test("migration defines exactly the required ten research tables", () => {
   assert.match(sql, /revoke all on all tables in schema research from public, anon, authenticated/);
   assert.match(sql, /grant select, insert, update on all tables in schema research to service_role/);
 });
+
+test("phone redaction does not fire inside IDs, UUIDs or colon-joined timestamps", () => {
+  for (const id of ["GAME:0:6:1795026256007", "3ef4f80f-0d6f-4b7d-8646-37357aa90367", "msg-1795026256007"]) {
+    assert.equal(redactPII(id), id);
+  }
+  assert.equal(redactPII("call 07700 900123."), "call [REDACTED_PHONE].");
+});
