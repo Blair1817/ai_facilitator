@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 process.argv[1] = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-entry.js");
 const { buildSynthesisLedger, renderSynthesisLedger, checkProposedEntry, checkQuestion, ledgerSources, extractionSchema, auditSchema,
-  FALLBACK_QUESTION, OTHER_POINTS_TITLE, LEDGER_SUMMARY } = await import("./SynthesisLedger.mjs");
+  FALLBACK_QUESTION, OTHER_POINTS_TITLE, LEDGER_SUMMARY, ledgerContextLines, namedOptionConflict, UNCLEAR_OPTION } = await import("./SynthesisLedger.mjs");
 const { ledgerKind, mockLedgerExtraction, mockLedgerAudit, ledgerTargets } = await import("../test/participant_sim/fakes/ledgerMock.mjs");
 
 const OPTIONS = ["Talwick", "Rovenna", "Meridia"];
@@ -243,4 +243,73 @@ test("whatever the model returns, every message is accounted for and nothing unv
     assert.match(rendered.candidate.message.question, /\?$/);
     for (const [id, hit] of Object.entries(ledger.cache)) assert.ok(["points", "repeats", "no_task_information"].includes(hit.entry.status) && hit.text === sources.find(s => s.messageId === id).text);
   }
+});
+
+// ── 2026-11-18 internal test: Halden's points were filed under Fenwick ──────
+const B_OPTIONS = ["Norvale University", "Halden University", "Fenwick University"];
+const facilitator = (text, presentation) => ({ text, sender: { id: "ai", name: "Facilitator" }, messageType: "facilitator", speakerType: "facilitator", ...(presentation ? { presentation } : {}) });
+// Excerpt of the 2026-11-18 Round 1 discussion, in order.
+const HALDEN_CHAT = [
+  say("Blue", "I want to choose Fenwick"),
+  facilitator("Has anyone read anything about Halden University yet—good or bad—that could help the group consider it?"),
+  say("Green", "Halden I liek teh name"),
+  say("Blue", "very bad name"),
+  say("Pink", "public surveys show substantial resident opposition for fenwick"),
+  say("Green", "It has experience of delivering similar academic conferences"),
+  say("Green", "and tehre are enough closes guest room"),
+  facilitator("What points have you already seen, if any, that support the view that Halden University is not good?"),
+  say("Blue", "non refundable bookings"),
+  say("Green", "residents near conferences have objected to expected noise"),
+  facilitator("Shared points so far ...", { summary: "Shared points so far", sections: [{ title: "Fenwick University", body: "1. Fenwick University has experience delivering similar academic conferences." }], question: "How should the group weigh these points?" }),
+  say("Pink", "I don't like Fenwick."),
+];
+const buildB = (opts = {}, chat = HALDEN_CHAT) => {
+  const m = model(opts);
+  return buildSynthesisLedger({ chat, optionLabels: B_OPTIONS, taskGeneralContext: "Choose a host campus.", callLLM: m.callLLM })
+    .then(ledger => ({ ledger, calls: m.calls, rendered: renderSynthesisLedger(ledger, B_OPTIONS) }));
+};
+
+test("Facilitator messages reach the extractor and auditor as context only; earlier scoreboards are collapsed to their question", async () => {
+  const lines = ledgerContextLines(HALDEN_CHAT).split("\n");
+  assert.equal(lines.length, HALDEN_CHAT.length);
+  assert.equal(lines[7], "[m7] [Facilitator (context only)]: What points have you already seen, if any, that support the view that Halden University is not good?");
+  assert.equal(lines[8], "[m8] [Blue]: non refundable bookings", "the answer directly follows the question it answers");
+  assert.equal(lines[10], "[m10] [Facilitator (context only)]: (earlier summary of shared points omitted) How should the group weigh these points?");
+  assert.doesNotMatch(lines.join("\n"), /Fenwick University has experience/, "a wrong earlier attribution is not fed back");
+  const { calls } = await buildB();
+  for (const call of calls) assert.match(call.user, /\[m7\] \[Facilitator \(context only\)\]: What points/);
+  assert.deepEqual(ledgerTargets(calls[0].user), ledgerSources(HALDEN_CHAT).map(s => s.messageId), "Facilitator messages are never targets");
+  assert.ok(!ledgerTargets(calls[0].user).some(id => ["m1", "m7", "m10"].includes(id)));
+});
+
+test("a point filed under a different option than the one the message names is rejected, retried, then quoted under the named option", async () => {
+  const pink = ledgerSources(HALDEN_CHAT).find(s => s.messageId === "m4");
+  const wrong = { messageId: "m4", status: "points", sameAs: null, reason: "r",
+    points: [{ option: "Halden University", text: "Public surveys show substantial resident opposition.", quote: "public surveys show substantial resident opposition" }] };
+  assert.equal(namedOptionConflict(wrong, pink, B_OPTIONS), true);
+  assert.equal(checkProposedEntry(wrong, pink, { optionLabels: B_OPTIONS, earlierIds: [] }), null);
+  assert.equal(checkProposedEntry({ ...wrong, points: [{ ...wrong.points[0], option: "Fenwick University" }] }, pink, { optionLabels: B_OPTIONS, earlierIds: [] }).status, "points");
+  assert.equal(namedOptionConflict({ points: [{ option: "Halden University" }] }, { text: "Halden is better than Fenwick" }, B_OPTIONS), false, "two named options: no code-level judgement");
+  const misfile = user => { const data = mockLedgerExtraction(user); for (const e of data.entries) if (e.messageId === "m4") e.points[0].option = "Halden University"; return data; };
+  const { ledger, rendered, calls } = await buildB({ extract: misfile });
+  assert.match(calls[2].user, /"m4":"option_conflicts_with_named_option"/);
+  assert.equal(ledger.entries.m4.status, "verbatim");
+  assert.match(rendered.candidate.message.sections.find(s => s.title === "Fenwick University").body, /“public surveys show substantial resident opposition for fenwick”/);
+});
+
+test("Unclear points and failed entries for messages that name no option go under Other points in the participant's own words, never under a guessed option", async () => {
+  const unclear = user => { const data = mockLedgerExtraction(user); for (const e of data.entries) if (e.messageId === "m5") e.points = [{ option: UNCLEAR_OPTION, text: "Experience delivering similar conferences.", quote: "experience of delivering similar academic conferences" }]; return data; };
+  const { ledger, rendered } = await buildB({ extract: unclear });
+  assert.deepEqual(ledger.entries.m5.points, [{ option: UNCLEAR_OPTION, text: "“experience of delivering similar academic conferences”", quote: "experience of delivering similar academic conferences" }]);
+  const other = rendered.candidate.message.sections.find(s => s.title === OTHER_POINTS_TITLE);
+  assert.match(other.body, /“experience of delivering similar academic conferences”/);
+  assert.doesNotMatch(rendered.candidate.message.sections.find(s => s.title === "Fenwick University")?.body ?? "", /experience/);
+  // The model files "and tehre are enough closes guest room" under Fenwick and the auditor rejects it twice:
+  // the verbatim fallback must not reuse the model's unverified option.
+  const guess = user => { const data = mockLedgerExtraction(user); for (const e of data.entries) if (e.messageId === "m6") e.points[0].option = "Fenwick University"; return data; };
+  const { ledger: l2, rendered: r2 } = await buildB({ extract: guess, audit: user => mockLedgerAudit(user, id => id === "m6" ? "unfaithful" : "ok") });
+  assert.equal(l2.entries.m6.status, "verbatim");
+  assert.equal(l2.entries.m6.points[0].option, "General");
+  assert.match(r2.candidate.message.sections.find(s => s.title === OTHER_POINTS_TITLE).body, /“and tehre are enough closes guest room”/);
+  assert.ok(extractionSchema(["m0"], B_OPTIONS).properties.entries.items.properties.points.items.properties.option.enum.includes(UNCLEAR_OPTION));
 });

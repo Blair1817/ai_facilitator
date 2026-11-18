@@ -1,4 +1,4 @@
-import { withMessageIds, formatMessagesWithIds } from "./prompts/DynamicContext.mjs";
+import { withMessageIds } from "./prompts/DynamicContext.mjs";
 import { isPublicParticipantMessage } from "./CognitiveOperations.mjs";
 import { readRuntimeFile } from "./prompts/PromptRuntime.mjs";
 import { strictParseJsonObject } from "./prompts/GeneratorContract.mjs";
@@ -15,6 +15,10 @@ import { strictParseJsonObject } from "./prompts/GeneratorContract.mjs";
 
 export const GENERAL_OPTION = "General";
 export const OTHER_POINTS_TITLE = "Other points";
+// 2026-11-18: for a message whose option cannot be determined from the message
+// or its context. Rendered under Other points as the participant's own words,
+// rather than guessed from whichever option was mentioned last.
+export const UNCLEAR_OPTION = "Unclear";
 export const LEDGER_SUMMARY = "Shared points so far";
 export const FALLBACK_QUESTION = "How do you weigh these points together?";
 export const MAX_POINT_WORDS = 60;
@@ -31,6 +35,25 @@ const words = text => String(text ?? "").trim().split(/\s+/).filter(Boolean);
 const loose = text => String(text ?? "").toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim();
 const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+// 2026-11-18: Facilitator messages are shown to the extractor and auditor as
+// context only (never targets, never a source of information), so an answer to
+// "what supports the view that Halden is not good?" is read as being about
+// Halden. Earlier scoreboards are collapsed to their question, so a wrong
+// earlier attribution cannot reinforce itself.
+const isFacilitatorContext = m => m?.sender?.id === "ai" || m?.messageType === "facilitator" || m?.speakerType === "facilitator";
+export const FACILITATOR_CONTEXT_NAME = "Facilitator (context only)";
+export function ledgerContextLines(chat) {
+  return withMessageIds(Array.isArray(chat) ? chat : []).flatMap(m => {
+    if (isPublicParticipantMessage(m)) return typeof m.text === "string" && m.text.trim() ? [`[${m.messageId}] [${m.sender?.name ?? ""}]: ${m.text}`] : [];
+    if (!isFacilitatorContext(m)) return [];
+    const p = m.presentation;
+    const text = Array.isArray(p?.sections) && p.sections.length
+      ? `(earlier summary of shared points omitted) ${p.question ?? ""}`.trim()
+      : String(m.text ?? m.content ?? "").replace(/\s+/g, " ").trim();
+    return text ? [`[${m.messageId}] [${FACILITATOR_CONTEXT_NAME}]: ${text}`] : [];
+  }).join("\n");
+}
+
 export function ledgerSources(chat) {
   return withMessageIds(chat).filter(isPublicParticipantMessage)
     .filter(m => typeof m.text === "string" && m.text.trim())
@@ -43,10 +66,11 @@ function mentionedOptions(text, optionLabels) {
     && new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(form)}([^\\p{L}\\p{N}]|$)`, "iu").test(text)));
 }
 
-function verbatimEntry(source, optionLabels, hintOption, fallbackReason) {
+function verbatimEntry(source, optionLabels, fallbackReason) {
   const mentioned = mentionedOptions(source.text, optionLabels);
-  const option = mentioned.length === 1 ? mentioned[0]
-    : optionLabels.includes(hintOption) && !mentioned.length ? hintOption : GENERAL_OPTION;
+  // 2026-11-18: an entry that failed checking is not trusted for its option
+  // either; only an option the message itself names is used.
+  const option = mentioned.length === 1 ? mentioned[0] : GENERAL_OPTION;
   return { messageId: source.messageId, status: "verbatim", fallbackReason,
     points: [{ option, text: `“${source.text.trim()}”`, verbatim: true }] };
 }
@@ -58,7 +82,7 @@ export function extractionSchema(ids, optionLabels) {
         messageId: { type: "string", enum: ids },
         status: { type: "string", enum: ["points", "repeats", "no_task_information"] },
         points: { type: "array", items: { type: "object", additionalProperties: false, required: ["option", "text", "quote"], properties: {
-          option: { type: "string", enum: [...optionLabels, GENERAL_OPTION] }, text: { type: "string" }, quote: { type: "string" } } } },
+          option: { type: "string", enum: [...optionLabels, GENERAL_OPTION, UNCLEAR_OPTION] }, text: { type: "string" }, quote: { type: "string" } } } },
         sameAs: { type: ["string", "null"] },
         reason: { type: "string" } } } },
     question: { type: "string" } } };
@@ -69,6 +93,13 @@ export function auditSchema(ids) {
       messageId: { type: "string", enum: ids },
       verdict: { type: "string", enum: ["ok", "incomplete", "unfaithful", "wrongly_excluded"] } } } },
     questionOk: { type: "boolean" } } };
+}
+
+/** True when the message names exactly one option and a point is filed under a different one. */
+export function namedOptionConflict(raw, source, optionLabels) {
+  const named = mentionedOptions(String(source?.text ?? ""), optionLabels);
+  return named.length === 1 && Array.isArray(raw?.points)
+    && raw.points.some(point => optionLabels.includes(point?.option) && point.option !== named[0]);
 }
 
 /** Structural checks only code can guarantee. Returns a clean entry or null. */
@@ -85,10 +116,13 @@ export function checkProposedEntry(raw, source, { optionLabels, earlierIds }) {
     const text = typeof point?.text === "string" ? point.text.trim() : "";
     const count = words(text).length;
     if (!text || count > MAX_POINT_WORDS || text.includes("@") || /[\n\r]/.test(text)) return null;
-    if (![...optionLabels, GENERAL_OPTION].includes(point.option)) return null;
+    if (![...optionLabels, GENERAL_OPTION, UNCLEAR_OPTION].includes(point.option)) return null;
     if (typeof point.quote !== "string" || !loose(point.quote) || !sourceLoose.includes(loose(point.quote))) return null;
-    points.push({ option: point.option, text, quote: point.quote });
+    points.push(point.option === UNCLEAR_OPTION
+      ? { option: UNCLEAR_OPTION, text: `“${point.quote.trim()}”`, quote: point.quote }
+      : { option: point.option, text, quote: point.quote });
   }
+  if (namedOptionConflict({ points }, source, optionLabels)) return null;
   return { messageId: source.messageId, status: "points", points, reason: String(raw.reason ?? "") };
 }
 
@@ -128,26 +162,26 @@ export async function buildSynthesisLedger({ chat, optionLabels = [], taskGenera
   }
   const targets = sources.filter(s => !entries[s.messageId]);
   let question = null;
-  const fallback = (source, reason, hint) => {
+  const fallback = (source, reason) => {
     if (UNAVAILABLE_REASONS.includes(reason) && words(source.text).length < SHORT_MESSAGE_WORDS && !mentionedOptions(source.text, optionLabels).length) {
       entries[source.messageId] = { messageId: source.messageId, status: "no_task_information", points: [], reason: "short_message_model_unavailable", fallbackReason: reason };
       diagnostics.fallbacks.push({ messageId: source.messageId, reason, excludedAsShort: true });
       return;
     }
-    entries[source.messageId] = verbatimEntry(source, optionLabels, hint, reason);
+    entries[source.messageId] = verbatimEntry(source, optionLabels, reason);
     diagnostics.fallbacks.push({ messageId: source.messageId, reason });
   };
 
-  const context = `[TASK_GENERAL_CONTEXT]\n${taskGeneralContext || "(not provided)"}\n\n[OPTIONS]\n${JSON.stringify(optionLabels)}\n\n[PUBLIC_TRANSCRIPT]\n${formatMessagesWithIds(sources.map(s => ({ messageId: s.messageId, text: s.text, sender: { name: s.name } })))}`;
+  const context = `[TASK_GENERAL_CONTEXT]\n${taskGeneralContext || "(not provided)"}\n\n[OPTIONS]\n${JSON.stringify(optionLabels)}\n\n[PUBLIC_TRANSCRIPT]\n${ledgerContextLines(chat)}`;
   // Round 1 covers every uncached message; round 2 retries only the entries
   // that failed, with the reason. Whatever still fails is quoted verbatim.
   let pending = targets;
-  const failure = new Map();   // messageId -> { reason, hint }
+  const failure = new Map();   // messageId -> { reason }
   for (let round = 1; round <= LEDGER_ROUNDS && pending.length; round++) {
     if (typeof callLLM !== "function") { for (const s of pending) failure.set(s.messageId, { reason: "no_model" }); break; }
     if (!canContinue()) { for (const s of pending) if (!failure.has(s.messageId)) failure.set(s.messageId, { reason: "time_budget" }); break; }
     const ids = pending.map(s => s.messageId);
-    const feedback = round > 1 ? `\n\n[PREVIOUS_ATTEMPT_PROBLEMS]\n${JSON.stringify(Object.fromEntries(ids.map(id => [id, failure.get(id)?.reason ?? "unknown"])))}\nCorrect these entries: include all task information in the message, say only what it says, keep qualifiers, and copy quotes exactly.` : "";
+    const feedback = round > 1 ? `\n\n[PREVIOUS_ATTEMPT_PROBLEMS]\n${JSON.stringify(Object.fromEntries(ids.map(id => [id, failure.get(id)?.reason ?? "unknown"])))}\nCorrect these entries: include all task information in the message, say only what it says, keep qualifiers, copy quotes exactly, and file each point under the option the message names or clearly refers to (use Unclear when that cannot be determined).` : "";
     const extracted = await callJson(callLLM, "ledger_extract", readRuntimeFile("specialist/ledger_extractor.md"),
       `${context}\n\n[TARGET_MESSAGE_IDS]\n${JSON.stringify(ids)}${feedback}`, "synthesis_ledger_entries", extractionSchema(ids, optionLabels));
     diagnostics.calls.push({ kind: "ledger_extract", round, targets: ids.length, ok: extracted.ok, error: extracted.error });
@@ -161,7 +195,7 @@ export async function buildSynthesisLedger({ chat, optionLabels = [], taskGenera
         if (seen.has(source.messageId)) { proposed.set(source.messageId, { rejected: "entry_duplicated" }); continue; }
         seen.add(source.messageId);
         const checked = checkProposedEntry(raw, source, { optionLabels, earlierIds: order.slice(0, order.indexOf(source.messageId)) });
-        proposed.set(source.messageId, checked ?? { rejected: "entry_failed_structure_check", hint: raw?.points?.[0]?.option });
+        proposed.set(source.messageId, checked ?? { rejected: namedOptionConflict(raw, source, optionLabels) ? "option_conflicts_with_named_option" : "entry_failed_structure_check" });
       }
       if (round === 1) proposedQuestion = checkQuestion(extracted.value.question);
     }
@@ -185,20 +219,19 @@ export async function buildSynthesisLedger({ chat, optionLabels = [], taskGenera
     const stillPending = [];
     for (const source of pending) {
       const entry = proposed.get(source.messageId);
-      const fail = (reason, hint) => { failure.set(source.messageId, { reason, hint: hint ?? failure.get(source.messageId)?.hint }); stillPending.push(source); };
+      const fail = reason => { failure.set(source.messageId, { reason }); stillPending.push(source); };
       if (!entry) { fail(extracted.ok ? "entry_missing" : "extraction_unavailable"); continue; }
-      if (entry.rejected) { fail(entry.rejected, entry.hint); continue; }
-      const hint = entry.points[0]?.option;
-      if (!auditRan) { fail("audit_unavailable", hint); continue; }
+      if (entry.rejected) { fail(entry.rejected); continue; }
+      if (!auditRan) { fail("audit_unavailable"); continue; }
       const verdict = verdicts.get(source.messageId);
-      if (verdict !== "ok") { fail(`audit_${verdict ?? "verdict_missing"}`, hint); continue; }
+      if (verdict !== "ok") { fail(`audit_${verdict ?? "verdict_missing"}`); continue; }
       failure.delete(source.messageId);
       entries[source.messageId] = entry;
       nextCache[source.messageId] = { text: source.text, entry };
     }
     pending = stillPending;
   }
-  for (const source of targets) if (!entries[source.messageId]) fallback(source, failure.get(source.messageId)?.reason ?? "time_budget", failure.get(source.messageId)?.hint);
+  for (const source of targets) if (!entries[source.messageId]) fallback(source, failure.get(source.messageId)?.reason ?? "time_budget");
   // A "repeats" entry is only as good as what it points to: follow the chain
   // to a represented message; a repeat of a no-information message carries
   // none either; anything unresolved is quoted.
