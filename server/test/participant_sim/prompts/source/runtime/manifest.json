@@ -117,12 +117,12 @@
       "bytes": 2726
     },
     "specialist/ledger_auditor.md": {
-      "sha256": "15198b68f424480ad60f34b63c9b8b300ca85a20740fcc359d43a9d778851e74",
-      "bytes": 2419
+      "sha256": "4a9b6b8c56ccf449dd558b5e8938d09f889c6548a208b21736ac4165954f1958",
+      "bytes": 2671
     },
     "specialist/ledger_extractor.md": {
-      "sha256": "5761bd3e0349466fc0fd920b11c8f9dc13bdbacef51d2c52802e0bc9a025b47f",
-      "bytes": 4508
+      "sha256": "8dd049b955af935249448cffbc20aad6f23258f954bfe5e91791ac18a3f53bd7",
+      "bytes": 4803
     },
     "specialist/plan_preflight.schema.json": {
       "sha256": "b97c8440fc83a2575b5854f2b40b68f13feb2c87a3f1067c00c8084d9218ccd6",
