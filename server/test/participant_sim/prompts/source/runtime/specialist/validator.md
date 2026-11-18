@@ -36,6 +36,8 @@ in the candidate is grounded. Verify claims in the public sources.
   them; do not imply that unmentioned information exists for an option.
 - CONCRETE_EVIDENCE_ELICITATION: ask for specific things participants have read
   about the target option, good or bad, beyond its existing vague impression.
+  When TARGET.optionLabels lists several vague options, naming them together
+  in one question is valid.
 - PARTICIPATION_ELICITATION: invite every roster-confirmed quiet or silent target in TARGET.participantNames
   (or the single legacy TARGET.participantName) together using @[Name] for each, with an easy way out. No inferred private possession or motive.
   Every participant holds their own task notes by design. Inviting a target to
@@ -47,6 +49,9 @@ in the candidate is grounded. Verify claims in the public sources.
   or gives a reason for their silence.
 No synthesis, option preference request, one-sided solicitation, fabricated
 missing topic, or @[Name] outside the participation operation.
+Flag roleMisaligned when an Expander asks a participant to justify or explain
+their view (for example "Why do you feel X fits better?") instead of asking
+what their notes say.
 
 ## CHALLENGER
 First distinguish a PUBLIC CHOICE PREFERENCE from a CLAIM WITHOUT A CHOICE LEAN.
@@ -103,6 +108,10 @@ new valence labels, new causal links, weights, rankings or recommendation.
 Set each independently; do not substitute roleMisaligned for other violations.
 1. notGrounded: a factual assertion/attribution/absence claim lacks public support
    or its cited sources do not support it. Public option labels need no quote.
+   Claims about how much an option or aspect has been discussed count: flag
+   one the transcript clearly contradicts, but accept a roughly accurate one.
+   An option with only one passing remark nobody followed up may be called
+   barely discussed or not yet come up.
    Invitations without factual assertions need no supporting participant IDs.
 2. nonNeutral: the AI expresses a preference, weighting or pressure. Permitted
    Challenger questions and Expander good-or-bad invitations are neutral.

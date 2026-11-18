@@ -53,8 +53,8 @@
       "validationSchema": "specialist/validation.schema.json",
       "preflightSchema": "specialist/plan_preflight.schema.json",
       "planRequired": true,
-      "generatorSha256": "86f0d794fd5b6130c9e365b88caf67a33f89de3b12c8d16739e8138f220aace3",
-      "validatorSha256": "c64b97d552e4a604015699aaf0d82f528c52dddd06325e877ed464540bd81a0c",
+      "generatorSha256": "6a21565ae4d6ad5146f8dca2c96974649a2b4ffa3c1b6e15de5ab03b55da1192",
+      "validatorSha256": "4d3cb7362729b4e2fc0df3095bdf5387d9f5b8ac844f5fb4a4ebb40dbd25b8a7",
       "maxWords": 50
     },
     "challenger": {
@@ -69,7 +69,7 @@
       "preflightSchema": "specialist/plan_preflight.schema.json",
       "planRequired": true,
       "generatorSha256": "85577804702d3fab2521e693709eed2608141e80268c81abcee6e71d4c0bf951",
-      "validatorSha256": "c64b97d552e4a604015699aaf0d82f528c52dddd06325e877ed464540bd81a0c",
+      "validatorSha256": "4d3cb7362729b4e2fc0df3095bdf5387d9f5b8ac844f5fb4a4ebb40dbd25b8a7",
       "maxWords": 50
     },
     "synthesiser": {
@@ -84,7 +84,7 @@
       "preflightSchema": "specialist/plan_preflight.schema.json",
       "planRequired": true,
       "generatorSha256": "154314d119fad70eb07fc5d0d9fb8e349cdaf7a34f22a0810f5442734d1c591f",
-      "validatorSha256": "c64b97d552e4a604015699aaf0d82f528c52dddd06325e877ed464540bd81a0c",
+      "validatorSha256": "4d3cb7362729b4e2fc0df3095bdf5387d9f5b8ac844f5fb4a4ebb40dbd25b8a7",
       "maxWords": null
     }
   },
@@ -109,8 +109,8 @@
       "bytes": 16560
     },
     "specialist/expander.md": {
-      "sha256": "7f88aab587b7f37dcedb8f846fd8c4a07ec09e7f6b135877224049c9dcb24d4b",
-      "bytes": 12494
+      "sha256": "1ba38f35dcf6126a12ecf4dd6e58d4a14b1388c3e6a1d7b46b8794b0d19b6bad",
+      "bytes": 12781
     },
     "specialist/generation.schema.json": {
       "sha256": "62dcf1012aec4a7a8d3559bbdbaea34f260f0288444984218e3c3c2138a9acfe",
@@ -145,8 +145,8 @@
       "bytes": 3289
     },
     "specialist/validator.md": {
-      "sha256": "c64b97d552e4a604015699aaf0d82f528c52dddd06325e877ed464540bd81a0c",
-      "bytes": 11479
+      "sha256": "4d3cb7362729b4e2fc0df3095bdf5387d9f5b8ac844f5fb4a4ebb40dbd25b8a7",
+      "bytes": 12029
     },
     "control_50/base.md": {
       "sha256": "9560bf6b1b3a757cacf3683c35b8609558cd14d8dbac1e67df6b4f1f3bebc668",
