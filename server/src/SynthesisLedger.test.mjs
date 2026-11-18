@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 process.argv[1] = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-entry.js");
 const { buildSynthesisLedger, renderSynthesisLedger, checkProposedEntry, checkQuestion, ledgerSources, extractionSchema, auditSchema,
-  FALLBACK_QUESTION, OTHER_POINTS_TITLE, LEDGER_SUMMARY, ledgerContextLines, namedOptionConflict, UNCLEAR_OPTION } = await import("./SynthesisLedger.mjs");
+  FALLBACK_QUESTION, OTHER_POINTS_TITLE, LEDGER_SUMMARY, ledgerContextLines, namedOptions, UNCLEAR_OPTION } = await import("./SynthesisLedger.mjs");
 const { ledgerKind, mockLedgerExtraction, mockLedgerAudit, ledgerTargets } = await import("../test/participant_sim/fakes/ledgerMock.mjs");
 
 const OPTIONS = ["Talwick", "Rovenna", "Meridia"];
@@ -282,19 +282,35 @@ test("Facilitator messages reach the extractor and auditor as context only; earl
   assert.ok(!ledgerTargets(calls[0].user).some(id => ["m1", "m7", "m10"].includes(id)));
 });
 
-test("a point filed under a different option than the one the message names is rejected, retried, then quoted under the named option", async () => {
+test("option names are matched with one typo allowed, but not other words", () => {
+  const A = ["Talwick", "Rovenna", "Meridia"];
+  assert.deepEqual(namedOptions("i like maridia", A), ["Meridia"]);
+  assert.deepEqual(namedOptions("I dont like robenna", A), ["Rovenna"]);
+  assert.deepEqual(namedOptions("norvgale jhas stuent groups", B_OPTIONS), ["Norvale University"]);
+  assert.deepEqual(namedOptions("Novale?", B_OPTIONS), ["Norvale University"]);
+  assert.deepEqual(namedOptions("public surveys show substantial resident opposition for fenwick", B_OPTIONS), ["Fenwick University"]);
+  assert.deepEqual(namedOptions("the media centre lacks power", A), [], "a different word two edits away is not a name");
+  assert.deepEqual(namedOptions("golden hotels, hidden costs, talking", [...A, ...B_OPTIONS]), []);
+  assert.deepEqual(namedOptions("Halden is better than Fenwick", B_OPTIONS), ["Halden University", "Fenwick University"]);
+});
+
+test("a point filed under a different option than the single one the message names is quoted under the named option, with no retry", async () => {
   const pink = ledgerSources(HALDEN_CHAT).find(s => s.messageId === "m4");
   const wrong = { messageId: "m4", status: "points", sameAs: null, reason: "r",
     points: [{ option: "Halden University", text: "Public surveys show substantial resident opposition.", quote: "public surveys show substantial resident opposition" }] };
-  assert.equal(namedOptionConflict(wrong, pink, B_OPTIONS), true);
-  assert.equal(checkProposedEntry(wrong, pink, { optionLabels: B_OPTIONS, earlierIds: [] }), null);
-  assert.equal(checkProposedEntry({ ...wrong, points: [{ ...wrong.points[0], option: "Fenwick University" }] }, pink, { optionLabels: B_OPTIONS, earlierIds: [] }).status, "points");
-  assert.equal(namedOptionConflict({ points: [{ option: "Halden University" }] }, { text: "Halden is better than Fenwick" }, B_OPTIONS), false, "two named options: no code-level judgement");
+  assert.deepEqual(checkProposedEntry(wrong, pink, { optionLabels: B_OPTIONS, earlierIds: [] }).points,
+    [{ option: "Fenwick University", text: "“public surveys show substantial resident opposition”", quote: "public surveys show substantial resident opposition" }]);
+  assert.equal(checkProposedEntry({ ...wrong, points: [{ ...wrong.points[0], option: "Fenwick University" }] }, pink, { optionLabels: B_OPTIONS, earlierIds: [] }).points[0].text,
+    "Public surveys show substantial resident opposition.", "a point under the named option keeps its wording");
+  const twoNamed = { messageId: "m0", text: "Halden is better than Fenwick" };
+  assert.equal(checkProposedEntry({ ...wrong, messageId: "m0", points: [{ option: "Halden University", text: "Halden is better.", quote: "Halden is better" }] }, twoNamed, { optionLabels: B_OPTIONS, earlierIds: [] }).points[0].option,
+    "Halden University", "two named options: the model chooses between them");
   const misfile = user => { const data = mockLedgerExtraction(user); for (const e of data.entries) if (e.messageId === "m4") e.points[0].option = "Halden University"; return data; };
   const { ledger, rendered, calls } = await buildB({ extract: misfile });
-  assert.match(calls[2].user, /"m4":"option_conflicts_with_named_option"/);
-  assert.equal(ledger.entries.m4.status, "verbatim");
+  assert.equal(calls.length, 2, "no retry");
+  assert.equal(ledger.entries.m4.status, "points");
   assert.match(rendered.candidate.message.sections.find(s => s.title === "Fenwick University").body, /“public surveys show substantial resident opposition for fenwick”/);
+  assert.doesNotMatch(rendered.candidate.message.sections.find(s => s.title === "Halden University")?.body ?? "", /opposition/);
 });
 
 test("Unclear points and failed entries for messages that name no option go under Other points in the participant's own words, never under a guessed option", async () => {

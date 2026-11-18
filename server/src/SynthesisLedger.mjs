@@ -1,5 +1,5 @@
 import { withMessageIds } from "./prompts/DynamicContext.mjs";
-import { isPublicParticipantMessage } from "./CognitiveOperations.mjs";
+import { isPublicParticipantMessage, optionMentionPattern, optionDistinctiveWords } from "./CognitiveOperations.mjs";
 import { readRuntimeFile } from "./prompts/PromptRuntime.mjs";
 import { strictParseJsonObject } from "./prompts/GeneratorContract.mjs";
 
@@ -33,7 +33,6 @@ const SHORT_MESSAGE_WORDS = 4;
 
 const words = text => String(text ?? "").trim().split(/\s+/).filter(Boolean);
 const loose = text => String(text ?? "").toLowerCase().replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim();
-const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // 2026-11-18: Facilitator messages are shown to the extractor and auditor as
 // context only (never targets, never a source of information), so an answer to
@@ -60,14 +59,32 @@ export function ledgerSources(chat) {
     .map((m, order) => ({ messageId: m.messageId, text: m.text, name: m.sender?.name ?? "", order }));
 }
 
-/** Option named in the message itself (full label or its first word). */
-function mentionedOptions(text, optionLabels) {
-  return optionLabels.filter(label => [label, label.split(/\s+/)[0]].some(form => form.length > 2
-    && new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(form)}([^\\p{L}\\p{N}]|$)`, "iu").test(text)));
+/** Damerau-Levenshtein distance of at most one (one letter added, dropped,
+ * changed, or two adjacent letters swapped). */
+function withinOneEdit(a, b) {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1)
+    || (a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2));
+  return a.length > b.length ? a.slice(i + 1) === b.slice(i) : a.slice(i) === b.slice(i + 1);
+}
+
+/** 2026-11-18: options the message itself names, by full label or distinctive
+ * word ("Fenwick"), allowing one typo in words of five or more letters that
+ * share the first letter ("maridia", "robenna", "norvgale"; not "media"). */
+export function namedOptions(text, optionLabels) {
+  const tokens = String(text ?? "").toLowerCase().match(/\p{L}+/gu) || [];
+  return optionLabels.filter(label => optionMentionPattern(label)?.test(String(text ?? ""))
+    || optionDistinctiveWords(label).some(word => {
+      const w = word.toLowerCase();
+      return w.length >= 5 && tokens.some(t => t.length >= 5 && t[0] === w[0] && withinOneEdit(t, w));
+    }));
 }
 
 function verbatimEntry(source, optionLabels, fallbackReason) {
-  const mentioned = mentionedOptions(source.text, optionLabels);
+  const mentioned = namedOptions(source.text, optionLabels);
   // 2026-11-18: an entry that failed checking is not trusted for its option
   // either; only an option the message itself names is used.
   const option = mentioned.length === 1 ? mentioned[0] : GENERAL_OPTION;
@@ -95,13 +112,6 @@ export function auditSchema(ids) {
     questionOk: { type: "boolean" } } };
 }
 
-/** True when the message names exactly one option and a point is filed under a different one. */
-export function namedOptionConflict(raw, source, optionLabels) {
-  const named = mentionedOptions(String(source?.text ?? ""), optionLabels);
-  return named.length === 1 && Array.isArray(raw?.points)
-    && raw.points.some(point => optionLabels.includes(point?.option) && point.option !== named[0]);
-}
-
 /** Structural checks only code can guarantee. Returns a clean entry or null. */
 export function checkProposedEntry(raw, source, { optionLabels, earlierIds }) {
   if (!raw || typeof raw !== "object" || raw.messageId !== source.messageId) return null;
@@ -122,7 +132,12 @@ export function checkProposedEntry(raw, source, { optionLabels, earlierIds }) {
       ? { option: UNCLEAR_OPTION, text: `“${point.quote.trim()}”`, quote: point.quote }
       : { option: point.option, text, quote: point.quote });
   }
-  if (namedOptionConflict({ points }, source, optionLabels)) return null;
+  // A message that names a single option is about that option: a point the
+  // model filed elsewhere is kept as the participant's own words under the
+  // named option, with no extra model call.
+  const named = namedOptions(source.text, optionLabels);
+  if (named.length === 1) for (const [i, point] of points.entries())
+    if (optionLabels.includes(point.option) && point.option !== named[0]) points[i] = { option: named[0], text: `“${point.quote.trim()}”`, quote: point.quote };
   return { messageId: source.messageId, status: "points", points, reason: String(raw.reason ?? "") };
 }
 
@@ -163,7 +178,7 @@ export async function buildSynthesisLedger({ chat, optionLabels = [], taskGenera
   const targets = sources.filter(s => !entries[s.messageId]);
   let question = null;
   const fallback = (source, reason) => {
-    if (UNAVAILABLE_REASONS.includes(reason) && words(source.text).length < SHORT_MESSAGE_WORDS && !mentionedOptions(source.text, optionLabels).length) {
+    if (UNAVAILABLE_REASONS.includes(reason) && words(source.text).length < SHORT_MESSAGE_WORDS && !namedOptions(source.text, optionLabels).length) {
       entries[source.messageId] = { messageId: source.messageId, status: "no_task_information", points: [], reason: "short_message_model_unavailable", fallbackReason: reason };
       diagnostics.fallbacks.push({ messageId: source.messageId, reason, excludedAsShort: true });
       return;
@@ -181,7 +196,7 @@ export async function buildSynthesisLedger({ chat, optionLabels = [], taskGenera
     if (typeof callLLM !== "function") { for (const s of pending) failure.set(s.messageId, { reason: "no_model" }); break; }
     if (!canContinue()) { for (const s of pending) if (!failure.has(s.messageId)) failure.set(s.messageId, { reason: "time_budget" }); break; }
     const ids = pending.map(s => s.messageId);
-    const feedback = round > 1 ? `\n\n[PREVIOUS_ATTEMPT_PROBLEMS]\n${JSON.stringify(Object.fromEntries(ids.map(id => [id, failure.get(id)?.reason ?? "unknown"])))}\nCorrect these entries: include all task information in the message, say only what it says, keep qualifiers, copy quotes exactly, and file each point under the option the message names or clearly refers to (use Unclear when that cannot be determined).` : "";
+    const feedback = round > 1 ? `\n\n[PREVIOUS_ATTEMPT_PROBLEMS]\n${JSON.stringify(Object.fromEntries(ids.map(id => [id, failure.get(id)?.reason ?? "unknown"])))}\nCorrect these entries: include all task information in the message, say only what it says, keep qualifiers, copy quotes exactly, and file each point under the option the message names, else the option of the thread it continues (use Unclear when that cannot be determined).` : "";
     const extracted = await callJson(callLLM, "ledger_extract", readRuntimeFile("specialist/ledger_extractor.md"),
       `${context}\n\n[TARGET_MESSAGE_IDS]\n${JSON.stringify(ids)}${feedback}`, "synthesis_ledger_entries", extractionSchema(ids, optionLabels));
     diagnostics.calls.push({ kind: "ledger_extract", round, targets: ids.length, ok: extracted.ok, error: extracted.error });
@@ -195,7 +210,7 @@ export async function buildSynthesisLedger({ chat, optionLabels = [], taskGenera
         if (seen.has(source.messageId)) { proposed.set(source.messageId, { rejected: "entry_duplicated" }); continue; }
         seen.add(source.messageId);
         const checked = checkProposedEntry(raw, source, { optionLabels, earlierIds: order.slice(0, order.indexOf(source.messageId)) });
-        proposed.set(source.messageId, checked ?? { rejected: namedOptionConflict(raw, source, optionLabels) ? "option_conflicts_with_named_option" : "entry_failed_structure_check" });
+        proposed.set(source.messageId, checked ?? { rejected: "entry_failed_structure_check" });
       }
       if (round === 1) proposedQuestion = checkQuestion(extracted.value.question);
     }

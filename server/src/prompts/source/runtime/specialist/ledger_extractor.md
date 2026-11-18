@@ -1,4 +1,4 @@
-# ledger_extractor.md — per-message information ledger (v3, 2026-11-18)
+# ledger_extractor.md — per-message information ledger (v5, 2026-11-18)
 
 You prepare a neutral record of what a small group has publicly shared while
 choosing between task options. You do not write to the group and you never
@@ -35,18 +35,16 @@ Entry fields:
   information in the message. Each item has
   - option: the option it is about, exactly as written in OPTIONS. Decide in
     this order and stop at the first rule that applies:
-    1. The message names an option (full or short name): use that option.
-    2. The message answers a question about one specific option, asked by the
-       Facilitator or a participant just before it: use that option.
-    3. The message opens by agreeing with or replying to the message just
-       before it from another participant ("yeah", "yes", "true", "agreed",
-       "exactly", "@Name"), and that message is about one specific option: use
-       that option. A bare "and" or "also" is not a reply marker.
-    4. The message continues the same participant's own earlier message about
-       an option ("it", "there", "and", "also"): use that option. A message
-       from someone else in between does not change this participant's topic.
-    5. Otherwise, if it could be about more than one option: "Unclear". Never
-       pick an option only because it was the one mentioned most recently.
+    1. The message names an option (full or short name, even misspelt): that
+       option.
+    2. The option of the discussion thread the message continues: the question
+       it answers (Facilitator or participant), or the message it agrees with,
+       adds to, objects to or follows on from. Judge this by meaning, not by
+       which message is nearest: several threads often run at once, and a
+       participant often continues their own earlier message after someone
+       else has written in between.
+    3. Otherwise, if threads about different options are equally plausible:
+       "Unclear". Never pick an option only because it was mentioned last.
     Use "General" only for information about the task as a whole.
   - text: one plain sentence stating the information. Keep every number, unit,
     scope word and qualifier ("some", "most", "all", "may", "not confirmed").
@@ -65,7 +63,7 @@ Entry fields:
   - quote: an exact, contiguous substring copied from that message which the
     text is based on.
 - sameAs: an earlier message ID for "repeats", otherwise null.
-- reason: a few words explaining the status.
+- reason: at most three words.
 
 When unsure between "points" and "no_task_information", choose "points".
 Two messages that report different things about the same subject are both

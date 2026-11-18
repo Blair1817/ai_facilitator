@@ -107,12 +107,18 @@ function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** Words of an option label that identify it on their own (three or more
+ * letters, not a generic word such as "University"). */
+export function optionDistinctiveWords(label) {
+  return String(label ?? "").trim().split(/\s+/).filter((w) => w.length >= 3 && !GENERIC_OPTION_WORDS.has(w.toLowerCase()));
+}
+
 /** Whole-word, case-insensitive patterns for an option: its full label plus each
- * distinctive word of at least three letters. */
+ * distinctive word. */
 export function optionMentionPattern(label) {
   const full = String(label ?? "").trim().replace(/\s+/g, " ");
   if (!full) return null;
-  const words = full.split(" ").filter((w) => w.length >= 3 && !GENERIC_OPTION_WORDS.has(w.toLowerCase()));
+  const words = optionDistinctiveWords(full);
   const alternatives = [...new Set([full, ...words])].map(escapeRegExp);
   return new RegExp(`(?<![\\p{L}\\p{N}])(?:${alternatives.join("|")})(?![\\p{L}\\p{N}])`, "iu");
 }
