@@ -33,6 +33,7 @@ const {
 } = await import("./src/prompts/GeneratorContract.mjs");
 const { validateCandidate } = await import("./src/SemanticValidator.js");
 const { buildChatCompletionPayload, buildSuccessfulLLMResult } = await import("./src/LLMTransport.mjs");
+const { normalizeGeneratorCandidate } = await import("../client/src/components/facilitatorPresentation.mjs");
 
 async function callLLM(messages) {
   const response = await fetch(endpoint, {
@@ -85,23 +86,30 @@ const generation = await callLLM([
 assert.equal(generation.success, true, generation.error);
 const parsed = parseGeneratorOutputStrict(generation.rawText);
 assert.equal(parsed.ok, true, parsed.error);
-const schema = validateAgainstGenerationSchema(parsed.parsed, bundle.metadata.generationRole);
+const schema = validateAgainstGenerationSchema(parsed.parsed, bundle.metadata.generationRole, "PARTICIPANT_REQUEST");
 assert.equal(schema.ok, true, JSON.stringify(schema.errors));
-const deterministic = runDeterministicValidation(parsed.parsed, {
+// Same normalisation and requested-reply settings as callbacks.js.
+const candidate = normalizeGeneratorCandidate(parsed.parsed);
+const deterministic = runDeterministicValidation(candidate, {
   selectedRole: bundle.metadata.generationRole,
   eligibleMessageIds: context.eligibleMessageIds,
   aiOrSystemMessageIds: context.aiOrSystemMessageIds,
   recentAiMessageTexts: context.recentAiMessageTexts,
   allowedGroundingIds: context.allowedGroundingIds,
+  maxWords: null,
+  activeParticipantNames: context.activeParticipantNames,
 });
 assert.equal(deterministic.passed, true, deterministic.failedCriteria.join(", "));
 
 const validator = await validateCandidate({
   chat,
-  candidate: parsed.parsed,
+  candidate,
   selectedRole: bundle.metadata.generationRole,
   taskGeneralContext: publicTaskOverview,
   callLLM,
+  recentAiMessages: context.recentAiMessageTexts,
+  activeParticipantNames: context.activeParticipantNames,
+  triggerType: "PARTICIPANT_REQUEST",
 });
 assert.equal(validator.success, true, `${validator.code}: ${validator.error}`);
 assert.equal(validator.verdict.passed, true, validator.verdict.failedCriteria.join(", "));
