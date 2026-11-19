@@ -30,6 +30,9 @@ Return one verdict for EVERY proposed entry, in the same order:
     named in sameAs.
   - For "no_task_information": the message really has no task fact, condition
     or concern. A bare preference, vote, agreement or question qualifies.
+  A point need not name its option (it is shown under that option's heading)
+  and may be brief: leaving out the option name or filler words is not
+  incomplete.
 - "incomplete": a "points" entry leaves out some task information in the message.
 - "unfaithful": a point changes, strengthens, weakens or adds to what was
   said, drops a qualifier, or is placed under the wrong option.

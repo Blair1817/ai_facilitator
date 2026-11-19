@@ -46,7 +46,11 @@ Entry fields:
     3. Otherwise, if threads about different options are equally plausible:
        "Unclear". Never pick an option only because it was mentioned last.
     Use "General" only for information about the task as a whole.
-  - text: one plain sentence stating the information. Keep every number, unit,
+  - text: one short plain statement of the information, at most 15 words where
+    the message allows. It is shown under its option's heading, so do not
+    repeat the option's name ("Frequent direct coach service from the airport
+    to the campus.", not "Norvale University has a frequent direct coach
+    service ..."). Keep every number, unit,
     scope word and qualifier ("some", "most", "all", "may", "not confirmed").
     Write impersonally: state the information itself, never "the speaker",
     "a participant" or "someone said". For a misunderstanding that the message
@@ -58,7 +62,7 @@ Entry fields:
     activities refers to the area within walking distance of the venues."). No names, no "@", no
     praise or criticism of your own, no words like pro, con, better, worse
     unless the participant used them. A concern is stated as raised, not as
-    settled ("It was noted that the airport train does not help the daily
+    settled ("Concern raised: the airport train does not help the daily
     hotel trip.").
   - quote: an exact, contiguous substring copied from that message which the
     text is based on.
@@ -69,6 +73,6 @@ When unsure between "points" and "no_task_information", choose "points".
 Two messages that report different things about the same subject are both
 "points"; never merge or resolve a disagreement.
 
-Also return question: ONE neutral question, at most 25 words, inviting the
+Also return question: ONE neutral question, at most 15 words, inviting the
 group to weigh the shared points together. It must not name a preferred
 option, suggest an answer, or ask for a decision.
