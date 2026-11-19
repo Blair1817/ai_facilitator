@@ -12,13 +12,17 @@
  * (it reads the chat when it starts); one arriving while a pass runs queues
  * exactly one more. A failed pass caches nothing, so the Synthesiser falls back
  * to extracting those messages itself, as before.
+ *
+ * The Synthesiser never waits for a warm-up (review 2026-11-19): its build
+ * preempts the lane, aborting the running pass and any queued one, and then
+ * extracts whatever is still uncached itself, inside its own time budget.
  */
-import { ledgerSources } from "./SynthesisLedger.mjs";
+import { ledgerSources, UNCLEAR_OPTION } from "./SynthesisLedger.mjs";
 
 export function createLedgerWarmer({ onError = () => {} } = {}) {
   const lanes = new Map();
   const lane = key => {
-    if (!lanes.has(key)) lanes.set(key, { tail: Promise.resolve(), queuedWarm: null });
+    if (!lanes.has(key)) lanes.set(key, { tail: Promise.resolve(), queuedWarm: null, controllers: new Set() });
     return lanes.get(key);
   };
   const enqueue = (key, run) => {
@@ -28,17 +32,28 @@ export function createLedgerWarmer({ onError = () => {} } = {}) {
     return result;
   };
   return {
-    /** Queue a warm-up pass unless one is already waiting to start. Never rejects. */
+    /** Queue a warm-up pass unless one is already waiting to start. Never
+     * rejects. `pass(signal)` should stop promptly once `signal` is aborted. */
     warm(key, pass) {
       const l = lane(key);
       if (l.queuedWarm) return l.queuedWarm;
-      const queued = enqueue(key, () => { l.queuedWarm = null; return pass(); })
-        .catch(error => { onError(error, key); return null; });
+      const controller = new AbortController();
+      l.controllers.add(controller);
+      const queued = enqueue(key, () => {
+        l.queuedWarm = null;
+        return controller.signal.aborted ? null : pass(controller.signal);
+      }).catch(error => { onError(error, key); return null; })
+        .finally(() => l.controllers.delete(controller));
       l.queuedWarm = queued;
       return queued;
     },
-    /** Run `run` after every queued pass, with no pass running alongside it. */
-    exclusive(key, run) { return enqueue(key, run); },
+    /** Run `run` with no pass running alongside it. With `preempt`, the running
+     * and queued warm-up passes are aborted first instead of waited for. */
+    exclusive(key, run, { preempt = false } = {}) {
+      const l = lane(key);
+      if (preempt) { for (const controller of l.controllers) controller.abort(); l.queuedWarm = null; }
+      return enqueue(key, run);
+    },
     forget(key) { lanes.delete(key); },
   };
 }
@@ -57,6 +72,20 @@ export function withoutLatestSource(cache, chat) {
   if (!latest || !cache?.[latest]) return cache || {};
   const { [latest]: _dropped, ...rest } = cache;
   return rest;
+}
+
+/** The cache a Synthesiser build starts from: without the latest message (for
+ * the closing question) and without entries whose option was Unclear. A
+ * warm-up extracts a message when it arrives, before any later clarification
+ * ("that was Halden"); the Synthesiser sees the whole round and judges those
+ * again (review 2026-11-19). */
+export function cacheForSynthesis(cache, chat) {
+  const base = withoutLatestSource(cache, chat);
+  const kept = {};
+  for (const [id, hit] of Object.entries(base)) {
+    if (!(hit?.entry?.points || []).some(point => point?.option === UNCLEAR_OPTION)) kept[id] = hit;
+  }
+  return kept;
 }
 
 /** Cumulative, content-free warm-up counters kept on the Round. */

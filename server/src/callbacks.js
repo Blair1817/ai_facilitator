@@ -31,7 +31,7 @@ import {
 } from "./LLMTransport.mjs";
 import { buildSynthesisPointContract, decodeSynthesisPoints } from "./SynthesisPointContract.mjs";
 import { buildSynthesisLedger, renderSynthesisLedger, LEDGER_CALL_TIMEOUT_MS } from "./SynthesisLedger.mjs";
-import { createLedgerWarmer, mergeLedgerCache, withoutLatestSource, addWarmStats, planWarmPass, recordWarmFailures } from "./LedgerWarmer.mjs";
+import { createLedgerWarmer, mergeLedgerCache, cacheForSynthesis, addWarmStats, planWarmPass, recordWarmFailures } from "./LedgerWarmer.mjs";
 import { ALSOBAY_SOURCE_COMMIT, alsobayTaskSentence, buildAlsobayMessages, parseAlsobayResponse } from "./AlsobayStatic.mjs";
 import { assessSemanticFactors } from "./SemanticAssessor.js";
 import { checkNeedAssessment } from "./EvidenceChecker.js";
@@ -247,9 +247,17 @@ function ledgerWarmupApplies(game, round) {
     && game.currentRound?.id === round.id && game.currentStage?.get("name") === "Task" && !game.currentStage?.get("ended")
     && Number.isFinite(deadline) && deadline - Date.now() > ADAPTIVE_FLOOR_MS;
 }
-function warmRoundLedger(game, round) {
+// A model call that returns as soon as the Synthesiser preempts the pass; the
+// abandoned request ends on its own timeout and its result is ignored.
+function untilAborted(promise, signal) {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.resolve({ success: false, error: "warm_up_preempted" });
+  return Promise.race([promise, new Promise(resolve => signal.addEventListener("abort",
+    () => resolve({ success: false, error: "warm_up_preempted" }), { once: true }))]);
+}
+function warmRoundLedger(game, round, signal = null) {
   return withPipelineLifetime(game, async () => {
-    if (!ledgerWarmupApplies(game, round)) return null;
+    if (signal?.aborted || !ledgerWarmupApplies(game, round)) return null;
     const current = (game.get(`chat_round_${round.get("taskIndex")}`) || []).filter(isFormalContextMessage);
     const cache = round.get("synthesisLedger") || {};
     const plan = planWarmPass(cache, round.get("synthesisLedgerWarmSkip"), current);
@@ -260,15 +268,19 @@ function warmRoundLedger(game, round) {
       optionLabels: (round.get("decisionOptions") || []).map(o => o?.label).filter(Boolean),
       taskGeneralContext: buildStaticSharedTaskOverview({ generalInfo: round.get("generalInfo"), decisionOptions: round.get("decisionOptions") }),
       cache, skipIds: plan.skip,
-      canContinue: () => ledgerWarmupApplies(game, round),
-      callLLM: (messages, options) => getLLMResponse(messages, synthesisOutputTokens(current, llmMaxOutputTokens), { ...options, timeoutMs: LEDGER_CALL_TIMEOUT_MS }),
+      canContinue: () => !signal?.aborted && ledgerWarmupApplies(game, round),
+      callLLM: (messages, options) => untilAborted(getLLMResponse(messages, synthesisOutputTokens(current, llmMaxOutputTokens), { ...options, timeoutMs: LEDGER_CALL_TIMEOUT_MS }), signal),
     });
     const calls = ledger.diagnostics.calls;
     if (!calls.length || game.currentRound?.id !== round.id) return null;
     // Merge: only confirmed entries are cached, so a failed call caches nothing.
     const merged = mergeLedgerCache(round.get("synthesisLedger"), ledger.cache);
     round.set("synthesisLedger", merged);
-    round.set("synthesisLedgerWarmSkip", recordWarmFailures(round.get("synthesisLedgerWarmSkip"), current, plan.attempt, merged));
+    // Skip a message in later passes only when the model answered and still
+    // could not confirm it; a preempted pass or a provider error skips nothing.
+    if (!signal?.aborted && calls.every(c => c.ok)) {
+      round.set("synthesisLedgerWarmSkip", recordWarmFailures(round.get("synthesisLedgerWarmSkip"), current, plan.attempt, merged));
+    }
     round.set("synthesisLedgerWarm", addWarmStats(round.get("synthesisLedgerWarm"), {
       modelCalls: calls.length,
       failedCalls: calls.filter(c => !c.ok).length,
@@ -303,7 +315,7 @@ export function dispatchChat(env, props) {
   }
   // Not awaited: the pass runs while the checkpoint pipeline (and its Assessor) runs.
   const tail = (game.get(`chat_round_${round?.get("taskIndex")}`) || []).at(-1);
-  if (isFormalHumanMessage(tail) && ledgerWarmupApplies(game, round)) ledgerWarmer.warm(ledgerLaneKey(game, round), () => warmRoundLedger(game, round));
+  if (isFormalHumanMessage(tail) && ledgerWarmupApplies(game, round)) ledgerWarmer.warm(ledgerLaneKey(game, round), signal => warmRoundLedger(game, round, signal));
 }
 
 export const adaptiveCloseoutScheduler = createCloseoutScheduler({
@@ -2589,10 +2601,11 @@ async function processChat(env, { game, adaptiveTrigger = null, requestedMessage
     const taskGeneralContext = buildStaticSharedTaskOverview({ generalInfo: currentRound.get("generalInfo"), decisionOptions: currentRound.get("decisionOptions") });
     const laneKey = ledgerLaneKey(game, currentRound);
     for (let refresh = 0; ; refresh++) {
-      // 2026-11-19: the build waits for any queued warm-up pass on this Round's
-      // lane, then reads the chat and the warmed cache. The latest participant
-      // message is always re-extracted on the first build: that call proposes
-      // the closing question, which a fully cached ledger would not.
+      // 2026-11-19: the build preempts this Round's warm-up lane (a running or
+      // queued pass is aborted, never waited for), then reads the chat and the
+      // warmed cache. The first build re-extracts the latest participant
+      // message (it proposes the closing question) and any entry the warm-up
+      // filed as Unclear, now with the whole round as context.
       const queuedAt = Date.now();
       const { current, snapshot, ledger, startedAt } = await ledgerWarmer.exclusive(laneKey, async () => {
         const current = (game.get(chatKey) || []).filter(isFormalContextMessage);
@@ -2600,17 +2613,17 @@ async function processChat(env, { game, adaptiveTrigger = null, requestedMessage
         const startedAt = Date.now();
         const cached = currentRound.get("synthesisLedger") || {};
         const ledger = await buildSynthesisLedger({
-          chat: current, optionLabels, taskGeneralContext, cache: refresh === 0 ? withoutLatestSource(cached, current) : cached,
+          chat: current, optionLabels, taskGeneralContext, cache: refresh === 0 ? cacheForSynthesis(cached, current) : cached,
           canContinue: () => budget.check(),
           callLLM: (messages, options, kind) => { logEntry.requestMade = true; return budget.call(kind, timing =>
             getLLMResponse(messages, synthesisOutputTokens(current, llmMaxOutputTokens), { ...options, ...timing, timeoutMs: Math.min(timing.timeoutMs, LEDGER_CALL_TIMEOUT_MS) })); },
         });
         currentRound.set("synthesisLedger", mergeLedgerCache(currentRound.get("synthesisLedger"), ledger.cache));
         return { current, snapshot, ledger, startedAt };
-      });
+      }, { preempt: true });
       const rendered = renderSynthesisLedger(ledger, optionLabels);
       logEntry.synthesisLedger = { ...rendered.stats, refresh, latencyMs: Date.now() - startedAt, accounted: rendered.accounted, calls: ledger.diagnostics.calls, fallbacks: ledger.diagnostics.fallbacks,
-        warm: { ...(currentRound.get("synthesisLedgerWarm") || { passes: 0 }), waitedForWarmUpMs: startedAt - queuedAt } };
+        warm: { ...(currentRound.get("synthesisLedgerWarm") || { passes: 0 }), waitedForLaneMs: startedAt - queuedAt } };
       // The scoreboard needs no further model call, so an exhausted chain time
       // budget does not stop it; only a lifecycle change or the deadline floor does.
       if (!canPublishFacilitatorResult(game, logEntry) || !automaticContextStillUsable(game, logEntry) || budget.remainingTime() <= ADAPTIVE_FLOOR_MS) {

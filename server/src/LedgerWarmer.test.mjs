@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 process.argv[1] = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-entry.js");
 const { buildSynthesisLedger, renderSynthesisLedger } = await import("./SynthesisLedger.mjs");
-const { createLedgerWarmer, mergeLedgerCache, withoutLatestSource, addWarmStats, planWarmPass, recordWarmFailures } = await import("./LedgerWarmer.mjs");
+const { createLedgerWarmer, mergeLedgerCache, withoutLatestSource, cacheForSynthesis, addWarmStats, planWarmPass, recordWarmFailures } = await import("./LedgerWarmer.mjs");
 const { readFile } = await import("node:fs/promises");
 const { mockLedgerExtraction, mockLedgerAudit, ledgerTargets } = await import("../test/participant_sim/fakes/ledgerMock.mjs");
 
@@ -178,9 +178,61 @@ test("callbacks wiring: Adaptive messages trigger a warm-up, the Synthesiser bui
   assert.match(source, /!round\.get\("isPractice"\)/);
   assert.match(source, /isFormalHumanMessage\(tail\) && ledgerWarmupApplies\(game, round\)\) ledgerWarmer\.warm\(/);
   assert.match(source, /await ledgerWarmer\.exclusive\(laneKey,/);
-  assert.match(source, /refresh === 0 \? withoutLatestSource\(cached, current\) : cached/);
+  assert.match(source, /refresh === 0 \? cacheForSynthesis\(cached, current\) : cached/);
+  assert.match(source, /\}, \{ preempt: true \}\);/);
+  assert.match(source, /ledgerWarmer\.warm\(ledgerLaneKey\(game, round\), signal => warmRoundLedger\(game, round, signal\)\)/);
   assert.match(source, /process\.env\.LEDGER_WARMUP !== "off"/);
   // The warm-up never takes the automatic-intervention lock.
   const warmFn = source.slice(source.indexOf("function warmRoundLedger"), source.indexOf("export function dispatchChat"));
   assert.doesNotMatch(warmFn, /beginInFlight|AUTOMATIC_PIPELINE_GROUP|finalizeAuditLog/);
+});
+
+test("a preempting build aborts the running pass and skips the queued one instead of waiting", async () => {
+  const warmer = createLedgerWarmer();
+  let runningSignal, queuedRan = false, finishRunning;
+  const running = warmer.warm("round", signal => { runningSignal = signal; return new Promise(resolve => { finishRunning = resolve; signal.addEventListener("abort", () => resolve("aborted")); }); });
+  await tick();
+  assert.ok(runningSignal && !runningSignal.aborted);
+  warmer.warm("round", async () => { queuedRan = true; });   // queued behind the running pass
+  const built = warmer.exclusive("round", async () => "scoreboard", { preempt: true });
+  assert.equal(runningSignal.aborted, true, "the running pass is told to stop");
+  assert.equal(await running, "aborted");
+  assert.equal(await built, "scoreboard");
+  assert.equal(queuedRan, false, "a pass queued before the build never runs");
+  // Later messages warm normally again.
+  assert.equal(await warmer.warm("round", async signal => signal.aborted ? "aborted" : "warm"), "warm");
+  finishRunning?.();
+});
+
+test("without preempt, exclusive still waits for the running pass", async () => {
+  const warmer = createLedgerWarmer();
+  const log = [];
+  warmer.warm("round", async () => { await tick(); log.push("warm"); });
+  await warmer.exclusive("round", async () => log.push("build"));
+  assert.deepEqual(log, ["warm", "build"]);
+});
+
+test("the Synthesiser re-judges entries the warm-up filed as Unclear, with the whole round as context", async () => {
+  const chat = [
+    say("Green", "it has experience of delivering similar events"),
+    say("Pink", "that one is Rovenna"),
+    say("Blue", "Talwick has a direct airport train"),
+  ];
+  // Warm-up saw only m0, so it could not tell the option.
+  const warm = await build(chat.slice(0, 1), {}, async (messages, _o, kind) => {
+    const user = messages[1].content;
+    const data = kind === "ledger_extract" ? mockLedgerExtraction(user) : mockLedgerAudit(user);
+    if (kind === "ledger_extract") data.entries[0].points[0].option = "Unclear";
+    return { success: true, rawText: JSON.stringify(data) };
+  });
+  assert.equal(warm.cache.m0.entry.points[0].option, "Unclear");
+  const cache = cacheForSynthesis(warm.cache, chat);
+  assert.equal(cache.m0, undefined, "the Unclear entry is extracted again");
+  const synth = model();
+  const ledger = await build(chat, cache, synth.callLLM);
+  assert.deepEqual(synth.calls.filter(c => c.kind === "ledger_extract").map(c => c.targets), [["m0", "m1", "m2"]]);
+  assert.ok(ledger.entries.m0.status === "points");
+  // Entries with a definite option are kept.
+  const confirmed = await build(chat, {}, model().callLLM);
+  assert.deepEqual(Object.keys(cacheForSynthesis(confirmed.cache, chat)).sort(), ["m0", "m1"]);
 });

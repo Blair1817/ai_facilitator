@@ -383,3 +383,22 @@ test("disputesOptionOf on a later message is kept through checkProposedEntry for
   assert.deepEqual(checkProposedEntry({ messageId: "m3", status: "no_task_information", points: [], sameAs: null, disputesOptionOf: ["m1", "m1", "m3"], reason: "x" }, source, { optionLabels: OPTIONS, earlierIds }).disputesOptionOf, ["m1"]);
   assert.equal("disputesOptionOf" in checkProposedEntry({ messageId: "m3", status: "no_task_information", points: [], sameAs: null, reason: "x" }, source, { optionLabels: OPTIONS, earlierIds }), false);
 });
+
+test("a pointless message whose dispute the auditor rejects stays out of the scoreboard, without a retry", async () => {
+  const chat = [say("Green", "Rovenna hotels are near the venues"), say("Blue", "fenwick"), say("Green", "we just talked about rovenna")];
+  const { ledger, rendered, calls } = await build({
+    extract: user => { const data = mockLedgerExtraction(user);
+      for (const entry of data.entries) if (entry.messageId !== "m0") Object.assign(entry, { status: "no_task_information", points: [], disputesOptionOf: entry.messageId === "m2" ? ["m1"] : [] });
+      return data; },
+    audit: user => mockLedgerAudit(user, id => id === "m2" ? "unfaithful" : "ok"),
+  }, chat);
+  assert.equal(calls.length, 2, "no second round");
+  assert.equal(ledger.entries.m2.status, "no_task_information");
+  assert.equal(ledger.entries.m2.disputeRejected, true);
+  assert.equal("disputesOptionOf" in ledger.entries.m2, false);
+  assert.ok(ledger.cache.m2, "cached like any confirmed entry");
+  assert.doesNotMatch(text(rendered), /we just talked/);
+  // A "points" entry flagged unfaithful still goes through the normal retry.
+  const pts = await build({ audit: user => mockLedgerAudit(user, id => id === "m0" ? "unfaithful" : "ok") }, chat);
+  assert.ok(pts.calls.filter(c => c.kind === "ledger_extract").length >= 2);
+});

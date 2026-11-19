@@ -249,6 +249,18 @@ export async function buildSynthesisLedger({ chat, optionLabels = [], taskGenera
       if (entry.rejected) { fail(entry.rejected); continue; }
       if (!auditRan) { fail("audit_unavailable"); continue; }
       const verdict = verdicts.get(source.messageId);
+      // 2026-11-19 (review): an entry without points can only be "unfaithful"
+      // through its disputesOptionOf. Keep the message out of the scoreboard and
+      // drop the contested claim, rather than quoting chatter such as "we just
+      // talked about halden" after a failed retry.
+      if (verdict === "unfaithful" && entry.disputesOptionOf?.length && ["no_task_information", "repeats"].includes(entry.status)) {
+        const { disputesOptionOf: _rejected, ...withoutDispute } = entry;
+        const accepted = { ...withoutDispute, disputeRejected: true };
+        failure.delete(source.messageId);
+        entries[source.messageId] = accepted;
+        nextCache[source.messageId] = { text: source.text, entry: accepted };
+        continue;
+      }
       if (verdict !== "ok") { fail(`audit_${verdict ?? "verdict_missing"}`); continue; }
       failure.delete(source.messageId);
       entries[source.messageId] = entry;
