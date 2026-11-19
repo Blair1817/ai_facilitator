@@ -210,4 +210,9 @@ test("phone redaction does not fire inside IDs, UUIDs or colon-joined timestamps
     assert.equal(redactPII(id), id);
   }
   assert.equal(redactPII("call 07700 900123."), "call [REDACTED_PHONE].");
+  // Dates are kept; phone numbers next to them are still removed.
+  assert.equal(redactPII("added 2026-08-11) appear"), "added 2026-08-11) appear");
+  assert.equal(redactPII("between 2026-08-11 and 2026-08-12."), "between 2026-08-11 and 2026-08-12.");
+  assert.equal(redactPII("on 2026-08-11 call 07700 900123"), "on 2026-08-11 call [REDACTED_PHONE]");
+  assert.equal(redactPII("call +44 7700 900123"), "call [REDACTED_PHONE]");
 });

@@ -33,7 +33,9 @@ export function redactPII(value) {
   return value
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[REDACTED_EMAIL]")
     .replace(/\b(?:https?:\/\/|www\.)\S+/gi, "[REDACTED_URL]")
-    .replace(/(?<![\p{L}\p{N}:_-])(?:\+?\d[\d ().-]{7,}\d)(?![\p{L}\p{N}_-])/gu, "[REDACTED_PHONE]")
+    // A YYYY-MM-DD date is not a phone number (2026-11-19: dates in exported
+    // prompts were being replaced). A number after the date is still checked.
+    .replace(/(?<![\p{L}\p{N}:_-])(?!\d{4}-\d{2}-\d{2}(?!\d))(?:\+?\d[\d ().-]{7,}\d)(?![\p{L}\p{N}_-])/gu, "[REDACTED_PHONE]")
     .replace(/\b(Prolific(?:\s+(?:participant\s+)?ID)?|PID)\s*[:=#-]?\s*[A-Z0-9_-]{5,}\b/gi, "$1 [REDACTED_RECRUITMENT_ID]")
     // "@Facilitator" addresses the study's AI, not a person: keep it so a
     // typed participant request stays visible in exports.
