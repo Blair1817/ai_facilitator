@@ -20,7 +20,8 @@ export function buildChatMentionUsers(players, currentPlayerId, { isPractice, fa
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // Facilitator text is model output (Static posts it with no validation), so
-// render mentions leniently: any non-empty `@[...]` on one line, plus a bare
+// render mentions leniently: any non-empty `@[...]` on one line (also `@ [...]`,
+// with spaces after the @, as the Static model often writes it), plus a bare
 // `@Name` when Name is a participant in this game. Returns plain strings and
 // `{ mention }` parts; the caller decides how to render a mention.
 export function splitFacilitatorMentions(text, names = []) {
@@ -28,7 +29,7 @@ export function splitFacilitatorMentions(text, names = []) {
     .sort((a, b) => b.length - a.length)
     .map(escapeRegExp);
   const bare = known.length ? `|@(${known.join("|")})(?![\\w-])` : "";
-  const pattern = new RegExp(`@\\[\\s*([^\\[\\]\\n]*?[^\\s\\[\\]][^\\[\\]\\n]*?)\\s*\\]${bare}`, "giu");
+  const pattern = new RegExp(`@[ \\t]*\\[\\s*([^\\[\\]\\n]*?[^\\s\\[\\]][^\\[\\]\\n]*?)\\s*\\]${bare}`, "giu");
   const source = String(text ?? "");
   const parts = [];
   let last = 0;
