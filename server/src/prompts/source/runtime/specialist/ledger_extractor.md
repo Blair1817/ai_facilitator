@@ -67,6 +67,15 @@ Entry fields:
   - quote: an exact, contiguous substring copied from that message which the
     text is based on.
 - sameAs: an earlier message ID for "repeats", otherwise null.
+- disputesOptionOf: IDs of EARLIER participant messages whose option this
+  message contests, whatever this message's own status: it says that
+  information is about a different option than the one the earlier message
+  named or its thread gave ("that was Talwick, not Rovenna"), or it answers
+  "which option was that?" differently from another participant's answer.
+  Usually []. Asking which option something was about, disagreeing about
+  whether a point matters, or reporting a different fact about another option
+  does not contest anything. A contested message is shown to the group in the
+  participant's own words, under no option.
 - reason: at most three words.
 
 When unsure between "points" and "no_task_information", choose "points".

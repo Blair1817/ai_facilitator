@@ -82,7 +82,7 @@ test("confirmed entries render under the authoritative option order with a model
     { title: "Meridia", body: "1. University rooms are available for people who need somewhere cheap." },
   ], question: "How do these points compare across the three cities?" });
   assert.deepEqual(rendered.candidate.groundingMessageIds, ["m1", "m3", "m5", "m6"]);
-  assert.deepEqual(rendered.stats, { messages: 6, items: 4, points: 3, verbatim: 0, repeats: 1, noTaskInformation: 2, questionSource: "model" });
+  assert.deepEqual(rendered.stats, { messages: 6, items: 4, points: 3, verbatim: 0, repeats: 1, noTaskInformation: 2, optionDisputed: 0, questionSource: "model" });
   assert.equal(rendered.enough, true);
   assert.doesNotMatch(text(rendered), /Green|Pink|Blue|@/);
 });
@@ -328,4 +328,58 @@ test("Unclear points and failed entries for messages that name no option go unde
   assert.equal(l2.entries.m6.points[0].option, "General");
   assert.match(r2.candidate.message.sections.find(s => s.title === OTHER_POINTS_TITLE).body, /“and tehre are enough closes guest room”/);
   assert.ok(extractionSchema(["m0"], B_OPTIONS).properties.entries.items.properties.points.items.properties.option.enum.includes(UNCLEAR_OPTION));
+});
+
+// 2026-11-19: a later message contesting an earlier message's option.
+test("a message whose option a later message contests is shown in the participant's own words under Other points", async () => {
+  const chat = [
+    say("Green", "it has experience of delivering similar events"),
+    say("Pink", "that was Talwick, not Rovenna"),
+    say("Blue", "Rovenna hotels are near the venues"),
+  ];
+  const { ledger, rendered } = await build({ extract: user => {
+    const data = mockLedgerExtraction(user);
+    for (const entry of data.entries) {
+      if (entry.messageId === "m0") entry.points = [{ option: "Rovenna", text: "Experience delivering similar events.", quote: "experience of delivering similar events" }];
+      if (entry.messageId === "m1") Object.assign(entry, { status: "no_task_information", points: [], disputesOptionOf: ["m0", "m2", "m9"] });
+    }
+    return data;
+  } }, chat);
+  // Only earlier participant messages count.
+  assert.deepEqual(ledger.entries.m1.disputesOptionOf, ["m0"]);
+  const sections = Object.fromEntries(rendered.candidate.message.sections.map(s => [s.title, s.body]));
+  assert.equal(sections.Rovenna, "1. Rovenna hotels are near the venues");
+  assert.match(sections[OTHER_POINTS_TITLE], /“experience of delivering similar events”/);
+  assert.doesNotMatch(text(rendered), /Experience delivering similar events\./);
+  assert.equal(rendered.stats.optionDisputed, 1);
+  assert.deepEqual(rendered.accounted.find(a => a.messageId === "m0"), { messageId: "m0", status: "points", optionDisputed: true });
+  // The dispute lives on the contesting entry, so a cached m0 is moved too.
+  const cached = await build({}, chat, ledger.cache);
+  assert.equal(cached.calls.length, 0);
+  assert.match(Object.fromEntries(cached.rendered.candidate.message.sections.map(s => [s.title, s.body]))[OTHER_POINTS_TITLE], /“experience of delivering similar events”/);
+});
+
+test("the contesting message's own option claim is not filed either", async () => {
+  const chat = [
+    say("Green", "and there are enough close guest rooms"),
+    say("Pink", "wait, the guest rooms point is Talwick, not Rovenna"),
+  ];
+  const { rendered } = await build({ extract: user => {
+    const data = mockLedgerExtraction(user);
+    for (const entry of data.entries) {
+      if (entry.messageId === "m0") entry.points = [{ option: "Rovenna", text: "Enough close guest rooms.", quote: "enough close guest rooms" }];
+      if (entry.messageId === "m1") Object.assign(entry, { points: [{ option: "Talwick", text: "Guest rooms are a Talwick point.", quote: "the guest rooms point is Talwick" }], disputesOptionOf: ["m0"] });
+    }
+    return data;
+  } }, chat);
+  assert.deepEqual(rendered.candidate.message.sections.map(s => s.title), [OTHER_POINTS_TITLE]);
+  assert.match(rendered.candidate.message.sections[0].body, /“enough close guest rooms”[\s\S]*“the guest rooms point is Talwick”/);
+  assert.equal(rendered.stats.optionDisputed, 2);
+});
+
+test("disputesOptionOf on a later message is kept through checkProposedEntry for every status", () => {
+  const source = { messageId: "m3", text: "no, Talwick" };
+  const earlierIds = ["m0", "m1"];
+  assert.deepEqual(checkProposedEntry({ messageId: "m3", status: "no_task_information", points: [], sameAs: null, disputesOptionOf: ["m1", "m1", "m3"], reason: "x" }, source, { optionLabels: OPTIONS, earlierIds }).disputesOptionOf, ["m1"]);
+  assert.equal("disputesOptionOf" in checkProposedEntry({ messageId: "m3", status: "no_task_information", points: [], sameAs: null, reason: "x" }, source, { optionLabels: OPTIONS, earlierIds }), false);
 });

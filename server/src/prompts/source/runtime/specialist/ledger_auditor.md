@@ -18,6 +18,13 @@ Check the option of every point independently, in this order:
 A point under a specific option that these rules do not support, including one
 chosen only because that option was mentioned most recently, is "unfaithful".
 "Unclear" is also "unfaithful" when rule 1 or 2 clearly gives an option.
+Also check disputesOptionOf: each listed ID must be an earlier participant
+message whose option this message really contests (it ties that information
+to a different option, or answers "which option was that?" differently from
+another participant). Listing a message that is not contested (a question
+about the option, a disagreement about importance, a different fact about
+another option) makes the entry "unfaithful", as does leaving out a message
+this one clearly contests.
 
 Return one verdict for EVERY proposed entry, in the same order:
 - "ok": the entry is right.

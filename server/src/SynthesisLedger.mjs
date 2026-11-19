@@ -95,12 +95,13 @@ function verbatimEntry(source, optionLabels, fallbackReason) {
 export function extractionSchema(ids, optionLabels) {
   return { type: "object", additionalProperties: false, required: ["entries", "question"], properties: {
     entries: { type: "array", items: { type: "object", additionalProperties: false,
-      required: ["messageId", "status", "points", "sameAs", "reason"], properties: {
+      required: ["messageId", "status", "points", "sameAs", "disputesOptionOf", "reason"], properties: {
         messageId: { type: "string", enum: ids },
         status: { type: "string", enum: ["points", "repeats", "no_task_information"] },
         points: { type: "array", items: { type: "object", additionalProperties: false, required: ["option", "text", "quote"], properties: {
           option: { type: "string", enum: [...optionLabels, GENERAL_OPTION, UNCLEAR_OPTION] }, text: { type: "string" }, quote: { type: "string" } } } },
         sameAs: { type: ["string", "null"] },
+        disputesOptionOf: { type: "array", items: { type: "string" } },
         reason: { type: "string" } } } },
     question: { type: "string" } } };
 }
@@ -115,10 +116,15 @@ export function auditSchema(ids) {
 /** Structural checks only code can guarantee. Returns a clean entry or null. */
 export function checkProposedEntry(raw, source, { optionLabels, earlierIds }) {
   if (!raw || typeof raw !== "object" || raw.messageId !== source.messageId) return null;
+  // 2026-11-19: earlier messages whose option this message contests. Only
+  // earlier participant messages count; anything else is dropped. Stored on the
+  // contesting entry, so a cached earlier entry never needs re-extracting.
+  const contested = [...new Set((Array.isArray(raw.disputesOptionOf) ? raw.disputesOptionOf : []).filter(id => earlierIds.includes(id)))];
+  const disputes = contested.length ? { disputesOptionOf: contested } : {};
   if (raw.status === "no_task_information") return Array.isArray(raw.points) && raw.points.length === 0
-    ? { messageId: source.messageId, status: "no_task_information", points: [], reason: String(raw.reason ?? "") } : null;
+    ? { messageId: source.messageId, status: "no_task_information", points: [], ...disputes, reason: String(raw.reason ?? "") } : null;
   if (raw.status === "repeats") return typeof raw.sameAs === "string" && earlierIds.includes(raw.sameAs) && Array.isArray(raw.points) && raw.points.length === 0
-    ? { messageId: source.messageId, status: "repeats", sameAs: raw.sameAs, points: [], reason: String(raw.reason ?? "") } : null;
+    ? { messageId: source.messageId, status: "repeats", sameAs: raw.sameAs, points: [], ...disputes, reason: String(raw.reason ?? "") } : null;
   if (raw.status !== "points" || !Array.isArray(raw.points) || !raw.points.length) return null;
   const sourceLoose = loose(source.text);
   const points = [];
@@ -138,7 +144,7 @@ export function checkProposedEntry(raw, source, { optionLabels, earlierIds }) {
   const named = namedOptions(source.text, optionLabels);
   if (named.length === 1) for (const [i, point] of points.entries())
     if (optionLabels.includes(point.option) && point.option !== named[0]) points[i] = { option: named[0], text: `“${point.quote.trim()}”`, quote: point.quote };
-  return { messageId: source.messageId, status: "points", points, reason: String(raw.reason ?? "") };
+  return { messageId: source.messageId, status: "points", points, ...disputes, reason: String(raw.reason ?? "") };
 }
 
 export function checkQuestion(question) {
@@ -275,12 +281,21 @@ export async function buildSynthesisLedger({ chat, optionLabels = [], taskGenera
 export function renderSynthesisLedger({ order, entries, question }, optionLabels = []) {
   const bySection = new Map([...optionLabels, GENERAL_OPTION].map(label => [label, []]));
   const groundingMessageIds = [], accounted = [];
+  // 2026-11-19: a message whose option a later participant message contests is
+  // shown under Other points in the participant's own words, not filed under
+  // either option. So is the contesting message's own option claim: filing it
+  // would take that participant's side.
+  const disputed = new Set(order.flatMap(id => entries[id]?.disputesOptionOf?.length ? [id, ...entries[id].disputesOptionOf] : []));
   for (const id of order) {
     const entry = entries[id];
-    accounted.push({ messageId: id, status: entry.status, ...(entry.sameAs ? { sameAs: entry.sameAs } : {}), ...(entry.fallbackReason ? { fallbackReason: entry.fallbackReason } : {}) });
+    const isDisputed = disputed.has(id) && entry.points.some(point => optionLabels.includes(point.option));
+    accounted.push({ messageId: id, status: entry.status, ...(entry.sameAs ? { sameAs: entry.sameAs } : {}), ...(entry.fallbackReason ? { fallbackReason: entry.fallbackReason } : {}), ...(isDisputed ? { optionDisputed: true } : {}) });
     if (!entry.points.length) continue;
     groundingMessageIds.push(id);
-    for (const point of entry.points) {
+    for (const original of entry.points) {
+      const point = isDisputed && optionLabels.includes(original.option)
+        ? { option: UNCLEAR_OPTION, text: original.verbatim || !original.quote ? original.text : `“${original.quote.trim()}”` }
+        : original;
       const section = bySection.get(bySection.has(point.option) ? point.option : GENERAL_OPTION);
       // Identical wording under the same option is listed once; both messages stay cited.
       if (!section.some(existing => loose(existing) === loose(point.text))) section.push(point.text);
@@ -297,6 +312,7 @@ export function renderSynthesisLedger({ order, entries, question }, optionLabels
     verbatim: order.filter(id => entries[id].status === "verbatim").length,
     repeats: order.filter(id => entries[id].status === "repeats").length,
     noTaskInformation: order.filter(id => entries[id].status === "no_task_information").length,
+    optionDisputed: accounted.filter(a => a.optionDisputed).length,
     questionSource: question ? "model" : "fixed" };
   return { enough: itemCount >= MIN_SYNTHESIS_ITEMS && sections.length > 0, stats, accounted,
     candidate: { role: "INFORMATION_SYNTHESISER",
