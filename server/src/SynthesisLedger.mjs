@@ -162,9 +162,12 @@ async function callJson(callLLM, kind, system, user, schemaName, schema) {
  * Build the complete ledger for the round.
  * @param cache previously confirmed entries: { [messageId]: { text, entry } }
  * @param callLLM async (messages, options, kind) => { success, rawText | error }
+ * @param skipIds message IDs not to send to the model in this build (the
+ *   background warm-up skips messages it already failed to confirm); they get
+ *   the same fallback entry as an unavailable model and are not cached.
  * Never throws for model failures; always returns an entry for every source.
  */
-export async function buildSynthesisLedger({ chat, optionLabels = [], taskGeneralContext = "", cache = {}, callLLM, canContinue = () => true }) {
+export async function buildSynthesisLedger({ chat, optionLabels = [], taskGeneralContext = "", cache = {}, callLLM, canContinue = () => true, skipIds = [] }) {
   const sources = ledgerSources(chat);
   const order = sources.map(s => s.messageId);
   const entries = {}, nextCache = {}, diagnostics = { calls: [], fallbacks: [] };
@@ -175,7 +178,8 @@ export async function buildSynthesisLedger({ chat, optionLabels = [], taskGenera
       nextCache[source.messageId] = hit;
     }
   }
-  const targets = sources.filter(s => !entries[s.messageId]);
+  const skip = new Set(skipIds);
+  const targets = sources.filter(s => !entries[s.messageId] && !skip.has(s.messageId));
   let question = null;
   const fallback = (source, reason) => {
     if (UNAVAILABLE_REASONS.includes(reason) && words(source.text).length < SHORT_MESSAGE_WORDS && !namedOptions(source.text, optionLabels).length) {
@@ -247,6 +251,7 @@ export async function buildSynthesisLedger({ chat, optionLabels = [], taskGenera
     pending = stillPending;
   }
   for (const source of targets) if (!entries[source.messageId]) fallback(source, failure.get(source.messageId)?.reason ?? "time_budget");
+  for (const source of sources) if (!entries[source.messageId]) fallback(source, "skipped");
   // A "repeats" entry is only as good as what it points to: follow the chain
   // to a represented message; a repeat of a no-information message carries
   // none either; anything unresolved is quoted.

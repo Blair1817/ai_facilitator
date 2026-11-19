@@ -307,7 +307,11 @@ test("a Facilitator reply posted while a timed scoreboard is being built defers 
   w.game.set("lastAttemptTimestamp", Date.now() - 31_000);
   const retry = await run(w, { assessments: [none], trigger: { triggerSource: "time_180", triggerSources: ["time_180"] } });
   assert.equal(scoreboards(retry).length, 1);
-  assert.deepEqual(retry.requests.map(r => r.kind), ["assessor"], "confirmed entries are reused; no new model call is needed for the ledger");
+  // 2026-11-19: confirmed entries are reused; only the latest participant
+  // message is re-extracted, because that call proposes the closing question.
+  assert.deepEqual(retry.requests.map(r => r.kind), ["assessor", "ledger_extract", "ledger_audit"]);
+  assert.equal(ledgerTargets(retry.requests[1].messages[1].content).length, 1, "only one message is re-extracted");
+  assert.equal(retry.audit.synthesisLedger.questionSource, "model");
 });
 
 // 2026-11-11: C is silent across the last 12 public messages (silence rule).

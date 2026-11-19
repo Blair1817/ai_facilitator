@@ -161,6 +161,10 @@ new Function('require','module','exports',sdkBuild.outputFiles[0].text)(createRe
 const {lockedAsyncSubscribe,Mutex,Subject}=sdkModule.exports;
 
 test('real SDK dispatch: human ACK and deadline advance run while an automatic model call is unresolved',async()=>{
+ // Counts exactly one provider call (the automatic pipeline's); the ledger
+ // warm-up has its own test below.
+ const warmup=process.env.LEDGER_WARMUP;process.env.LEDGER_WARMUP='off';
+ try{
  const {Empirica,facilitatorTasks}=await getOfflineCallbacksHarness();const w=world();
  const listener=(kind,key)=>Empirica.attributeListeners.find(l=>l.kind===kind&&l.key===key).callback;
  const mutex=new Mutex(),automatic=new Subject(),human=new Subject(),deadline=new Subject();
@@ -175,6 +179,30 @@ test('real SDK dispatch: human ACK and deadline advance run while an automatic m
  assert.equal(w.stage.get('ended'),true);assert.equal(calls,1,'model still unresolved');
  release(validResponseFor({messages:[{content:'# static.md'}]}));await facilitatorTasks.drain();
  assert.equal(published(w).length,0);assert.deepEqual(w.game.get('llmInFlight'),{});
+ });}finally{subs.forEach(s=>s.unsubscribe())}
+ }finally{if(warmup===undefined)delete process.env.LEDGER_WARMUP;else process.env.LEDGER_WARMUP=warmup}
+});
+
+test('real SDK dispatch: an unresolved ledger warm-up call blocks neither a human ACK nor the deadline advance',async()=>{
+ const {Empirica,facilitatorTasks}=await getOfflineCallbacksHarness();const w=world();
+ const listener=(kind,key)=>Empirica.attributeListeners.find(l=>l.kind===kind&&l.key===key).callback;
+ const mutex=new Mutex(),automatic=new Subject(),human=new Subject(),deadline=new Subject();
+ let release;const held=new Promise(resolve=>{release=resolve});let warmCalls=0,acknowledged=false,advanced=false;
+ const subs=[lockedAsyncSubscribe(mutex,automatic,()=>listener('game','chat_round_0')(undefined,{game:w.game})),
+ lockedAsyncSubscribe(mutex,human,async()=>{await listener('player','humanMessageRequest')(undefined,{player:w.players[0],humanMessageRequest:{requestId:'unblocked-warm',roundId:w.round.id,stageId:w.stage.id,content:'Another public point.'}});acknowledged=true}),
+ lockedAsyncSubscribe(mutex,deadline,async()=>{await listener('player','discussionAdvanceRequest')(undefined,{player:w.players[0],discussionAdvanceRequest:{roundId:w.round.id,stageId:w.stage.id,reason:'deadline_reached'}});advanced=true})];
+ try {await withMockedFetch(async(_url,options)=>{const body=JSON.parse(options.body);
+   if(body.messages[0].content.startsWith('# ledger_extractor.md')){warmCalls++;return held}
+   return validResponseFor(body)},async()=>{
+  automatic.next({});await waitUntil(()=>warmCalls===1);human.next({});await waitUntil(()=>acknowledged);
+  assert.equal(w.players[0].get('humanMessageRequestResult').status,'accepted');
+  w.game.set('deadline',Date.now()-1);deadline.next({});await waitUntil(()=>advanced);
+  assert.equal(w.stage.get('ended'),true);assert.equal(warmCalls,1,'warm-up call still unresolved');
+  // The automatic pipeline was not held here, so it may already have published.
+  const before=published(w).length;
+  release(validResponseFor({messages:[{content:'# static.md'}]}));await facilitatorTasks.drain();
+  for(let i=0;i<20;i++)await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(published(w).length,before,'a warm-up never publishes');assert.deepEqual(w.game.get('llmInFlight'),{});
  });}finally{subs.forEach(s=>s.unsubscribe())}
 });
 

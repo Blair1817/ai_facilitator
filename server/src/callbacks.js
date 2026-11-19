@@ -31,6 +31,7 @@ import {
 } from "./LLMTransport.mjs";
 import { buildSynthesisPointContract, decodeSynthesisPoints } from "./SynthesisPointContract.mjs";
 import { buildSynthesisLedger, renderSynthesisLedger, LEDGER_CALL_TIMEOUT_MS } from "./SynthesisLedger.mjs";
+import { createLedgerWarmer, mergeLedgerCache, withoutLatestSource, addWarmStats, planWarmPass, recordWarmFailures } from "./LedgerWarmer.mjs";
 import { ALSOBAY_SOURCE_COMMIT, alsobayTaskSentence, buildAlsobayMessages, parseAlsobayResponse } from "./AlsobayStatic.mjs";
 import { assessSemanticFactors } from "./SemanticAssessor.js";
 import { checkNeedAssessment } from "./EvidenceChecker.js";
@@ -231,6 +232,55 @@ export const discussionDeadline = createDiscussionDeadline({ flush: () => Empiri
 export const facilitatorTasks = createBackgroundTasks({ onError: (error, key) => {
   console.warn("Facilitator background task failed", { key, message: error?.message || String(error) });
 } });
+// 2026-11-19: background warm-up of the Synthesiser ledger (LedgerWarmer.mjs).
+// Formal Adaptive Discussion only. Each new participant message is extracted
+// while the group keeps talking, so a Synthesiser turn has only the last few
+// messages left to do. Set LEDGER_WARMUP=off to disable.
+const ledgerWarmupEnabled = () => process.env.LEDGER_WARMUP !== "off";
+export const ledgerWarmer = createLedgerWarmer({ onError: (error, key) => {
+  console.warn("Ledger warm-up failed", { key, message: error?.message || String(error) });
+} });
+const ledgerLaneKey = (game, round) => `${game.id}:${round?.id}`;
+function ledgerWarmupApplies(game, round) {
+  const deadline = game.get("deadline");
+  return ledgerWarmupEnabled() && Boolean(round) && !round.get("isPractice") && round.get("facilitation") === "adaptive"
+    && game.currentRound?.id === round.id && game.currentStage?.get("name") === "Task" && !game.currentStage?.get("ended")
+    && Number.isFinite(deadline) && deadline - Date.now() > ADAPTIVE_FLOOR_MS;
+}
+function warmRoundLedger(game, round) {
+  return withPipelineLifetime(game, async () => {
+    if (!ledgerWarmupApplies(game, round)) return null;
+    const current = (game.get(`chat_round_${round.get("taskIndex")}`) || []).filter(isFormalContextMessage);
+    const cache = round.get("synthesisLedger") || {};
+    const plan = planWarmPass(cache, round.get("synthesisLedgerWarmSkip"), current);
+    if (!plan.attempt.length) return null;
+    const startedAt = Date.now();
+    const ledger = await buildSynthesisLedger({
+      chat: current,
+      optionLabels: (round.get("decisionOptions") || []).map(o => o?.label).filter(Boolean),
+      taskGeneralContext: buildStaticSharedTaskOverview({ generalInfo: round.get("generalInfo"), decisionOptions: round.get("decisionOptions") }),
+      cache, skipIds: plan.skip,
+      canContinue: () => ledgerWarmupApplies(game, round),
+      callLLM: (messages, options) => getLLMResponse(messages, synthesisOutputTokens(current, llmMaxOutputTokens), { ...options, timeoutMs: LEDGER_CALL_TIMEOUT_MS }),
+    });
+    const calls = ledger.diagnostics.calls;
+    if (!calls.length || game.currentRound?.id !== round.id) return null;
+    // Merge: only confirmed entries are cached, so a failed call caches nothing.
+    const merged = mergeLedgerCache(round.get("synthesisLedger"), ledger.cache);
+    round.set("synthesisLedger", merged);
+    round.set("synthesisLedgerWarmSkip", recordWarmFailures(round.get("synthesisLedgerWarmSkip"), current, plan.attempt, merged));
+    round.set("synthesisLedgerWarm", addWarmStats(round.get("synthesisLedgerWarm"), {
+      modelCalls: calls.length,
+      failedCalls: calls.filter(c => !c.ok).length,
+      messagesExtracted: calls.filter(c => c.kind === "ledger_extract" && c.round === 1).reduce((n, c) => n + (c.targets || 0), 0),
+      latencyMs: Date.now() - startedAt,
+      completedAt: Date.now(),
+      cachedMessages: Object.keys(merged).length,
+    }));
+    return ledger;
+  });
+}
+
 export function dispatchChat(env, props) {
   const game = props.game;
   const round = game.currentRound;
@@ -251,6 +301,9 @@ export function dispatchChat(env, props) {
     const key = `${game.id}:${round?.id}:${last?.messageId ?? "empty"}`;
     facilitatorTasks.launch(key, () => handleChat(env, props));
   }
+  // Not awaited: the pass runs while the checkpoint pipeline (and its Assessor) runs.
+  const tail = (game.get(`chat_round_${round?.get("taskIndex")}`) || []).at(-1);
+  if (isFormalHumanMessage(tail) && ledgerWarmupApplies(game, round)) ledgerWarmer.warm(ledgerLaneKey(game, round), () => warmRoundLedger(game, round));
 }
 
 export const adaptiveCloseoutScheduler = createCloseoutScheduler({
@@ -2534,19 +2587,30 @@ async function processChat(env, { game, adaptiveTrigger = null, requestedMessage
     delete logEntry.validator;
     delete logEntry.validatorRepair;
     const taskGeneralContext = buildStaticSharedTaskOverview({ generalInfo: currentRound.get("generalInfo"), decisionOptions: currentRound.get("decisionOptions") });
+    const laneKey = ledgerLaneKey(game, currentRound);
     for (let refresh = 0; ; refresh++) {
-      const current = (game.get(chatKey) || []).filter(isFormalContextMessage);
-      const snapshot = publicContextFingerprint(current.filter(isFormalHumanMessage));
-      const startedAt = Date.now();
-      const ledger = await buildSynthesisLedger({
-        chat: current, optionLabels, taskGeneralContext, cache: currentRound.get("synthesisLedger") || {},
-        canContinue: () => budget.check(),
-        callLLM: (messages, options, kind) => { logEntry.requestMade = true; return budget.call(kind, timing =>
-          getLLMResponse(messages, synthesisOutputTokens(current, llmMaxOutputTokens), { ...options, ...timing, timeoutMs: Math.min(timing.timeoutMs, LEDGER_CALL_TIMEOUT_MS) })); },
+      // 2026-11-19: the build waits for any queued warm-up pass on this Round's
+      // lane, then reads the chat and the warmed cache. The latest participant
+      // message is always re-extracted on the first build: that call proposes
+      // the closing question, which a fully cached ledger would not.
+      const queuedAt = Date.now();
+      const { current, snapshot, ledger, startedAt } = await ledgerWarmer.exclusive(laneKey, async () => {
+        const current = (game.get(chatKey) || []).filter(isFormalContextMessage);
+        const snapshot = publicContextFingerprint(current.filter(isFormalHumanMessage));
+        const startedAt = Date.now();
+        const cached = currentRound.get("synthesisLedger") || {};
+        const ledger = await buildSynthesisLedger({
+          chat: current, optionLabels, taskGeneralContext, cache: refresh === 0 ? withoutLatestSource(cached, current) : cached,
+          canContinue: () => budget.check(),
+          callLLM: (messages, options, kind) => { logEntry.requestMade = true; return budget.call(kind, timing =>
+            getLLMResponse(messages, synthesisOutputTokens(current, llmMaxOutputTokens), { ...options, ...timing, timeoutMs: Math.min(timing.timeoutMs, LEDGER_CALL_TIMEOUT_MS) })); },
+        });
+        currentRound.set("synthesisLedger", mergeLedgerCache(currentRound.get("synthesisLedger"), ledger.cache));
+        return { current, snapshot, ledger, startedAt };
       });
-      currentRound.set("synthesisLedger", ledger.cache);
       const rendered = renderSynthesisLedger(ledger, optionLabels);
-      logEntry.synthesisLedger = { ...rendered.stats, refresh, latencyMs: Date.now() - startedAt, accounted: rendered.accounted, calls: ledger.diagnostics.calls, fallbacks: ledger.diagnostics.fallbacks };
+      logEntry.synthesisLedger = { ...rendered.stats, refresh, latencyMs: Date.now() - startedAt, accounted: rendered.accounted, calls: ledger.diagnostics.calls, fallbacks: ledger.diagnostics.fallbacks,
+        warm: { ...(currentRound.get("synthesisLedgerWarm") || { passes: 0 }), waitedForWarmUpMs: startedAt - queuedAt } };
       // The scoreboard needs no further model call, so an exhausted chain time
       // budget does not stop it; only a lifecycle change or the deadline floor does.
       if (!canPublishFacilitatorResult(game, logEntry) || !automaticContextStillUsable(game, logEntry) || budget.remainingTime() <= ADAPTIVE_FLOOR_MS) {
@@ -2757,6 +2821,7 @@ Empirica.on("game", "chat_round_1", dispatchChat);
 Empirica.onStageEnded(({ stage }) => {
   if (stage.get("name") === "Task") {
     cancelStagePipelines(stage.id);
+    if (stage.currentGame && stage.round) ledgerWarmer.forget(ledgerLaneKey(stage.currentGame, stage.round));
     discussionDeadline.cancel(stage.currentGame);
     adaptiveCloseoutScheduler.cancel(stage.currentGame, "stage_ended");
   }

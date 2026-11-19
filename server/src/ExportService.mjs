@@ -967,6 +967,7 @@ export function renderTranscriptMd(bundle) {
         const l = e.synthesisLedger;
         lines.push(`- Synthesis ledger: ${l.messages} messages -> ${l.items} items (${l.verbatim} messages quoted verbatim, ${l.repeats} repeats, ${l.noTaskInformation} without task information); question: ${l.questionSource}; ${l.latencyMs} ms`);
         if (l.fallbacks?.length) lines.push(`- Ledger fallbacks: ${l.fallbacks.map(f => `${f.messageId} (${f.reason})`).join(", ")}`);
+        if (l.warm) lines.push(`- Ledger warm-up so far: ${l.warm.passes || 0} passes, ${l.warm.modelCalls || 0} model calls (${l.warm.failedCalls || 0} failed), ${l.warm.messagesExtracted || 0} messages extracted, ${l.warm.cachedMessages ?? 0} cached; waited ${l.warm.waitedForWarmUpMs ?? 0} ms for a running pass`);
       }
       if (e.silenceRule?.eligible?.length) lines.push(`- Silence rule eligible: ${e.silenceRule.eligible.join(", ")}`);
       const failure = e.specialistFailure;
