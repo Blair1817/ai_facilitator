@@ -35,7 +35,9 @@ export function redactPII(value) {
     .replace(/\b(?:https?:\/\/|www\.)\S+/gi, "[REDACTED_URL]")
     .replace(/(?<![\p{L}\p{N}:_-])(?:\+?\d[\d ().-]{7,}\d)(?![\p{L}\p{N}_-])/gu, "[REDACTED_PHONE]")
     .replace(/\b(Prolific(?:\s+(?:participant\s+)?ID)?|PID)\s*[:=#-]?\s*[A-Z0-9_-]{5,}\b/gi, "$1 [REDACTED_RECRUITMENT_ID]")
-    .replace(/@(?!\[)[A-Z0-9_.-]{2,}/gi, "[REDACTED_HANDLE]")
+    // "@Facilitator" addresses the study's AI, not a person: keep it so a
+    // typed participant request stays visible in exports.
+    .replace(/@(?!\[|facilitator(?![A-Z0-9_-]))[A-Z0-9_.-]{2,}/gi, "[REDACTED_HANDLE]")
     .replace(/\b(my (?:real )?name is|call me)\s+[A-Z][A-Za-z'-]*(?:\s+[A-Z][A-Za-z'-]*)?/gi, "$1 [REDACTED_NAME]");
 }
 

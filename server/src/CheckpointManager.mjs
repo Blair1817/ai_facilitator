@@ -56,9 +56,17 @@ export const FACILITATOR_MENTION_MARKER = "@[Facilitator]";
  * gate / dedup so a participant who explicitly addresses the Facilitator
  * gets a response on the very next handler tick, not 6 messages later.
  */
+// 2026-11-19: participants also type the mention by hand instead of picking
+// it from the suggestion list, which sends plain text such as "@Facilitator"
+// or "@ facilitator" (seen in the 2026-11-11 pilot, where that request went
+// unanswered). Accept the selected markup with optional spaces and a typed
+// "@Facilitator", case-insensitively. An e-mail-like "x@facilitator.org" and
+// a longer word such as "@facilitators" do not count.
+const FACILITATOR_MENTION_PATTERN = /(?<![\p{L}\p{N}_.])@[ \t]*(?:\[[ \t]*facilitator[ \t]*\]|facilitator(?![\p{L}\p{N}_-]|\.[\p{L}\p{N}]))/iu;
+
 export function containsFacilitatorMention(text) {
   if (typeof text !== "string" || text.length === 0) return false;
-  return text.toLowerCase().includes(FACILITATOR_MENTION_MARKER.toLowerCase());
+  return FACILITATOR_MENTION_PATTERN.test(text);
 }
 
 /**

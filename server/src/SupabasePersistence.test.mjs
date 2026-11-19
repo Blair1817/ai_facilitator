@@ -174,6 +174,13 @@ test("public chat and free text PII patterns are redacted without deleting optio
   assert.match(result, /Meridia and Halden/);
 });
 
+test("redaction keeps a typed @Facilitator request but still removes personal handles", () => {
+  assert.equal(redactPII("@Facilitator can you compare them?"), "@Facilitator can you compare them?");
+  assert.equal(redactPII("thanks @facilitator."), "thanks @facilitator.");
+  assert.equal(redactPII("@[Facilitator] help"), "@[Facilitator] help");
+  assert.equal(redactPII("ask @facilitator_fan or @janedoe"), "ask [REDACTED_HANDLE] or [REDACTED_HANDLE]");
+});
+
 test("research participant keys do not expose Empirica or recruitment-derived identifiers", () => {
   const sourceId = "prolific-session-ABC123";
   const pseudonym = researchParticipantId("game-1", sourceId);

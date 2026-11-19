@@ -349,12 +349,29 @@ test("containsFacilitatorMention: matches the canonical client-side marker", () 
   // No false positives on near-misses.
   assert.equal(containsFacilitatorMention("Hello everyone"), false);
   assert.equal(containsFacilitatorMention("I disagree with Facilitator's last point"), false);
-  assert.equal(containsFacilitatorMention("@Facilitator without brackets"), false);
+  assert.equal(containsFacilitatorMention("x@facilitator.org wrote"), false);
+  assert.equal(containsFacilitatorMention("@facilitators please"), false);
+  assert.equal(containsFacilitatorMention("@[Blue] what do you think?"), false);
   // Defensive: non-strings, empty string.
   assert.equal(containsFacilitatorMention(""), false);
   assert.equal(containsFacilitatorMention(null), false);
   assert.equal(containsFacilitatorMention(undefined), false);
   assert.equal(containsFacilitatorMention(42), false);
+});
+
+test("containsFacilitatorMention: accepts a typed mention that was not picked from the list", () => {
+  // 2026-11-11 pilot: "@Facilitator can you put the reasons ... side by side?"
+  // went out as plain text and received no reply.
+  for (const text of [
+    "@Facilitator can you put the reasons we've mentioned side by side?",
+    "@facilitator summarise please",
+    "@ Facilitator what are the criteria",
+    "can you help @Facilitator?",
+    "@Facilitator: compare please",
+    "thanks, @FACILITATOR.",
+    "@[ Facilitator ] help",
+    "@ [Facilitator] help",
+  ]) assert.equal(containsFacilitatorMention(text), true, text);
 });
 
 test("FACILITATOR_MENTION_MARKER: is the single source of truth shared with the client", () => {
