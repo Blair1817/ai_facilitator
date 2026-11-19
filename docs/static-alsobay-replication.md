@@ -50,6 +50,26 @@ request at a time), not the original 90 s timer.
   Task stage or the game ended.
 - **Model.** The same model as the Adaptive condition (`OPENAI_MODEL`), not
   GPT-4o, a study control.
+- **Recognising an @Facilitator request** (2026-11-19, shared with Adaptive).
+  The original answers only when the latest message contains the exact,
+  case-sensitive text `@[Facilitator]`, which the chat inserts when the name is
+  picked from the suggestion list. Participants also type the name by hand, and
+  that text was ignored (a request in the 2026-11-11 pilot went unanswered).
+  A request is now also recognised as `@Facilitator`, `@ Facilitator` or
+  `@[ Facilitator ]`, in any case (`containsFacilitatorMention` in
+  `server/src/CheckpointManager.mjs`); e-mail-like text and longer words such
+  as `@facilitators` do not count. Both conditions use the same rule, so this
+  does not differ between Static and Adaptive. It changes when Static replies
+  to a request, not what it is sent or what it posts.
+- **Showing @mentions in Facilitator messages** (2026-11-18/19, shared with
+  Adaptive). The original prompt tells the model that a tag only works as
+  `@[NAME]`, and the original chat shows only that form as a tag. Because
+  `MESSAGE` is posted without checks, the model also writes forms such as
+  `@ [Pink]` (every mention in the 2026-11-18 pilot), `@[ Pink ]` or `@Pink`,
+  which appeared as plain text. Facilitator messages now show these as tags as
+  well (`splitFacilitatorMentions` in `client/src/components/chatMentions.mjs`).
+  This changes only how the posted text is displayed; the text itself and the
+  prompt are unchanged, and participants' own messages are displayed as before.
 
 Unchanged study design: group size, discussion length, task materials, the
 checkpoint timing above, the opening message, silence nudges and timer
