@@ -9,28 +9,22 @@ const callbacksSource = readFileSync(path.join(dirname, "callbacks.js"), "utf8")
 const promptLoaderSource = readFileSync(path.join(dirname, "prompts/promptLoader.js"), "utf8");
 const requestedPromptSource = readFileSync(path.join(dirname, "prompts/source/requested_generalist.md"), "utf8");
 
-test("Static and Adaptive-Generalist compose their distinct approved prompt sources", () => {
-  const staticStart = promptLoaderSource.indexOf("export function getStaticPromptBundle");
-  const generalistStart = promptLoaderSource.indexOf("export function getGeneralistPromptBundle");
-  const staticBody = promptLoaderSource.slice(staticStart, generalistStart);
-  const adaptiveStart = promptLoaderSource.indexOf("export function getAdaptivePromptBundle", generalistStart);
-  const generalistBody = promptLoaderSource.slice(generalistStart, adaptiveStart);
-
-  assert.ok(staticStart >= 0 && generalistStart > staticStart && adaptiveStart > generalistStart);
-  assert.match(staticBody, /checkAndCompose\("static\.md",\s*"static"\)/);
-  assert.match(generalistBody, /checkAndCompose\("generalist\.md",\s*"generalist"\)/);
-  assert.doesNotMatch(staticBody, /checkAndCompose\("generalist\.md"/);
+test("no automatic Static or Generalist prompt bundle remains; the requested Generalist does", () => {
+  assert.equal(promptLoaderSource.includes("export function getStaticPromptBundle"), false);
+  assert.equal(promptLoaderSource.includes("export function getGeneralistPromptBundle"), false);
+  assert.match(promptLoaderSource, /export function getRequestedGeneralistPromptBundle/);
 });
 
-test("Static and Generalist prompt files are both startup dependencies", () => {
+test("the retired Static and automatic Generalist prompts are not startup dependencies", () => {
   const selfCheckStart = promptLoaderSource.indexOf("export function runStartupSelfCheck");
   const selfCheckBody = promptLoaderSource.slice(selfCheckStart);
   const requiredArray = selfCheckBody.slice(
     selfCheckBody.indexOf("const required = ["),
     selfCheckBody.indexOf("];", selfCheckBody.indexOf("const required = [")) + 2,
   );
-  assert.match(requiredArray, /"static\.md"/);
-  assert.match(requiredArray, /"generalist\.md"/);
+  assert.doesNotMatch(requiredArray, /"static\.md"/);
+  assert.doesNotMatch(requiredArray, /"generalist\.md"/);
+  assert.match(requiredArray, /"requested_generalist\.md"/);
 });
 
 // Actual bounded recovery behavior is exercised in AdaptivePipeline and

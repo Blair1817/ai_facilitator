@@ -123,10 +123,10 @@ async function getLLMResponse(messages) {
   return { success: true, data: (() => { try { return JSON.parse(text); } catch { return null; } })(), rawText: text };
 }
 
-const { getStaticPromptBundle, getAdaptivePromptBundle, getGeneralistPromptBundle } = await import("./src/prompts/promptLoader.js");
+const { getAdaptivePromptBundle } = await import("./src/prompts/promptLoader.js");
 const { parseGeneratorOutputStrict, validateAgainstGenerationSchema, runDeterministicValidation } = await import("./src/prompts/GeneratorContract.mjs");
 const { buildDynamicUserContext, withMessageIds } = await import("./src/prompts/DynamicContext.mjs");
-const { buildStaticUserContext } = await import("./src/prompts/StaticContext.mjs");
+const { buildAlsobayMessages, parseAlsobayResponse } = await import("./src/AlsobayStatic.mjs");
 const {
   buildIcebreakerLLMMessages,
   buildIcebreakerOpening,
@@ -140,18 +140,19 @@ const { validateCandidate } = await import("./src/SemanticValidator.js");
 const { shouldEvaluateCheckpoint, recordAttempt, recordPublish, resetRoundState } = await import("./src/CheckpointManager.mjs");
 const { llmSystemPrompts } = await import("./src/LLMConfig.js");
 
+// Static (and the Adaptive Static-policy turn) send the Alsobay et al.
+// request (src/AlsobayStatic.mjs): the original prompt and request layout,
+// MESSAGE posted as returned, no validation.
 function buildStaticRequest(chat) {
-  const bundle = llmSystemPrompts("static", null);
-  if (bundle.blocked) throw new Error(`static prompt blocked: ${bundle.reason}`);
-  const context = buildStaticUserContext({ chat, remainingTimeMs: 600_000, elapsedTimeMs: 60_000 });
-  return {
-    ...context,
-    metadata: bundle.metadata,
-    systemPrompt: bundle.content.replace(
-      "{{sharedTaskOverview}}",
-      "Task materials are not available to the facilitator. Use only facts participants explicitly share in the public transcript.",
-    ),
-  };
+  const now = Date.now();
+  return buildAlsobayMessages({
+    chat,
+    attendees: ["Red", "Pink", "Blue"],
+    taskSentence: "which of three cities (Eldoron, Myloria, Cragnio) should host the International Youth Games",
+    now,
+    taskStartTime: now - 60_000,
+    deadline: now + 540_000,
+  });
 }
 
 function buildAdaptiveRequest(chat, role, plan = null) {
@@ -190,7 +191,7 @@ console.log("\n=== TEST 0: Icebreaker facilitator (isolated chat-only LLM) ===")
 }
 
 // =================== TEST 1: Static path ===================
-console.log("\n=== TEST 1: Static AI path (full pipeline) ===");
+console.log("\n=== TEST 1: Static AI path (Alsobay et al. request) ===");
 {
   const game = makeMockGame({
     facilitation: "static",
@@ -216,27 +217,14 @@ console.log("\n=== TEST 1: Static AI path (full pipeline) ===");
     "Myloria is small and quiet",
     "Let's think about all three carefully",
   ]);
-  const built = buildStaticRequest(chat);
-  const messages = [
-    { role: "system", content: built.systemPrompt },
-    { role: "user", content: built.userContent },
-  ];
   const t0 = Date.now();
-  const llmRes = await getLLMResponse(messages);
+  const llmRes = await getLLMResponse(buildStaticRequest(chat));
   console.log(`  LLM call: ${Date.now() - t0}ms`);
   if (!llmRes.success) { console.log("  ✗ LLM FAIL:", llmRes.error); process.exit(1); }
-  const parsed = parseGeneratorOutputStrict(llmRes.rawText);
+  const parsed = parseAlsobayResponse(llmRes.rawText);
   if (!parsed.ok) { console.log("  ✗ PARSE FAIL:", parsed.error); process.exit(1); }
-  const schema = validateAgainstGenerationSchema(parsed.parsed, "STATIC");
-  if (!schema.ok) { console.log("  ✗ SCHEMA FAIL"); process.exit(1); }
-  const det = runDeterministicValidation(parsed.parsed, {
-    selectedRole: "STATIC",
-    eligibleMessageIds: built.eligibleMessageIds,
-    aiOrSystemMessageIds: built.aiOrSystemMessageIds,
-    recentAiMessageTexts: built.recentAiMessageTexts,
-  });
-  if (!det.passed) { console.log("  ✗ DETERMINISTIC FAIL:", det.failedCriteria); process.exit(1); }
-  console.log("  ✓ static path: role=" + parsed.parsed.role + " | msg=" + parsed.parsed.message.slice(0, 70) + (parsed.parsed.message.length > 70 ? "..." : ""));
+  const message = parsed.llmAction.MESSAGE;
+  console.log("  ✓ static path (Alsobay request, no validation): msg=" + message.slice(0, 70) + (message.length > 70 ? "..." : ""));
 }
 
 // =================== TEST 2: Adaptive Specialist path ===================
@@ -313,7 +301,7 @@ console.log("\n=== TEST 2: Adaptive Specialist path (full pipeline incl. Control
       console.log("  Validator error:", vr.code, vr.error?.slice(0, 80));
     }
   } else if (gate.decision === "generalist") {
-    console.log("  generalist path -- skipped for brevity");
+    console.log("  no Specialist -- the live Adaptive turn sends the Alsobay et al. request (TEST 1 path)");
   } else {
     console.log("  abstain path -- no LLM call needed (correct behavior)");
   }
@@ -382,8 +370,8 @@ console.log("\n=== TEST 4: @-mention triggers immediate checkpoint ===");
   console.log("  with mention -> trigger=" + tYes.trigger + " reason=" + tYes.reason);
 }
 
-// =================== TEST 5: End-to-end timing of full pipeline ===================
-console.log("\n=== TEST 5: Full end-to-end pipeline timing (Static, with Validator + repair) ===");
+// =================== TEST 5: End-to-end timing of the Static request ===================
+console.log("\n=== TEST 5: Static end-to-end timing (one Alsobay request; no Validator or repair) ===");
 {
   const chat = makeChat([
     "Eldoron has good schools, my kids would benefit",
@@ -393,42 +381,10 @@ console.log("\n=== TEST 5: Full end-to-end pipeline timing (Static, with Validat
     "Myloria is small and quiet",
     "Let's think about all three carefully",
   ]);
-  const game = makeMockGame({ facilitation: "static", chat });
-  resetRoundState(game);
-  game.set("humanMessageCount", 6);
-
-  const built = buildStaticRequest(chat);
-  const messages = [
-    { role: "system", content: built.systemPrompt },
-    { role: "user", content: built.userContent },
-  ];
   const t0 = Date.now();
-  // First attempt
-  const llmRes1 = await getLLMResponse(messages);
-  const parsed1 = parseGeneratorOutputStrict(llmRes1.rawText);
-  const schema1 = validateAgainstGenerationSchema(parsed1.parsed, "STATIC");
-  const det1 = runDeterministicValidation(parsed1.parsed, { selectedRole: "STATIC", eligibleMessageIds: built.eligibleMessageIds, aiOrSystemMessageIds: built.aiOrSystemMessageIds, recentAiMessageTexts: built.recentAiMessageTexts });
-  if (!schema1.ok || !det1.passed) { console.log("  ✗ first attempt deterministic fail"); process.exit(1); }
-
-  // Validator
-  const v1 = await validateCandidate({ chat, candidate: parsed1.parsed, selectedRole: "STATIC", taskGeneralContext: "", callLLM: getLLMResponse });
-  if (v1.success) {
-    console.log(`  attempt 1 (${Date.now() - t0}ms): verdict=${v1.verdict.passed ? "PASS" : "FAIL: " + v1.verdict.failedCriteria.join(",")}`);
-    if (!v1.verdict.passed) {
-      // Repair attempt
-      const repairHint = `${built.userContent}\n\n---\n\n[PRIOR_FAILED_CRITERIA]\nThe previous candidate was rejected for: ${v1.verdict.failedCriteria.join(", ")}.\nPrevious: ${JSON.stringify(parsed1.parsed)}\nRegenerate.`;
-      const t1 = Date.now();
-      const llmRes2 = await getLLMResponse([
-        { role: "system", content: built.systemPrompt },
-        { role: "user", content: repairHint },
-      ]);
-      const parsed2 = parseGeneratorOutputStrict(llmRes2.rawText);
-      const schema2 = validateAgainstGenerationSchema(parsed2.parsed, "STATIC");
-      const det2 = runDeterministicValidation(parsed2.parsed, { selectedRole: "STATIC", eligibleMessageIds: built.eligibleMessageIds, aiOrSystemMessageIds: built.aiOrSystemMessageIds, recentAiMessageTexts: built.recentAiMessageTexts });
-      const v2 = await validateCandidate({ chat, candidate: parsed2.parsed, selectedRole: "STATIC", taskGeneralContext: "", callLLM: getLLMResponse, priorFailedCriteria: v1.verdict.failedCriteria, priorCandidate: parsed1.parsed });
-      console.log(`  attempt 2 (${Date.now() - t1}ms): schema=${schema2.ok} det=${det2.passed} verdict=${v2.success ? (v2.verdict.passed ? "PASS" : "FAIL: " + v2.verdict.failedCriteria.join(",")) : "ERR"}`);
-    }
-  }
+  const llmRes = await getLLMResponse(buildStaticRequest(chat));
+  const parsed = llmRes.success ? parseAlsobayResponse(llmRes.rawText) : { ok: false, error: llmRes.error };
+  if (!parsed.ok) { console.log("  ✗ Static request failed:", parsed.error); process.exit(1); }
   console.log(`  total elapsed: ${Date.now() - t0}ms`);
 }
 

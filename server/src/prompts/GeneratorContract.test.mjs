@@ -34,7 +34,7 @@ test("structured output passes schema, audits all visible text, and survives can
   }, groundingMessageIds: ["m1"] };
   const parsed = parseGeneratorOutputStrict(JSON.stringify(output));
   assert.equal(parsed.ok, true);
-  assert.equal(validateAgainstGenerationSchema(parsed.parsed, "GENERALIST").ok, true);
+  assert.equal(validateAgainstGenerationSchema(parsed.parsed, "GENERALIST", "PARTICIPANT_REQUEST").ok, true);
   const candidate = normalizeGeneratorCandidate(parsed.parsed);
   assert.equal(runDeterministicValidation(candidate, {
     selectedRole: "GENERALIST", eligibleMessageIds: ["m1"], activeParticipantNames: ["Blue"], maxWords: 40,
@@ -63,7 +63,7 @@ test("structured titles are included in mention validation and presentation cann
 test("structured schema rejects missing fields and unknown nested fields", () => {
   for (const message of [{ summary: "Hi" }, { summary: "Hi", sections: [], question: "", rationale: "hidden" },
     { summary: "Hi", sections: [{ title: "A", body: "Text", winner: true }], question: "" }]) {
-    assert.equal(validateAgainstGenerationSchema({ role: "GENERALIST", message, groundingMessageIds: [] }, "GENERALIST").ok, false);
+    assert.equal(validateAgainstGenerationSchema({ role: "GENERALIST", message, groundingMessageIds: [] }, "GENERALIST", "PARTICIPANT_REQUEST").ok, false);
   }
 });
 
@@ -620,7 +620,7 @@ test("strict parser: end-to-end — a markdown-laden 703-char real failing outpu
   assert.ok(!parsed.parsed.message.includes(" - "), "bullet markers stripped from message field");
 
   // Schema check: with the cap raised to 1500, this now passes.
-  const schemaResult = validateAgainstGenerationSchema(parsed.parsed, "GENERALIST");
+  const schemaResult = validateAgainstGenerationSchema(parsed.parsed, "GENERALIST", "PARTICIPANT_REQUEST");
   assert.equal(schemaResult.ok, true, `schema must accept the cleaned 703-char message; errors=${JSON.stringify(schemaResult.errors)}`);
 
   // Deterministic check: with the markdown stripped, the
@@ -646,10 +646,14 @@ test("strict parser: end-to-end — a markdown-laden 703-char real failing outpu
   );
 });
 
-test("automatic text has only a word ceiling; requested route keeps its existing schema", () => {
-  assert.equal(getGenerationSchemaMaxLength(), null);
+test("automatic (Specialist) text has only a word ceiling; requested route keeps its existing schema", () => {
+  assert.equal(getGenerationSchemaMaxLength("INFORMATION_EXPANDER"), null);
   assert.equal(buildRuntimeGenerationSchema("GENERALIST", "PARTICIPANT_REQUEST").properties.message.maxLength, 1500);
   const candidate = { role: "GENERALIST", message: { summary: "s".repeat(800), sections: [], question: "q".repeat(800) }, groundingMessageIds: [] };
   assert.equal(validateAgainstGenerationSchema(candidate, "GENERALIST", "PARTICIPANT_REQUEST").ok, false);
-  assert.equal(validateAgainstGenerationSchema(candidate, "GENERALIST").ok, true);
+  const specialist = { ...candidate, role: "INFORMATION_EXPANDER" };
+  assert.equal(validateAgainstGenerationSchema(specialist, "INFORMATION_EXPANDER").ok, true);
+  // Static and the Adaptive Static-policy turn have no generation schema.
+  assert.throws(() => validateAgainstGenerationSchema(candidate, "GENERALIST"), /No generation schema/);
+  assert.throws(() => validateAgainstGenerationSchema({ ...candidate, role: "STATIC" }, "STATIC"), /No generation schema/);
 });

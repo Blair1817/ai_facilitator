@@ -1,12 +1,12 @@
 /**
  * promptLoader.js
  *
- * Two-facilitator design: Static uses base.md + static.md (the adapted
- * Alsobay D.2 prompt), while Adaptive-Generalist uses base.md +
- * generalist.md (the process-only frequency-control prompt). Adaptive may
- * instead select one of the three Specialist bundles when the Controller has
- * sufficient evidence. Explicit @Facilitator requests use base.md +
- * requested_generalist.md.
+ * Prompt bundles for the Adaptive Specialists (expander, challenger,
+ * synthesiser) and for the participant-requested Generalist (@Facilitator in
+ * Adaptive). There is no automatic non-Specialist bundle: the Static
+ * condition and the Adaptive Static-policy turn send the Alsobay et al.
+ * request (../AlsobayStatic.mjs). The control_50 Static/Generalist package
+ * was deleted on 2026-11-19.
  *
  * This module is the single source of truth for the prompt bundle surface
  * and for fail-closed detection. It does NOT invent, complete, or rewrite
@@ -83,9 +83,8 @@ function readSourceFile(filename) {
 }
 
 // Maps the Adaptive Controller's actual (lowercase, unprefixed) Specialist
-// role strings to the corresponding source prompt files. The v2 design adds
-// "generalist" as a separate Adaptive mode (NOT a Specialist -- see the
-// PROMPT_STATUS table below) handled by getGeneralistPromptBundle(). The
+// role strings to the corresponding source prompt files. "generalist" is
+// not a Specialist and has no automatic bundle (see LLMConfig.js). The
 // old "facilitator" role (Participation-Balance / Gini-driven) is removed
 // from utils.js's ROLES and has no corresponding .md file -- it will never
 // be selected by the live pipeline.
@@ -98,9 +97,6 @@ const ADAPTIVE_SPECIALIST_FILES = {
 // v2 PROMPT_STATUS (Phase 2 update):
 //   - base:        "draft" (no [[ TODO ]] markers, but still draft per
 //                            prompt_design_specification.Rmd front matter).
-//   - static:      "draft" (Phase 2.1 rewrote it to Alsobay D.2; the v1
-//                            `[[ TODO ]]` markers are gone).
-//   - generalist:  "draft" (Phase 2.2 -- new file, v2 design, no markers).
 //   - expander, challenger, synthesiser: "draft" (no markers, not frozen).
 //
 // `promptStatus` is fixed per file (never derived from marker detection,
@@ -113,8 +109,6 @@ const ADAPTIVE_SPECIALIST_FILES = {
 // "no_markers_found" or "has_unresolved_markers".
 const PROMPT_STATUS = {
   base: "draft",
-  static: "draft",
-  generalist: "draft",
   requested_generalist: "draft",
   expander: "draft",
   challenger: "draft",
@@ -127,45 +121,6 @@ function computeSourceCompleteness(incompleteMarkers) {
 
 function checkAndCompose(_filename, roleKey) {
   return runtimeGeneratorBundle(roleKey);
-}
-
-/**
- * Static facilitator. Keep this prompt distinct from Adaptive-Generalist:
- * matching concerns intervention opportunity/frequency, not prompt content.
- */
-export function getStaticPromptBundle() {
-  const result = checkAndCompose("static.md", "static");
-  if (result.blocked) return result;
-  return {
-    blocked: false,
-    content: result.content,
-    metadata: {
-      ...result.metadata,
-      condition: "static",
-      selectedRole: null,
-      generationRole: "STATIC",
-    },
-  };
-}
-
-/**
- * Adaptive Generalist facilitator (matched-frequency control, Phase 2.2).
- * Adaptive condition when Controller emits "generalist" (no Specialist
- * clearly justified) -> role "GENERALIST".
- */
-export function getGeneralistPromptBundle() {
-  const result = checkAndCompose("generalist.md", "generalist");
-  if (result.blocked) return result;
-  return {
-    blocked: false,
-    content: result.content,
-    metadata: {
-      ...result.metadata,
-      condition: "adaptive",
-      selectedRole: "generalist",
-      generationRole: "GENERALIST",
-    },
-  };
 }
 
 /**
@@ -199,7 +154,7 @@ export function getAdaptivePromptBundle(selectedRole) {
   if (!roleEntry) {
     return {
       blocked: true,
-      reason: `No prompt file exists in the source package for controller-selected Specialist role "${selectedRole}". Only expander/challenger/synthesiser are defined; generation.schema.json's role enum also has no matching entry. If the Controller emitted "generalist" here, route it via getGeneralistPromptBundle() instead.`,
+      reason: `No prompt file exists in the source package for controller-selected Specialist role "${selectedRole}". Only expander/challenger/synthesiser are defined; generation.schema.json's role enum also has no matching entry. There is no automatic Generalist: a non-Specialist Adaptive turn sends the Alsobay et al. request.`,
       metadata: {
         promptName: selectedRole || "(none)",
         promptVersion: PROMPT_PACKAGE_VERSION,
@@ -235,7 +190,7 @@ export function getAdaptivePromptBundle(selectedRole) {
  * checkpoint).
  *
  * Required files (Phase 2 + Phase 5.3):
- *   - base.md, static.md, generalist.md, requested_generalist.md, expander.md,
+ *   - base.md, requested_generalist.md, expander.md,
  *     challenger.md, synthesiser.md, assessor.md, validator.md
  *   - generation.schema.json, assessor.schema.json, validation.schema.json
  *
@@ -254,8 +209,6 @@ export function getAdaptivePromptBundle(selectedRole) {
 export function runStartupSelfCheck({ throwOnFailure = true } = {}) {
   const required = [
     "base.md",
-    "static.md",
-    "generalist.md",
     "requested_generalist.md",
     "expander.md",
     "challenger.md",

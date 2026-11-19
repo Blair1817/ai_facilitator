@@ -20,7 +20,7 @@ import { evaluateNeedGate, chooseRole, THRESHOLDS } from "./utils.js";
 import { parseGeneratorOutputStrict, validateAgainstGenerationSchema, runDeterministicValidation } from "./prompts/GeneratorContract.mjs";
 import { buildDynamicUserContext, withMessageIds, formatMessagesWithIds } from "./prompts/DynamicContext.mjs";
 import { getRequestedGeneralistPromptBundle } from "./prompts/promptLoader.js";
-import { buildStaticSharedTaskOverview, buildStaticUserContext } from "./prompts/StaticContext.mjs";
+import { buildStaticSharedTaskOverview } from "./prompts/StaticContext.mjs";
 import {
   buildChatCompletionPayload,
   buildSuccessfulLLMResult,
@@ -440,19 +440,17 @@ function recordOperationalEvent(game, event) {
 // ── Feature extraction (calls Python sidecar) ─────────────────────────────────
 }
 
-// ── Generator context boundary (Static AND Adaptive) ──────────────────────────
+// ── Generator context boundary (Adaptive Specialists and @ requests) ──────────
 //
-// Static uses a deliberately narrower context assembler; Adaptive retains its
-// existing dynamic context unchanged. Both conditions converge immediately
-// afterward on the same LLM call, parsing, validation, publication, and log
-// path in runSharedGeneration.
+// The Static condition and the Adaptive Static-policy turn do not come
+// through here: they send the Alsobay et al. request (alsobayStaticTurn /
+// fallback below, AlsobayStatic.mjs).
 //
-// `role` is the Controller-selected Adaptive role (utils.js's chooseRole(),
+// `role` is the Controller-selected Specialist (utils.js's chooseRole(),
 // only called once the Adaptive gate -- utils.js's evaluateNeedGate() -- has
-// returned "specialist") for Adaptive, or null for Static and for Adaptive's
-// Static-policy route (which reuses the Static context). `plan` is
-// PolicyCompiler.js's compilePlan() output for that role (Adaptive with a
-// gate Act only) or null (Static, or Adaptive with no plan available).
+// returned "specialist"), or "generalist" together with the
+// participant-requested prompt override. `plan` is
+// PolicyCompiler.js's compilePlan() output for that role or null.
 // Returns { blocked, reason?, metadata, systemPrompt?, userContent?,
 // eligibleMessageIds?, aiOrSystemMessageIds?, recentAiMessageTexts?,
 // allowedGroundingIds? }; the caller must check `blocked` before calling
@@ -469,31 +467,6 @@ function buildGeneratorContext(game, players, chat, remainingTime, timeElapsed, 
     generalInfo: game.currentRound?.get("generalInfo"),
     decisionOptions: game.currentRound?.get("decisionOptions"),
   });
-
-  if (facilitation === "static") {
-    const staticContext = buildStaticUserContext({
-      chat,
-      remainingTimeMs: remainingTime,
-      elapsedTimeMs: timeElapsed,
-      // 2026-08-13: prefer the live game roster over names derived
-      // from chat (which only sees speakers so far) so the Static
-      // prompt can @ a participant who has not yet spoken (e.g.
-      // when a participant has been silent for the whole round).
-      // StaticContext.mjs falls back to chat-derived names if this
-      // is null.
-      activeParticipantNames: players.map((p) => p.get("name")).filter((n) => typeof n === "string" && n.trim()),
-    });
-    return {
-      blocked: false,
-      metadata: promptResult.metadata,
-      systemPrompt: promptResult.content.replace(
-        "{{sharedTaskOverview}}",
-        publicTaskOverview,
-      ),
-      taskGeneralContext: publicTaskOverview,
-      ...staticContext,
-    };
-  }
 
   const checkpointDescriptor = `Checkpoint after ${getHumanMessages(chat).length} human message(s) so far this round. Participants: ${players.map((p) => p.get("name")).join(", ")}. Time remaining: ${formatDuration(remainingTime)}, elapsed: ${formatDuration(timeElapsed)}.`;
 

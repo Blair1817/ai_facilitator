@@ -40,8 +40,11 @@ const SOURCE_DIR = path.join(ENTRY_DIR, "prompts", "source");
 const ajv = new Ajv({ strict: false, allErrors: true });
 
 const cachedGenerationSchemas = new Map();
-function loadGenerationSchema(selectedRole = "GENERALIST", triggerType = null) {
-  const route = triggerType === "PARTICIPANT_REQUEST" ? "frozen_control" : isSpecialistRole(selectedRole) ? "specialist" : "control_50";
+function loadGenerationSchema(selectedRole, triggerType = null) {
+  const route = triggerType === "PARTICIPANT_REQUEST" ? "frozen_control" : isSpecialistRole(selectedRole) ? "specialist" : null;
+  // Static and the Adaptive Static-policy turn post the Alsobay et al. MESSAGE
+  // without a generation schema; the control_50 package was deleted.
+  if (!route) throw new Error(`No generation schema for automatic ${selectedRole}: only Specialists and participant requests use one`);
   if (!cachedGenerationSchemas.has(route)) cachedGenerationSchemas.set(route, JSON.parse(readRuntimeFile(`${route}/generation.schema.json`)));
   return cachedGenerationSchemas.get(route);
 }
@@ -438,6 +441,6 @@ export function runDeterministicValidation(
   return { passed: failedCriteria.length === 0, failedCriteria };
 }
 
-export function getGenerationSchemaMaxLength() {
-  return loadGenerationSchema().properties?.message?.maxLength ?? null;
+export function getGenerationSchemaMaxLength(selectedRole, triggerType = null) {
+  return loadGenerationSchema(selectedRole, triggerType).properties?.message?.maxLength ?? null;
 }

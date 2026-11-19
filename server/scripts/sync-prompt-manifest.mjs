@@ -9,7 +9,7 @@ const manifestPath = path.join(source, "manifest.json");
 const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 const hash = input => createHash("sha256").update(input).digest("hex");
 manifest.files = {};
-for (const folder of ["specialist", "control_50", "frozen_control"]) {
+for (const folder of ["specialist", "frozen_control"]) {
   for (const entry of fs.readdirSync(path.join(source, folder), { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     if (!entry.isFile()) throw new Error("Unexpected nested or linked prompt source");
     const filename = `${folder}/${entry.name}`;

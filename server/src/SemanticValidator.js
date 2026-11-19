@@ -116,7 +116,8 @@ export const VALIDATOR_CRITERIA = Object.freeze([
 export function getValidatorPromptBundle(selectedRole = "GENERALIST", triggerType = null) {
   let file;
   const runtimePath = validatorRuntimePath(selectedRole, triggerType);
-  try { file = { content: readRuntimeFile(runtimePath) }; } catch (error) { file = { error: error.message }; }
+  if (!runtimePath) file = { error: `No Validator route for automatic ${selectedRole}: only Specialists and participant requests are validated` };
+  else try { file = { content: readRuntimeFile(runtimePath) }; } catch (error) { file = { error: error.message }; }
   const metadata = { promptName: "validator", promptStatus: "draft_unapproved", promptVersion: PROMPT_RUNTIME_VERSION, runtimePath };
 
   if (file.error) {

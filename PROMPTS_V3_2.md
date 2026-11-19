@@ -1,12 +1,12 @@
 # Prompt v3.2 runtime integration
 
-All automatically triggered Static, Adaptive Generalist and Specialist interventions use **at most 50 English words**, including every visible structured field. There is no minimum. Exactly 50 is valid; 51 is rejected. Participant-requested `@Facilitator` replies keep their separate original policy.
+All automatically triggered Specialist interventions use **at most 50 English words** (Synthesiser excepted, see below), including every visible structured field. There is no minimum. Exactly 50 is valid; 51 is rejected. Participant-requested `@Facilitator` replies keep their separate original policy.
 
 ## Active sources and routing
 
 The authoritative active package is `server/src/prompts/source/runtime/`:
 
-- `control_50/`: Static and automatic Generalist, with their original facilitation policies and the common word ceiling.
+- No automatic non-Specialist package: the Static condition and the Adaptive Static-policy turn (no Specialist, or a failed Specialist) send the Alsobay et al. request verbatim, with no word limit or validation (`server/src/AlsobayStatic.mjs`, `docs/static-alsobay-replication.md`). The former `control_50/` Static/automatic-Generalist package was deleted on 2026-11-19.
 - `specialist/`: Specialist base/common, Expander, Challenger, Synthesiser, Assessor, Validator and schemas.
 - `frozen_control/`: original participant-requested Generalist bundle and historical baseline. Never route automatic calls here.
 - `manifest.json`: source and composed-bundle hashes. Startup fails on a missing or modified declared source. Original files directly under `source/` are retained for historical contracts/replay, not selected by the live loader.
@@ -21,7 +21,7 @@ Assessor now supplies `cognitiveTargets`, describing observable public needs, so
 
 Single-person claims can trigger scrutiny without asserting group agreement. Challenger uses the strongest checked justification/concern/link need (or the former preference/justification score, whichever is larger). At least one actual reasoning need is required. Existing numeric thresholds, priority band, timing, opportunity frequency and cooldown stay unchanged. Role selection no longer switches merely to introduce variety.
 
-A missing public target, incomplete sources, invalid role-operation combination, unsupported participation targeting, already-addressed target or repeated delivered operation/target cannot enter the Specialist Generator. The same checkpoint uses the existing automatic Generalist path. A real candidate may be repaired once; persistent semantic rejection switches to Generalist with Specialist plan/preflight/history sections removed. Rejected drafts are never published or counted as uptake.
+A missing public target, incomplete sources, invalid role-operation combination, unsupported participation targeting, already-addressed target or repeated delivered operation/target cannot enter the Specialist Generator. The same checkpoint uses the Static policy (the Alsobay et al. request). A real candidate may be repaired once; persistent semantic rejection switches to the Static policy. Rejected drafts are never published or counted as uptake.
 
 Per-message quotes are mechanically verified against the same positional IDs used by the Generator and Validator. Quote matching proves text exists; it does not prove semantic interpretation. The semantic Validator still checks actual public claims. Public-unit/scope differences cannot be silently turned into numerical conversions, contradictions, weights or recommendations.
 
@@ -48,6 +48,6 @@ npm run build
 
 The synchronisation command refreshes hashes and the isolated callback simulation's resources; it does not call a model. Changing a hash without reviewing the changed Prompt is not research approval.
 
-`PromptRuntimeIntegration.test.mjs` drives the real callbacks with synthetic public messages and locally stubbed model responses. It covers Specialist publication, invalid-plan Generalist routing, bounded repair/fallback, Static bypass, automatic/requested budget separation, forged preflight rejection and a researcher stage skip while validation is outstanding. These are offline mechanism checks, not GPT-5.6 effectiveness measurements.
+`PromptRuntimeIntegration.test.mjs` drives the real callbacks with synthetic public messages and locally stubbed model responses. It covers Specialist publication, invalid-plan Static-policy routing, bounded repair/fallback, Static bypass, automatic/requested budget separation, forged preflight rejection and a researcher stage skip while validation is outstanding. These are offline mechanism checks, not GPT-5.6 effectiveness measurements.
 
 No live pilot, real-model evaluation, container restart or Azure release is performed by this integration. Use the immutable Azure image pipeline for a separately authorised deployment.

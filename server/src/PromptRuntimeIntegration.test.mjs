@@ -130,8 +130,9 @@ test("formal Adaptive Assessor receives the explicit complete-current-round scop
   assert.match(r.requests[0].messages[1].content, /\[CONTEXT_SCOPE\]\ncomplete_current_round/);
   assert.doesNotMatch(r.requests[0].messages[1].content, /\[CONTEXT_SCOPE\]\nundefined/);
 });
-test("automatic vs participant-requested Generalist have separate validator and budget routes", () => {
-  assert.equal(validatorRuntimePath("GENERALIST", null), "control_50/validator.md");
+test("only participant-requested Generalist and Specialists have validator routes; automatic word budgets", () => {
+  assert.equal(validatorRuntimePath("GENERALIST", null), null, "no automatic Generalist: the Adaptive fallback sends the Alsobay et al. request");
+  assert.equal(validatorRuntimePath("STATIC", null), null);
   assert.equal(validatorRuntimePath("GENERALIST", "PARTICIPANT_REQUEST"), "frozen_control/requested_validator.md");
   assert.equal(runtimeGeneratorBundle("requested_generalist").metadata.maxWords, null);
   for (const role of ["STATIC", "GENERALIST", "INFORMATION_EXPANDER", "EVIDENCE_CHALLENGER"]) {
@@ -197,7 +198,7 @@ test("missing or forged Specialist preflight cannot reach an external Validator 
 });
 
 test("schemas resolve from the active versioned route, not stale root descriptions", () => {
-  assert.match(buildRuntimeGenerationSchema("STATIC").title, /Automatic Control/);
+  assert.throws(() => buildRuntimeGenerationSchema("STATIC"), /No generation schema/);
   assert.match(buildRuntimeGenerationSchema("EVIDENCE_CHALLENGER").title, /Specialist/);
   assert.equal(buildRuntimeGenerationSchema("GENERALIST", "PARTICIPANT_REQUEST").title, "Generator Output Schema");
 });

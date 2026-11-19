@@ -70,6 +70,18 @@ Static prompt path, the Static Validator route and the Static matched delay
 (`STATIC_MATCHED_DELAY_MS`) are no longer used. A failed Static request is not
 retried; the next eligible checkpoint makes a new one, as in Adaptive. See `static-intervention-scheduling.md` for the earlier design.
 
+On 2026-11-19 the unused prompt package was deleted rather than left in place:
+`runtime/control_50/` (Static and automatic-Generalist base, prompts, Validator
+and schemas, plus the simulator copy), the `static` and `generalist` routes in
+`runtime/manifest.json`, `getStaticPromptBundle()`, `getGeneralistPromptBundle()`,
+the Static branch of `buildGeneratorContext()` and `buildStaticUserContext()`.
+`llmSystemPrompts("static")` and `llmSystemPrompts("adaptive", "generalist")`
+now return a blocked result, and asking for a generation schema or Validator for
+an automatic non-Specialist role throws or blocks instead of reading a missing
+file. `frozen_control/` (participant-requested Generalist, plus the historical
+baseline `frozen_control/static.md`) and the legacy `prompts/source/*.md` are
+kept.
+
 ## Consequence to keep in mind
 
 Without validation, Static messages can misattribute a point, suggest criteria

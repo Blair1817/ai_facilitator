@@ -1,10 +1,10 @@
-// Phase 2 (v2 design) tests for promptLoader.js + LLMConfig.js.
+// Tests for promptLoader.js + LLMConfig.js bundle routing.
 //
-// v2 design: TWO independent facilitator systems (Static AI vs Adaptive AI).
-// The Static AI facilitator's prompt is NOT byte-identical to the Adaptive
-// AI's Generalist fallback -- they are two separate .md files. Tests here
-// assert that separation, plus the new bundle API, plus the schema enum,
-// plus the startup self-check.
+// Only the Adaptive Specialists (and, via getRequestedGeneralistPromptBundle,
+// the participant-requested Generalist) have prompt bundles. The Static
+// condition and the Adaptive Static-policy turn send the Alsobay et al.
+// request (AlsobayStatic.mjs, covered by AlsobayStatic.test.mjs); the
+// control_50 Static/automatic-Generalist package was deleted on 2026-11-19.
 //
 // Sets process.argv[1] before importing promptLoader.js so its ENTRY_DIR
 // resolution points at this real server/src tree instead of a dist/ build
@@ -20,206 +20,55 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 process.argv[1] = path.join(__dirname, "..", "fake-entry.js");
 
-const {
-  getStaticPromptBundle,
-  getGeneralistPromptBundle,
-  getAdaptivePromptBundle,
-  runStartupSelfCheck,
-  PROMPT_PACKAGE_VERSION,
-} = await import("./promptLoader.js");
+const loader = await import("./promptLoader.js");
+const { getAdaptivePromptBundle, getRequestedGeneralistPromptBundle, runStartupSelfCheck, PROMPT_PACKAGE_VERSION } = loader;
 
 const SOURCE_DIR = path.join(__dirname, "source");
-const baseText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/control_50/base.md"), "utf8");
-const staticText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/control_50/static.md"), "utf8");
-const generalistText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/control_50/generalist.md"), "utf8");
-const expanderText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/specialist/expander.md"), "utf8");
-const challengerText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/specialist/challenger.md"), "utf8");
-const synthesiserText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/specialist/synthesiser.md"), "utf8");
 
-// ── getStaticPromptBundle ────────────────────────────────────────────────────
+// ── No automatic non-Specialist bundle ──────────────────────────────────────
 
-test("getStaticPromptBundle returns blocked=false (no markers in v2 static.md)", () => {
-  const bundle = getStaticPromptBundle();
-  assert.equal(bundle.blocked, false, bundle.reason);
-});
-
-test("getStaticPromptBundle metadata.condition = 'static', generationRole = 'STATIC'", () => {
-  const bundle = getStaticPromptBundle();
-  assert.equal(bundle.metadata.condition, "static");
-  assert.equal(bundle.metadata.generationRole, "STATIC");
-  assert.equal(bundle.metadata.selectedRole, null);
-});
-
-test("getStaticPromptBundle content = base.md + '\\n\\n---\\n\\n' + static.md", () => {
-  const bundle = getStaticPromptBundle();
-  assert.equal(bundle.content, `${baseText}\n\n---\n\n${staticText}`);
-});
-
-test("getStaticPromptBundle preserves the Static scoreboard policy with public-only task grounding", () => {
-  const bundle = getStaticPromptBundle();
-  assert.match(bundle.content, /scoreboard/i);
-  assert.match(bundle.content, /\{\{sharedTaskOverview\}\}/);
-  assert.doesNotMatch(bundle.content, /Eldoron|Myloria|Cragnio|Rovenna|Talwick|Meridia/);
-  assert.match(bundle.content, /shared task objective[\s\S]+requirements, and option labels/i);
-  assert.match(bundle.content, /never\s+contains private reports, hidden facts, answer keys, or participant-specific/i);
-});
-
-test("getStaticPromptBundle does NOT instruct the LLM to output a RATIONALE field", () => {
-  // The original Alsobay D.2 prompt told the LLM to respond with
-  // {MESSAGE, RATIONALE}. The v2 adapter removed that instruction
-  // (generation.schema.json has no RATIONALE field; additionalProperties:
-  // false would fail-closed any output that included it). The static.md
-  // header still mentions the word "RATIONALE" in its adapter-note
-  // documentation -- that's expected, since the word is required to
-  // explain what was removed. This test only checks the INSTRUCTION is
-  // gone (no "RATIONALE:" field description directed at the model).
-  const bundle = getStaticPromptBundle();
-  // Strip the header comment (lines starting with '>') before checking,
-  // so the documentation in static.md's header is excluded from the
-  // contract.
-  const bodyOnly = bundle.content.split("\n").filter((l) => !l.startsWith(">")).join("\n");
-  assert.equal(/RATIONALE\s*:/i.test(bodyOnly), false, "static.md's body must not contain a 'RATIONALE:' field instruction");
-  assert.equal(/MESSAGE\s*:\s*Include/i.test(bodyOnly), false, "static.md must not carry the original Alsobay 'MESSAGE: Include...' instruction (base.md owns the output contract)");
-});
-
-test("getStaticPromptBundle uses the shared structured-message contract", () => {
-  const bundle = getStaticPromptBundle();
-  assert.match(bundle.content, /shared structured-message contract/);
-  assert.match(bundle.content, /runtime 50-word ceiling applies to the whole intervention/);
-  assert.match(bundle.content, /Numbered plain-text lists and paragraph breaks are allowed/);
-  assert.doesNotMatch(bundle.content, /you may use newlines for formatting/i);
+test("there is no Static or automatic Generalist bundle, prompt file or manifest route", () => {
+  assert.equal("getStaticPromptBundle" in loader, false);
+  assert.equal("getGeneralistPromptBundle" in loader, false);
+  assert.equal(fs.existsSync(path.join(SOURCE_DIR, "runtime/control_50")), false);
+  const manifest = JSON.parse(fs.readFileSync(path.join(SOURCE_DIR, "runtime/manifest.json"), "utf8"));
+  assert.equal("static" in manifest.routes, false);
+  assert.equal("generalist" in manifest.routes, false);
 });
 
 test("all Generator bundles require grounding IDs to be quoted JSON strings", () => {
-  for (const bundle of [getStaticPromptBundle(), getGeneralistPromptBundle(), getAdaptivePromptBundle("expander")]) {
-    assert.match(bundle.content, /quoted JSON string/);
+  for (const bundle of [getRequestedGeneralistPromptBundle(), getAdaptivePromptBundle("expander")]) {
+    assert.equal(bundle.blocked, false, bundle.reason);
     assert.match(bundle.content, /quoted JSON string/);
     assert.match(bundle.content, /groundingMessageIds/);
   }
 });
 
-test("getStaticPromptBundle does NOT contain generalist.md content (Static AI != Generalist)", () => {
-  const bundle = getStaticPromptBundle();
-  assert.equal(bundle.content.includes(generalistText), false, "Static bundle must not contain Generalist content");
-});
-
-// ── getGeneralistPromptBundle ────────────────────────────────────────────────
-
-test("getGeneralistPromptBundle returns blocked=false", () => {
-  const bundle = getGeneralistPromptBundle();
-  assert.equal(bundle.blocked, false, bundle.reason);
-});
-
-test("getGeneralistPromptBundle metadata.condition = 'adaptive', generationRole = 'GENERALIST'", () => {
-  const bundle = getGeneralistPromptBundle();
-  assert.equal(bundle.metadata.condition, "adaptive");
-  assert.equal(bundle.metadata.generationRole, "GENERALIST");
-  assert.equal(bundle.metadata.selectedRole, "generalist");
-});
-
-test("getGeneralistPromptBundle content = base.md + '\\n\\n---\\n\\n' + generalist.md", () => {
-  const bundle = getGeneralistPromptBundle();
-  assert.equal(bundle.content, `${baseText}\n\n---\n\n${generalistText}`);
-});
-
-test("getGeneralistPromptBundle does NOT contain static.md content (Generalist != Static AI)", () => {
-  const bundle = getGeneralistPromptBundle();
-  assert.equal(bundle.content.includes(staticText), false, "Generalist bundle must not contain Static AI content");
-});
-
-test("getGeneralistPromptBundle does NOT contain any Specialist role's content", () => {
-  const bundle = getGeneralistPromptBundle();
-  assert.equal(bundle.content.includes(expanderText), false, "Generalist must not contain expander content");
-  assert.equal(bundle.content.includes(challengerText), false, "Generalist must not contain challenger content");
-  assert.equal(bundle.content.includes(synthesiserText), false, "Generalist must not contain synthesiser content");
-});
-
-test("getGeneralistPromptBundle does NOT instruct the LLM to act as a scoreboard (that is closer to Synthesiser)", () => {
-  // The Alsobay Static prompt has "acting as a scoreboard" wording. The
-  // v2 Generalist is the Adaptive's matched-frequency control and is
-  // deliberately process-only -- scoreboard-style aggregation is the
-  // Synthesiser's job, not Generalist's. The generalist.md header
-  // explains this in its own header, so we strip the header comments
-  // before checking the body.
-  const bundle = getGeneralistPromptBundle();
-  const bodyOnly = bundle.content.split("\n").filter((l) => !l.startsWith(">")).join("\n");
-  assert.equal(/act(ing)?\s+as\s+a\s+scoreboard/i.test(bodyOnly), false, "Generalist body must not instruct the LLM to act as a scoreboard");
-  assert.equal(/keep(ing)?\s+track\s+of\s+pros\s+and\s+cons/i.test(bodyOnly), false, "Generalist body must not instruct pros/cons tracking (that is Synthesiser's job)");
-});
-
-// ── Cross-facilitator separation (the core v2 invariant) ────────────────────
-
-test("Static AI bundle and Adaptive Generalist bundle are NOT byte-identical (two different prompts)", () => {
-  const staticBundle = getStaticPromptBundle();
-  const generalistBundle = getGeneralistPromptBundle();
-  assert.notEqual(
-    staticBundle.content,
-    generalistBundle.content,
-    "Static AI and Generalist must have different .md sources (v2 design: two independent facilitators)"
-  );
-});
-
-test("Static AI and Adaptive Generalist bundles each carry only their own role file's full text", () => {
-  const staticBundle = getStaticPromptBundle();
-  const generalistBundle = getGeneralistPromptBundle();
-
-  assert.ok(staticBundle.content.includes(staticText), "Static bundle must contain its own file in full");
-  assert.equal(staticBundle.content.includes(generalistText), false, "Static bundle must not contain Generalist file");
-
-  assert.ok(generalistBundle.content.includes(generalistText), "Generalist bundle must contain its own file in full");
-  assert.equal(generalistBundle.content.includes(staticText), false, "Generalist bundle must not contain Static file");
-});
-
-test("No Specialist bundle contains Generalist content, and vice versa", () => {
-  const generalistBundle = getGeneralistPromptBundle();
-  for (const text of [expanderText, challengerText, synthesiserText]) {
-    assert.equal(generalistBundle.content.includes(text), false);
-  }
-  for (const role of ["expander", "challenger", "synthesiser"]) {
-    const bundle = getAdaptivePromptBundle(role);
-    assert.equal(bundle.content.includes(generalistText), false, `${role} bundle must not contain Generalist content`);
-  }
-});
-
 // ── Routing guards ──────────────────────────────────────────────────────────
 
-test("getAdaptivePromptBundle('generalist') is BLOCKED -- 'generalist' must route via getGeneralistPromptBundle, not here", () => {
-  // This is the routing-invariance test: Generalist is a separate bundle
-  // (matched-frequency control), not a Specialist. If the Controller
-  // emits role='generalist', the dispatcher (LLMConfig.llmSystemPrompts)
-  // routes it to getGeneralistPromptBundle, NOT here. Calling
-  // getAdaptivePromptBundle('generalist') directly must fail closed so
-  // future refactors that bypass the dispatcher get caught.
+test("getAdaptivePromptBundle('generalist') is BLOCKED -- 'generalist' is not a Specialist", () => {
+  // There is no automatic Generalist: when no Specialist is selected the
+  // Adaptive condition sends the Alsobay et al. request. Calling
+  // getAdaptivePromptBundle('generalist') directly must fail closed.
   const bundle = getAdaptivePromptBundle("generalist");
   assert.equal(bundle.blocked, true, "getAdaptivePromptBundle must reject 'generalist' -- it is not a Specialist");
   assert.match(bundle.reason, /no prompt file exists|only expander\/challenger\/synthesiser|getGeneralistPromptBundle/i);
 });
 
-test("LLMConfig dispatcher routes 'static' -> STATIC, 'adaptive' + 'generalist' -> GENERALIST, 'adaptive' + 'expander' -> INFORMATION_EXPANDER", async () => {
+test("LLMConfig dispatcher routes Specialists and blocks the retired Static / automatic Generalist routes", async () => {
   // Importing the dispatcher is safe in node:test -- no network, no
   // Empirica side effects.
   const { llmSystemPrompts } = await import("../LLMConfig.js");
 
-  const staticBundle = llmSystemPrompts("static", null);
-  assert.equal(staticBundle.blocked, false);
-  assert.equal(staticBundle.metadata.generationRole, "STATIC");
-
-  const generalistBundle = llmSystemPrompts("adaptive", "generalist");
-  assert.equal(generalistBundle.blocked, false);
-  assert.equal(generalistBundle.metadata.generationRole, "GENERALIST");
-  assert.equal(generalistBundle.metadata.condition, "adaptive");
+  for (const [facilitation, role] of [["static", null], ["static", "expander"], ["adaptive", "generalist"]]) {
+    const bundle = llmSystemPrompts(facilitation, role);
+    assert.equal(bundle.blocked, true, `${facilitation}/${role} must be blocked`);
+    assert.match(bundle.reason, /Alsobay/);
+  }
 
   const expanderBundle = llmSystemPrompts("adaptive", "expander");
   assert.equal(expanderBundle.blocked, false);
   assert.equal(expanderBundle.metadata.generationRole, "INFORMATION_EXPANDER");
-});
-
-test("LLMConfig dispatcher routes 'static' even if a role arg is given (Static ignores role)", async () => {
-  const { llmSystemPrompts } = await import("../LLMConfig.js");
-  const bundle = llmSystemPrompts("static", "expander"); // role arg is ignored
-  assert.equal(bundle.blocked, false);
-  assert.equal(bundle.metadata.generationRole, "STATIC");
-  assert.equal(bundle.metadata.condition, "static");
 });
 
 test("LLMConfig dispatcher rejects unknown facilitation value", async () => {
@@ -283,18 +132,6 @@ test("runStartupSelfCheck would throw on a missing prompt file (covered by throw
 
 test("Every bundle metadata carries the same PROMPT_PACKAGE_VERSION", () => {
   const v = PROMPT_PACKAGE_VERSION;
-  assert.equal(getStaticPromptBundle().metadata.promptVersion, v);
-  assert.equal(getGeneralistPromptBundle().metadata.promptVersion, v);
+  assert.equal(getRequestedGeneralistPromptBundle().metadata.promptVersion, v);
   assert.equal(getAdaptivePromptBundle("expander").metadata.promptVersion, v);
-});
-
-// ── Both facilitators carry the shared base.md verbatim ────────────────────
-
-test("Static AI and Generalist bundles both contain the same base.md in full", () => {
-  const staticBundle = getStaticPromptBundle();
-  const generalistBundle = getGeneralistPromptBundle();
-  // Both must contain base.md's full text -- the shared rules are shared
-  // even though the .md role files are different.
-  assert.ok(staticBundle.content.includes(baseText));
-  assert.ok(generalistBundle.content.includes(baseText));
 });

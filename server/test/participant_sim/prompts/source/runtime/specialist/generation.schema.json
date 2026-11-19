@@ -13,7 +13,7 @@
         "EVIDENCE_CHALLENGER",
         "INFORMATION_SYNTHESISER"
       ],
-      "description": "The five-role output structure is preserved for compatibility; the Specialist route pins the exact assigned Specialist constant. STATIC/automatic GENERALIST use control_50; requested GENERALIST uses its frozen separate route."
+      "description": "The five-role output structure is preserved for compatibility; the Specialist route pins the exact assigned Specialist constant. There is no automatic STATIC/GENERALIST schema (those turns send the Alsobay et al. request); requested GENERALIST uses its frozen separate route."
     },
     "message": {
       "type": [

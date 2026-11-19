@@ -35,7 +35,7 @@ const { evaluateGate, chooseRole, getRoleThreshold } = await import("./src/utils
 const { compilePlan } = await import("./src/PolicyCompiler.js");
 const { llmSystemPrompts } = await import("./src/LLMConfig.js");
 const { buildDynamicUserContext, withMessageIds } = await import("./src/prompts/DynamicContext.mjs");
-const { buildStaticUserContext } = await import("./src/prompts/StaticContext.mjs");
+const { buildAlsobayMessages, parseAlsobayResponse } = await import("./src/AlsobayStatic.mjs");
 const { parseGeneratorOutputStrict, validateAgainstGenerationSchema, runDeterministicValidation } = await import("./src/prompts/GeneratorContract.mjs");
 const { validateCandidate } = await import("./src/SemanticValidator.js");
 const { getRequestedGeneralistPromptBundle } = await import("./src/prompts/promptLoader.js");
@@ -86,52 +86,28 @@ console.log(`Using endpoint: ${llmAPIEndpoint}`);
 console.log(`Using model: ${openaiModel}\n`);
 console.log("=".repeat(70));
 
-// ── STATIC ──────────────────────────────────────────────────────────────
-console.log("STATIC condition\n" + "-".repeat(70));
-{
-  const promptResult = llmSystemPrompts("static", null);
-  if (promptResult.blocked) {
-    console.log("BLOCKED (prompt unavailable):", promptResult.reason);
-  } else {
-    const ctx = buildStaticUserContext({ chat, remainingTimeMs: 8 * 60 * 1000, elapsedTimeMs: 2 * 60 * 1000 });
-    const systemPrompt = promptResult.content.replace(
-      "{{sharedTaskOverview}}",
-      "Task materials are not available to the facilitator. Use only facts participants explicitly share in the public transcript."
-    );
-    const messages = [{ role: "system", content: systemPrompt }, { role: "user", content: ctx.userContent }];
-    const resp = await getLLMResponse(messages);
-    if (!resp.success) {
-      console.log("LLM call failed:", resp.error);
-    } else {
-      const parsed = parseGeneratorOutputStrict(resp.rawText);
-      if (!parsed.ok) {
-        console.log("Generator output failed to parse:", parsed.error, "\nraw:", resp.rawText);
-      } else {
-        const schemaResult = validateAgainstGenerationSchema(parsed.parsed, "STATIC");
-        const detResult = runDeterministicValidation(parsed.parsed, {
-          selectedRole: "STATIC",
-          eligibleMessageIds: ctx.eligibleMessageIds,
-          aiOrSystemMessageIds: ctx.aiOrSystemMessageIds,
-          recentAiMessageTexts: ctx.recentAiMessageTexts,
-        });
-        if (!schemaResult.ok || !detResult.passed) {
-          console.log("Candidate failed validation:", JSON.stringify(schemaResult.errors || detResult.failedCriteria));
-        } else {
-          const verdict = await validateCandidate({ chat, candidate: parsed.parsed, selectedRole: "STATIC", taskGeneralContext: "", callLLM: getLLMResponse });
-          if (!verdict.success) {
-            console.log("Validator call failed:", verdict.error, "-- candidate would be treated as SILENT.");
-            printMessage("STATIC (unvalidated candidate, NOT what would actually publish)", parsed.parsed.message);
-          } else if (!verdict.verdict.passed) {
-            console.log("Validator REJECTED this candidate:", verdict.verdict.failedCriteria.join(", "), "-- a repair attempt would normally follow.");
-            printMessage("STATIC (rejected candidate, would NOT be shown to participants)", parsed.parsed.message);
-          } else {
-            printMessage("STATIC (published)", parsed.parsed.message);
-          }
-        }
-      }
-    }
-  }
+// Static (and an Adaptive turn with no Specialist) sends the Alsobay et al.
+// request: original prompt and layout, MESSAGE posted as returned, no validation.
+async function alsobayStatic(label) {
+  const now = Date.now();
+  const messages = buildAlsobayMessages({
+    chat: chat.map((m, i) => ({ ...m, ts: m.ts ?? now - (chat.length - i) * 30_000 })),
+    attendees: [...new Set(chat.map((m) => m.sender.name))],
+    taskSentence: "which of two options (Option A, Option B) should be chosen",
+    now,
+    taskStartTime: now - 2 * 60 * 1000,
+    deadline: now + 8 * 60 * 1000,
+  });
+  const resp = await getLLMResponse(messages);
+  if (!resp.success) return console.log("LLM call failed:", resp.error);
+  const parsed = parseAlsobayResponse(resp.rawText);
+  if (!parsed.ok) return console.log("Alsobay reply not posted:", parsed.error, "\nraw:", resp.rawText);
+  printMessage(`${label} (published as returned)`, parsed.llmAction.MESSAGE);
 }
+
+// ── STATIC ──────────────────────────────────────────────────────────────
+console.log("STATIC condition (Alsobay et al. request)\n" + "-".repeat(70));
+await alsobayStatic("STATIC");
 
 // ── ADAPTIVE ────────────────────────────────────────────────────────────
 console.log("=".repeat(70));
@@ -155,6 +131,8 @@ console.log("ADAPTIVE condition\n" + "-".repeat(70));
       let role, plan = null;
       if (gate.decision === "generalist") {
         role = "generalist";
+        console.log("No Specialist selected -> the Adaptive Static-policy turn sends the Alsobay et al. request.");
+        await alsobayStatic("ADAPTIVE/no Specialist");
       } else {
         const choice = chooseRole(gate, { remainingTime, lastRole: null, synthesiserFired: false });
         role = choice.role;
@@ -165,8 +143,10 @@ console.log("ADAPTIVE condition\n" + "-".repeat(70));
         console.log("Plan:", JSON.stringify(plan, null, 2));
       }
 
-      const promptResult = llmSystemPrompts("adaptive", role);
-      if (promptResult.blocked) {
+      const promptResult = role === "generalist" ? null : llmSystemPrompts("adaptive", role);
+      if (!promptResult) {
+        // handled above
+      } else if (promptResult.blocked) {
         console.log("BLOCKED (prompt unavailable):", promptResult.reason);
       } else {
         const dyn = buildDynamicUserContext({

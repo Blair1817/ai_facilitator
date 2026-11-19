@@ -27,6 +27,7 @@ const {
 const { compilePlan } = await import("./PolicyCompiler.js");
 const { preflightPlan } = await import("./PlanPreflight.mjs");
 const { runDeterministicValidation } = await import("./prompts/GeneratorContract.mjs");
+const { validatorRuntimePath } = await import("./prompts/PromptRuntime.mjs");
 async function validateCandidate(args) {
   if (args.selectedRole !== "INFORMATION_EXPANDER") return validateCandidateRaw(args);
   const source = args.chat[0];
@@ -218,7 +219,7 @@ test("VALIDATOR_CRITERIA: is frozen (caller cannot mutate the canonical list)", 
 // ── prompt bundle loading (real file on disk) ────────────────────────────────
 
 test("getValidatorPromptBundle: loads validator.md successfully, not blocked", () => {
-  const result = getValidatorPromptBundle();
+  const result = getValidatorPromptBundle("GENERALIST", "PARTICIPANT_REQUEST");
   assert.equal(result.blocked, false);
   assert.ok(result.content.includes("ROLE"));
   assert.equal(result.metadata.promptName, "validator");
@@ -243,104 +244,21 @@ test("Specialist Validator prompt uses the canonical field name and matches its 
   assert.equal(entry.sha256, createHash("sha256").update(prompt).digest("hex"));
 });
 
-test("Static prompt disables semantic repetition only for STATIC and permits standalone grounded summaries", () => {
-  const bundle = getValidatorPromptBundle("STATIC");
-  assert.equal(bundle.blocked, false);
-  assert.equal(bundle.metadata.runtimePath, "control_50/validator.md");
-  const repetition = bundle.content.split("12. **repetition**")[1].split("13. **length**")[0];
-  const [staticPolicy, otherRoles] = repetition.split("- All other roles:");
-  assert.match(staticPolicy, /`STATIC`: Set `repetition` to `false`/);
-  assert.match(staticPolicy, /information gap or requesting information already requested is\s+allowed/);
-  assert.match(staticPolicy, /Exact-normalised duplicates are still checked/);
-  assert.match(otherRoles, /same reasoning act \/\s+target in rephrased wording/);
-  assert.match(otherRoles, /another request for information\s+already requested/);
-  const reasoningAct = bundle.content.split("9. **requiredReasoningActMissing**")[1].split("10. **unanswerable**")[0];
-  const staticAct = reasoningAct.split("- `STATIC`")[1].split("- `GENERALIST`")[0];
-  assert.match(staticAct, /balanced contribution prompt OR provide a\s+grounded, neutral scoreboard summary/);
-  assert.match(staticAct, /summary need not\s+include a question or invitation to contribute/);
-  assert.match(staticAct, /Opinion,\s+steering, or recommendation still fail this/);
-  assert.doesNotMatch(staticAct, /Pure\s+summarisation.*fail/);
-  assert.match(reasoningAct, /`GENERALIST` — perform one process move and end with a question\s+or a confirmation reminder/);
-
-  assert.equal(getValidatorPromptBundle("GENERALIST").metadata.runtimePath, bundle.metadata.runtimePath);
-  for (const [role, triggerType, runtimePath] of [
-    ["INFORMATION_EXPANDER", null, "specialist/validator.md"],
-    ["GENERALIST", "PARTICIPANT_REQUEST", "frozen_control/requested_validator.md"],
-  ]) {
-    const other = getValidatorPromptBundle(role, triggerType);
-    assert.equal(other.blocked, false);
-    assert.equal(other.metadata.runtimePath, runtimePath);
-    assert.doesNotMatch(other.content, /`STATIC`: Set `repetition` to `false`/);
-  }
-});
-
-test("Static Generator/Validator prompts, simulator copies and manifest route hashes stay synchronized", () => {
+test("runtime manifests and simulator copies stay synchronized; the control_50 package is gone", () => {
   const roots = ["prompts/source/runtime", "../test/participant_sim/prompts/source/runtime"];
   const manifests = roots.map(root => JSON.parse(fs.readFileSync(path.join(__dirname, root, "manifest.json"), "utf8")));
   assert.deepEqual(manifests[0], manifests[1]);
-  for (const filename of ["control_50/validator.md", "control_50/static.md"]) {
-    const prompts = roots.map(root => fs.readFileSync(path.join(__dirname, root, filename)));
-    assert.deepEqual(prompts[0], prompts[1]);
-    const sha256 = createHash("sha256").update(prompts[0]).digest("hex");
-    for (const manifest of manifests) {
-      assert.deepEqual(manifest.files[filename], { sha256, bytes: prompts[0].length });
-      if (filename === "control_50/validator.md") {
-        for (const role of ["static", "generalist"]) {
-          assert.equal(manifest.routes[role].validatorFile, filename);
-          assert.equal(manifest.routes[role].validatorSha256, sha256);
-        }
-      }
-    }
+  for (const manifest of manifests) {
+    // Static and the Adaptive Static-policy turn send the Alsobay et al.
+    // request; there is no automatic non-Specialist prompt route.
+    assert.equal("static" in manifest.routes, false);
+    assert.equal("generalist" in manifest.routes, false);
+    assert.equal(Object.keys(manifest.files).some(f => f.startsWith("control_50/")), false);
   }
-  for (let i = 0; i < roots.length; i++) {
-    const manifest = manifests[i];
-    const content = manifest.routes.static.generatorFiles
-      .map(filename => fs.readFileSync(path.join(__dirname, roots[i], filename), "utf8"))
-      .join(manifest.compositionSeparator);
-    assert.match(content, /neutral scoreboard summary can stand alone without a question/);
-    assert.match(content, /optional closing question \(use `question: ""` when unnecessary\)/);
-    assert.equal(manifest.routes.static.generatorSha256, createHash("sha256").update(content).digest("hex"));
-  }
-});
-
-test("revisited-gap audits receive the scoped prompt and preserve mock Static/Generalist verdicts", async () => {
-  // Prompt/context plumbing only: the fake audits are not live-model evidence.
-  const priorQuestion = "What information can you share about the other options?";
-  for (const selectedRole of ["STATIC", "GENERALIST"]) {
-    const audit = { ...CANDIDATE_PASSED, repetition: selectedRole !== "STATIC" };
-    const result = await validateCandidateRaw({
-      chat: chat(),
-      candidate: { role: selectedRole, message: "Which strengths or drawbacks of the other options have not been shared?", groundingMessageIds: [] },
-      selectedRole,
-      recentAiMessages: [{ text: priorQuestion }],
-      callLLM: async messages => {
-        assert.match(messages[0].content, /`STATIC`: Set `repetition` to `false`/);
-        assert.ok(messages[1].content.includes(`[SELECTED_ROLE]\n${selectedRole}`));
-        assert.ok(messages[1].content.includes(priorQuestion));
-        return { success: true, rawText: JSON.stringify(audit) };
-      },
-    });
-    assert.equal(result.success, true);
-    assert.equal(result.verdict.passed, selectedRole === "STATIC");
-    assert.deepEqual(result.verdict.failedCriteria, selectedRole === "STATIC" ? [] : ["repetition"]);
-    assert.deepEqual(result.verdict.booleans, audit);
-  }
-});
-
-test("Static still fails closed on returned failure flags without silently rewriting model audits", async () => {
-  for (const criterion of ["notGrounded", "nonNeutral", "optionSteering", "recommendationDetected", "unsupportedInformationDetected", "requiredReasoningActMissing", "repetition"]) {
-    const audit = { ...CANDIDATE_PASSED, [criterion]: true };
-    const result = await validateCandidateRaw({
-      chat: chat(),
-      candidate: { role: "STATIC", message: "What information is still missing?", groundingMessageIds: [] },
-      selectedRole: "STATIC",
-      callLLM: async () => ({ success: true, rawText: JSON.stringify(audit) }),
-    });
-    assert.equal(result.success, true);
-    assert.equal(result.verdict.passed, false);
-    assert.deepEqual(result.verdict.failedCriteria, [criterion]);
-    assert.deepEqual(result.verdict.booleans, audit);
-  }
+  for (const root of roots) assert.equal(fs.existsSync(path.join(__dirname, root, "control_50")), false);
+  assert.equal(validatorRuntimePath("STATIC", null), null);
+  assert.equal(validatorRuntimePath("GENERALIST", null), null);
+  assert.equal(getValidatorPromptBundle("STATIC").blocked, true);
 });
 
 test("Static exact-normalised duplicate suppression remains distinct from semantic recurrence", () => {
@@ -515,8 +433,9 @@ test("validateCandidate: failed audit returns the correct failedCriteria list (i
   const fakeCallLLM = async (_messages) => ({ success: true, rawText: JSON.stringify(auditResponse) });
   const result = await validateCandidate({
     chat: chat(),
-    candidate: { role: "STATIC", message: "Eldoron is clearly the best choice", groundingMessageIds: [] },
-    selectedRole: "STATIC",
+    candidate: { role: "GENERALIST", message: "Eldoron is clearly the best choice", groundingMessageIds: [] },
+    selectedRole: "GENERALIST",
+    triggerType: "PARTICIPANT_REQUEST",
     taskGeneralContext: "x",
     callLLM: fakeCallLLM,
   });
@@ -538,8 +457,9 @@ test("validateCandidate: optionSteering failure alone triggers repair (Delibra s
   const fakeCallLLM = async (_messages) => ({ success: true, rawText: JSON.stringify(audit) });
   const result = await validateCandidate({
     chat: chat(),
-    candidate: { role: "STATIC", message: "Eldoron really stands out as a strong pick here", groundingMessageIds: [] },
-    selectedRole: "STATIC",
+    candidate: { role: "GENERALIST", message: "Eldoron really stands out as a strong pick here", groundingMessageIds: [] },
+    selectedRole: "GENERALIST",
+    triggerType: "PARTICIPANT_REQUEST",
     taskGeneralContext: "x",
     callLLM: fakeCallLLM,
   });
@@ -571,8 +491,9 @@ test("validateCandidate: unanswerable failure alone triggers repair (Delibra spe
   const fakeCallLLM = async (_messages) => ({ success: true, rawText: JSON.stringify(audit) });
   const result = await validateCandidate({
     chat: chat(),
-    candidate: { role: "STATIC", message: "What does the survey say about Myloria's commute times?", groundingMessageIds: [] },
-    selectedRole: "STATIC",
+    candidate: { role: "GENERALIST", message: "What does the survey say about Myloria's commute times?", groundingMessageIds: [] },
+    selectedRole: "GENERALIST",
+    triggerType: "PARTICIPANT_REQUEST",
     taskGeneralContext: "x",
     callLLM: fakeCallLLM,
   });
@@ -586,8 +507,9 @@ test("validateCandidate: hiddenInformationInference failure alone triggers repai
   const fakeCallLLM = async (_messages) => ({ success: true, rawText: JSON.stringify(audit) });
   const result = await validateCandidate({
     chat: chat(),
-    candidate: { role: "STATIC", message: "Based on your background in finance, Eldoron is probably best for you.", groundingMessageIds: [] },
-    selectedRole: "STATIC",
+    candidate: { role: "GENERALIST", message: "Based on your background in finance, Eldoron is probably best for you.", groundingMessageIds: [] },
+    selectedRole: "GENERALIST",
+    triggerType: "PARTICIPANT_REQUEST",
     taskGeneralContext: "x",
     callLLM: fakeCallLLM,
   });
@@ -616,8 +538,9 @@ test("validateCandidate: length failure alone triggers repair (Delibra spec §11
   const fakeCallLLM = async (_messages) => ({ success: true, rawText: JSON.stringify(audit) });
   const result = await validateCandidate({
     chat: chat(),
-    candidate: { role: "STATIC", message: "Has the group considered...", groundingMessageIds: [] },
-    selectedRole: "STATIC",
+    candidate: { role: "GENERALIST", message: "Has the group considered...", groundingMessageIds: [] },
+    selectedRole: "GENERALIST",
+    triggerType: "PARTICIPANT_REQUEST",
     taskGeneralContext: "x",
     callLLM: fakeCallLLM,
   });
@@ -640,8 +563,9 @@ test("validateCandidate: combined Phase-5 + spec-§11 failures all appear in fai
   const fakeCallLLM = async (_messages) => ({ success: true, rawText: JSON.stringify(audit) });
   const result = await validateCandidate({
     chat: chat(),
-    candidate: { role: "STATIC", message: "x", groundingMessageIds: [] },
-    selectedRole: "STATIC",
+    candidate: { role: "GENERALIST", message: "x", groundingMessageIds: [] },
+    selectedRole: "GENERALIST",
+    triggerType: "PARTICIPANT_REQUEST",
     taskGeneralContext: "x",
     callLLM: fakeCallLLM,
   });
@@ -663,8 +587,9 @@ test("validateCandidate: propagates an LLM API failure as VALIDATOR_API_ERROR", 
   const fakeCallLLM = async (_messages) => ({ success: false, error: "rate limited", responseMetadata });
   const result = await validateCandidate({
     chat: chat(),
-    candidate: { role: "STATIC", message: "x", groundingMessageIds: [] },
-    selectedRole: "STATIC",
+    candidate: { role: "GENERALIST", message: "x", groundingMessageIds: [] },
+    selectedRole: "GENERALIST",
+    triggerType: "PARTICIPANT_REQUEST",
     taskGeneralContext: "x",
     callLLM: fakeCallLLM,
   });
@@ -678,8 +603,9 @@ test("validateCandidate: rejects malformed JSON as VALIDATOR_PARSE_FAILURE", asy
   const fakeCallLLM = async (_messages) => ({ success: true, rawText: "not json at all" });
   const result = await validateCandidate({
     chat: chat(),
-    candidate: { role: "STATIC", message: "x", groundingMessageIds: [] },
-    selectedRole: "STATIC",
+    candidate: { role: "GENERALIST", message: "x", groundingMessageIds: [] },
+    selectedRole: "GENERALIST",
+    triggerType: "PARTICIPANT_REQUEST",
     taskGeneralContext: "x",
     callLLM: fakeCallLLM,
   });
@@ -691,8 +617,9 @@ test("validateCandidate: rejects schema-invalid JSON (missing key) as VALIDATOR_
   const fakeCallLLM = async (_messages) => ({ success: true, rawText: JSON.stringify({ notGrounded: false }) });
   const result = await validateCandidate({
     chat: chat(),
-    candidate: { role: "STATIC", message: "x", groundingMessageIds: [] },
-    selectedRole: "STATIC",
+    candidate: { role: "GENERALIST", message: "x", groundingMessageIds: [] },
+    selectedRole: "GENERALIST",
+    triggerType: "PARTICIPANT_REQUEST",
     taskGeneralContext: "x",
     callLLM: fakeCallLLM,
   });
@@ -706,8 +633,9 @@ test("validateCandidate: rejects self-summarised output (LLM included passed/fai
   const fakeCallLLM = async (_messages) => ({ success: true, rawText: JSON.stringify(bad) });
   const result = await validateCandidate({
     chat: chat(),
-    candidate: { role: "STATIC", message: "x", groundingMessageIds: [] },
-    selectedRole: "STATIC",
+    candidate: { role: "GENERALIST", message: "x", groundingMessageIds: [] },
+    selectedRole: "GENERALIST",
+    triggerType: "PARTICIPANT_REQUEST",
     taskGeneralContext: "x",
     callLLM: fakeCallLLM,
   });
@@ -719,8 +647,9 @@ test("validateCandidate: throws synchronously if callLLM is not a function (neve
   await assert.rejects(
     () => validateCandidate({
       chat: chat(),
-      candidate: { role: "STATIC", message: "x", groundingMessageIds: [] },
-      selectedRole: "STATIC",
+      candidate: { role: "GENERALIST", message: "x", groundingMessageIds: [] },
+      selectedRole: "GENERALIST",
+    triggerType: "PARTICIPANT_REQUEST",
       taskGeneralContext: "x",
       callLLM: undefined,
     }),

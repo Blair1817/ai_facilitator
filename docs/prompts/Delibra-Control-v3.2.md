@@ -34,8 +34,8 @@ v3.2 明确分开两类完整 bundle：
 
 | 路径 | Generator 完整组合 | Semantic Validator |
 |---|---|---|
-| Static | `control_50/base.md + control_50/static.md` | `control_50/validator.md` |
-| Adaptive Generalist | `control_50/base.md + control_50/generalist.md` | `control_50/validator.md` |
+| Static（2026-11-15 起改为 Alsobay et al. 原请求；control_50 已于 2026-11-19 删除） | ~~`control_50/base.md + control_50/static.md`~~ | ~~`control_50/validator.md`~~ |
+| Adaptive Generalist（已停用；无 Specialist 时改发 Alsobay 请求） | ~~`control_50/base.md + control_50/generalist.md`~~ | ~~`control_50/validator.md`~~ |
 | Participant-requested Generalist | `frozen_control/base.md + frozen_control/requested_generalist.md` | `frozen_control/validator.md` |
 | 三个 Adaptive Specialist | `specialist/specialist_base.md + specialist/specialist_common.md + specialist/role.md` | `specialist/validator.md` |
 

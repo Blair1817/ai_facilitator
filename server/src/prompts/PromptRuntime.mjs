@@ -28,7 +28,9 @@ export function runtimeGeneratorBundle(route) {
 }
 export function validatorRuntimePath(selectedRole, triggerType) {
   if (triggerType === "PARTICIPANT_REQUEST") return "frozen_control/requested_validator.md";
-  return isSpecialistRole(selectedRole) ? "specialist/validator.md" : "control_50/validator.md";
+  // Static and the Adaptive Static-policy turn are not validated (Alsobay et
+  // al. request); there is no other automatic non-Specialist route.
+  return isSpecialistRole(selectedRole) ? "specialist/validator.md" : null;
 }
 export function verifyRuntimeSources() {
   const manifest = readRuntimeManifest();

@@ -387,7 +387,7 @@ async function runProductionCheckpoint({ game, facilitation, role, chat, general
   return { published: posted, candidate: parseResult.parsed, logEntry };
 }
 
-test("integration: Adaptive (challenger role) and Static both go through the identical shared post-selection sequence and publish exactly once", async () => {
+test("integration: Adaptive (challenger role) goes through the shared post-selection sequence and publishes exactly once", async () => {
   const chat = [humanMsg("Alice", "I think option A is best.", 1), humanMsg("Bob", "I agree, no real evidence needed.", 2)];
 
   const adaptiveGame = new MockGame();
@@ -398,101 +398,10 @@ test("integration: Adaptive (challenger role) and Static both go through the ide
   });
   assert.equal(adaptiveResult.published, true);
   assert.equal(adaptiveGame.chat.length, 1, "exactly one message published for the Adaptive checkpoint");
-
-  // Static uses its own prompt content but the same
-  // build/generate/validate/post infrastructure as Adaptive-Generalist.
-  const staticGame = new MockGame();
-  const staticCandidate = { role: "STATIC", message: "Which option or criterion should the group compare next?", groundingMessageIds: [] };
-  const staticResult = await runProductionCheckpoint({
-    game: staticGame, facilitation: "static", role: null, chat, generalInfo: "task",
-    generatorCall: async () => ({ success: true, rawText: JSON.stringify(staticCandidate) }),
-  });
-  assert.equal(staticResult.published, true);
-  assert.equal(staticGame.chat.length, 1, "exactly one message published for the Static checkpoint");
 });
 
-const READY_STATIC_PROMPT_FIXTURE = {
-  blocked: false,
-  content: "Return the required Static JSON message.",
-  metadata: {
-    promptName: "static-test-fixture",
-    promptVersion: "test-only",
-    promptStatus: "test-only",
-    sourceCompleteness: "test-only",
-    condition: "static",
-    selectedRole: null,
-    generationRole: "STATIC",
-  },
-};
-
-test("integration: a ready Static prompt requires no candidate approval and publishes one schema-valid STATIC message", async () => {
-  const game = new MockGame();
-  let generatorCallCount = 0;
-  const result = await runProductionCheckpoint({
-    game,
-    facilitation: "static",
-    role: null,
-    chat: [humanMsg("Alice", "hello", 1)],
-    generalInfo: "task",
-    promptResultOverride: READY_STATIC_PROMPT_FIXTURE,
-    generatorCall: async () => {
-      generatorCallCount += 1;
-      return { success: true, rawText: JSON.stringify({ role: "STATIC", message: "Please continue the discussion.", groundingMessageIds: [] }) };
-    },
-  });
-  assert.equal(generatorCallCount, 1);
-  assert.equal(result.published, true);
-  assert.equal(game.chat.length, 1);
-  assert.equal(result.candidate.role, "STATIC");
-});
-
-test("integration: Static API, parser, schema, and deterministic-validation failures remain non-public and explicitly logged", async (t) => {
-  const cases = [
-    {
-      name: "API",
-      generatorCall: async () => ({ success: false, error: "test API failure" }),
-      expectedReason: /API Error/,
-    },
-    {
-      name: "parser",
-      generatorCall: async () => ({ success: true, rawText: "not-json" }),
-      expectedReason: /Invalid Generator output/,
-    },
-    {
-      name: "schema/WAIT role",
-      generatorCall: async () => ({ success: true, rawText: JSON.stringify({ role: "WAIT", message: "wait", groundingMessageIds: [] }) }),
-      expectedReason: /generation\.schema\.json/,
-    },
-    {
-      name: "deterministic duplicate",
-      chat: [
-        humanMsg("Alice", "hello", 1),
-        { text: "Please continue the discussion.", ts: 2, sender: { id: "ai", name: "Facilitator", avatar: "x" } },
-      ],
-      generatorCall: async () => ({ success: true, rawText: JSON.stringify({ role: "STATIC", message: "Please continue the discussion.", groundingMessageIds: [] }) }),
-      expectedReason: /DUPLICATE_OF_RECENT_AI_MESSAGE/,
-    },
-  ];
-
-  for (const scenario of cases) {
-    await t.test(scenario.name, async () => {
-      const game = new MockGame();
-      const result = await runProductionCheckpoint({
-        game,
-        facilitation: "static",
-        role: null,
-        chat: scenario.chat || [humanMsg("Alice", "hello", 1)],
-        generalInfo: "task",
-        promptResultOverride: READY_STATIC_PROMPT_FIXTURE,
-        generatorCall: scenario.generatorCall,
-      });
-      assert.equal(result.published, false);
-      assert.equal(game.chat.length, 0);
-      assert.equal(result.logEntry.outcome, "SILENT");
-      assert.match(result.logEntry.reason, scenario.expectedReason);
-    });
-  }
-});
+// The Static condition does not use this pipeline: it sends the Alsobay et al.
+// request, covered by AlsobayStatic.test.mjs.
 
 test("integration: selected Adaptive Generator output cannot add a WAIT/INTERVENE decision or change its E/C/S role", async () => {
   for (const invalidCandidate of [

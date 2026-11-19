@@ -16,18 +16,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // sit in server/src/, the parent of this prompts/ directory, not inside it.
 process.argv[1] = path.join(__dirname, "..", "fake-entry.js");
 
-const { getAdaptivePromptBundle, getStaticPromptBundle, getGeneralistPromptBundle } = await import("./promptLoader.js");
+const { getAdaptivePromptBundle } = await import("./promptLoader.js");
 
 const SOURCE_DIR = path.join(__dirname, "source");
 const baseText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/specialist/specialist_base.md"), "utf8");
-const staticText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/control_50/static.md"), "utf8");
-const generalistText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/control_50/generalist.md"), "utf8");
 const expanderText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/specialist/expander.md"), "utf8");
 const challengerText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/specialist/challenger.md"), "utf8");
 const synthesiserText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/specialist/synthesiser.md"), "utf8");
 
 const commonText = fs.readFileSync(path.join(SOURCE_DIR, "runtime/specialist/specialist_common.md"), "utf8");
-const controlBase = fs.readFileSync(path.join(SOURCE_DIR, "runtime/control_50/base.md"), "utf8");
 
 const ROLE_FIXTURES = [
   { controllerRole: "expander", file: "expander.md", text: expanderText, generationRole: "INFORMATION_EXPANDER", otherTexts: [challengerText, synthesiserText] },
@@ -110,12 +107,6 @@ test("concurrent prompt loading for different roles does not contaminate either 
   assert.notEqual(challengerBundle.content, synthesiserBundle.content);
 });
 
-test("Static and Adaptive-Generalist use distinct approved prompt content", () => {
-  const staticBundle = getStaticPromptBundle();
-  const generalistBundle = getGeneralistPromptBundle();
-  assert.equal(staticBundle.blocked, false, staticBundle.reason);
-  assert.equal(generalistBundle.blocked, false, generalistBundle.reason);
-  assert.equal(staticBundle.content, `${controlBase}\n\n---\n\n${staticText}`);
-  assert.equal(generalistBundle.content, `${controlBase}\n\n---\n\n${generalistText}`);
-  assert.notEqual(staticBundle.content, generalistBundle.content);
+test("Static and automatic Generalist have no prompt bundle (Alsobay et al. request instead)", () => {
+  assert.equal(fs.existsSync(path.join(SOURCE_DIR, "runtime/control_50")), false);
 });

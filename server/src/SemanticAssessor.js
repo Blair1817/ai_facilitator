@@ -71,7 +71,7 @@ function readSourceFile(filename) {
 }
 
 /**
- * Mirrors promptLoader.js's getStaticPromptBundle()/getAdaptivePromptBundle()
+ * Mirrors promptLoader.js's getAdaptivePromptBundle()
  * contract ({blocked, content|reason, metadata}) but for assessor.md alone
  * -- deliberately NOT combined with base.md. base.md's own header scopes it
  * to "all Generators"; the Assessor is not a Generator (it is the
