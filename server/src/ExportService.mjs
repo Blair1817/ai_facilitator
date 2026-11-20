@@ -881,6 +881,10 @@ export function renderQuestionnaireCsv(bundle) {
   return { csv, columns, rowCount: rows.length };
 }
 
+function isEmptyPoolStaticTurn(e) {
+  return e?.routingDecision === "ADAPTIVE_STATIC_POLICY" && !e.fallbackRoute && e.outcome === "PUBLISHED";
+}
+
 export function renderTranscriptMd(bundle) {
   const { game, players, llmLog } = bundle;
   const transcript = buildFormalTranscript(bundle);
@@ -897,6 +901,9 @@ export function renderTranscriptMd(bundle) {
   // Adaptive Specialist attempts that returned to the Static policy. These are
   // not counted in totalFallbackMessages (fixed request-fallback messages).
   lines.push(`- Specialist-to-Static fallbacks: ${(llmLog || []).filter((e) => e?.fallbackRoute === "SPECIALIST_TO_STATIC_POLICY").length}`);
+  // Adaptive checkpoints whose verified candidate pool was empty and that
+  // therefore published through the Static policy (no Specialist attempted).
+  lines.push(`- Empty-pool Static-policy turns: ${(llmLog || []).filter(isEmptyPoolStaticTurn).length}`);
   lines.push(`- Participant-requested replies (not interventions): ${game.totalParticipantRequestReplies || 0}`);
   lines.push("");
 
@@ -983,6 +990,7 @@ export function renderTranscriptMd(bundle) {
         }
       }
       if (e.cancellation?.reason) lines.push(`- Cancelled: ${e.cancellation.reason}${e.cancellation.remainingTimeMs != null ? ` (remaining ${e.cancellation.remainingTimeMs} ms)` : ""}`);
+      if (isEmptyPoolStaticTurn(e)) lines.push(`- Routing: ADAPTIVE_STATIC_POLICY (no eligible Specialist candidate)`);
       if (e.fallbackRoute) lines.push(`- Fallback: ${e.fallbackRoute}${e.fallbackOutcome ? ` -> ${e.fallbackOutcome}` : ""}`);
       if (e.validator?.failedCriteria?.length) lines.push(`- Validator failed: ${e.validator.failedCriteria.join(", ")}`);
       const deterministicFailed = e.deterministicFailedCriteria?.length ? e.deterministicFailedCriteria

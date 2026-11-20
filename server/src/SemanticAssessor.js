@@ -136,9 +136,41 @@ function toStrictSchema(node) {
   return out;
 }
 let cachedStrictAssessorSchema = null;
-export function strictAssessorResponseSchema() {
+export function strictAssessorResponseSchema(references = []) {
   cachedStrictAssessorSchema ??= toStrictSchema(loadAssessorSchema());
-  return cachedStrictAssessorSchema;
+  if (!references.length) return cachedStrictAssessorSchema;
+  // 2026-11-20: per-checkpoint schema. Strict mode cannot bound an array's
+  // length or tie its items to a set of IDs, so with references present
+  // semanticReview.matches becomes an object with one REQUIRED property per
+  // supplied reference ID. Constrained decoding then guarantees a complete
+  // comparison without a repair call; normalizeKeyedSemanticMatches()
+  // restores the canonical array before any validation. semanticReview
+  // itself is also required (non-null) for every non-null candidate.
+  const schema = structuredClone(cachedStrictAssessorSchema);
+  const review = schema.$defs.semanticReview;
+  const { id: _id, ...matchProperties } = review.properties.matches.items.properties;
+  const matchValue = { type: "object", properties: matchProperties, required: Object.keys(matchProperties), additionalProperties: false };
+  const ids = references.map(r => r.id);
+  review.properties.matches = { type: "object", properties: Object.fromEntries(ids.map(id => [id, matchValue])), required: ids, additionalProperties: false };
+  for (const name of ["elicit", "scrutinize", "integrate"]) {
+    for (const branch of schema.properties.candidates.properties[name].anyOf) {
+      if (branch.properties?.semanticReview) branch.properties.semanticReview = { $ref: "#/$defs/semanticReview" };
+    }
+  }
+  return schema;
+}
+
+/** Converts the per-checkpoint keyed matches back to the canonical
+ * [{id, relation, responseEvidence, newEvidence}] array (in key order). */
+export function normalizeKeyedSemanticMatches(parsed) {
+  if (!parsed?.candidates || typeof parsed.candidates !== "object") return parsed;
+  const candidates = Object.fromEntries(Object.entries(parsed.candidates).map(([name, candidate]) => {
+    const matches = candidate?.semanticReview?.matches;
+    if (!matches || typeof matches !== "object" || Array.isArray(matches)) return [name, candidate];
+    return [name, { ...candidate, semanticReview: { ...candidate.semanticReview,
+      matches: Object.entries(matches).map(([id, value]) => ({ id, ...value })) } }];
+  }));
+  return { ...parsed, candidates };
 }
 /** Strict output carries explicit nulls for optional fields; the canonical
  * contract expresses the same thing by omission. */
@@ -158,11 +190,53 @@ export function stripNullOptionals(parsed) {
 
 const ajv = new Ajv({ strict: false, allErrors: true });
 
-export function validateAgainstAssessorSchema(parsed) {
+/**
+ * 2026-11-20: every non-null candidate must compare itself with EVERY
+ * supplied semantic reference exactly once. The JSON schema cannot express a
+ * per-call count/ID set, so an incomplete review used to pass here and was
+ * only rejected later (AdaptiveEvidence.verifySemanticTarget ->
+ * semantic_review_incomplete) with no chance of repair, emptying the pool and
+ * routing an otherwise valid checkpoint to the Static policy. Treating it as
+ * a structural failure lets the existing single structure repair fill in the
+ * missing comparisons. The downstream check is unchanged and still fails
+ * closed if the repair is also incomplete.
+ */
+export function semanticCoverageErrors(parsed, references = []) {
+  const expected = references.map(r => r.id);
+  const errors = [];
+  for (const key of ["elicit", "scrutinize", "integrate"]) {
+    const candidate = parsed?.candidates?.[key];
+    if (candidate == null) continue;
+    const path = `/candidates/${key}/semanticReview`;
+    const matches = candidate.semanticReview?.matches;
+    if (!Array.isArray(matches)) {
+      if (expected.length) errors.push({ instancePath: path, keyword: "semanticCoverage", message: `missing semanticReview; matches must cover ids ${JSON.stringify(expected)}` });
+      continue;
+    }
+    const ids = matches.map(m => m?.id);
+    const missing = expected.filter(id => !ids.includes(id));
+    const unknown = ids.filter(id => !expected.includes(id));
+    const duplicate = ids.filter((id, i) => ids.indexOf(id) !== i);
+    if (missing.length || unknown.length || duplicate.length) {
+      errors.push({ instancePath: `${path}/matches`, keyword: "semanticCoverage",
+        message: `requires exactly one match per supplied reference id ${JSON.stringify(expected)}`
+          + (missing.length ? `; missing ${JSON.stringify(missing)}` : "")
+          + (unknown.length ? `; unknown ${JSON.stringify(unknown)}` : "")
+          + (duplicate.length ? `; duplicate ${JSON.stringify([...new Set(duplicate)])}` : "") });
+    }
+  }
+  return errors;
+}
+
+export function validateAgainstAssessorSchema(parsed, { references = null } = {}) {
   const validateFn = ajv.compile(loadAssessorSchema());
   const valid = validateFn(parsed);
   if (!valid) {
     return { ok: false, code: "ASSESSOR_SCHEMA_FAILURE", errors: validateFn.errors };
+  }
+  if (Array.isArray(references)) {
+    const coverage = semanticCoverageErrors(parsed, references);
+    if (coverage.length) return { ok: false, code: "ASSESSOR_SCHEMA_FAILURE", errors: coverage };
   }
   // 2026-10-26: independent candidates. A participant-summary deferral pauses
   // the checkpoint, so it is valid only when every candidate is null.
@@ -247,21 +321,31 @@ export async function assessSemanticFactors({ chat, taskGeneralContext, callLLM,
     { role: "user", content: userContent },
   ];
 
+  const references = semanticReferences(interventionHistory, excludedTargets);
   const attempts = [];
   for (let attempt = 0; attempt < (allowStructureRepair ? 2 : 1); attempt++) {
     const llmResponse = await callLLM(messages, { structureRepair: attempt > 0,
-      responseSchema: { name: "need_detector_output", schema: strictAssessorResponseSchema() } });
+      responseSchema: { name: "need_detector_output", schema: strictAssessorResponseSchema(references) } });
     const responseMetadata = llmResponse.responseMetadata ?? null;
     if (!llmResponse.success) return { success: false, code: "ASSESSOR_API_ERROR", error: llmResponse.error, responseMetadata, attempts };
     const parsed = strictParseJsonObject(llmResponse.rawText);
-    if (parsed.ok) parsed.parsed = stripNullOptionals(parsed.parsed);
+    if (parsed.ok) parsed.parsed = stripNullOptionals(normalizeKeyedSemanticMatches(parsed.parsed));
     const schema = parsed.ok ? validateAgainstAssessorSchema(parsed.parsed) : null;
-    if (parsed.ok && schema.ok) return { success: true, factors: parsed.parsed, rawText: llmResponse.rawText, responseMetadata, attempts };
+    const coverage = parsed.ok && schema.ok ? semanticCoverageErrors(parsed.parsed, references) : [];
+    if (parsed.ok && schema.ok && !coverage.length) return { success: true, factors: parsed.parsed, rawText: llmResponse.rawText, responseMetadata, attempts };
     const failure = { code: parsed.ok ? "ASSESSOR_SCHEMA_FAILURE" : "ASSESSOR_PARSE_FAILURE",
-      error: parsed.ok ? JSON.stringify(schema.errors) : parsed.error, rawText: llmResponse.rawText, responseMetadata };
+      error: parsed.ok ? JSON.stringify(schema.ok ? coverage : schema.errors) : parsed.error, rawText: llmResponse.rawText, responseMetadata,
+      ...(coverage.length ? { semanticCoverageIncomplete: true } : {}) };
     attempts.push(failure);
-    if (attempt > 0 || !allowStructureRepair) return { success: false, ...failure, attempts };
+    if (attempt > 0 || !allowStructureRepair) {
+      // Coverage-only failure: keep the schema-valid output so complete
+      // candidates stay usable; AdaptiveEvidence still rejects each
+      // incomplete candidate individually (semantic_review_incomplete), as
+      // before this check existed.
+      if (coverage.length) return { success: true, factors: parsed.parsed, rawText: llmResponse.rawText, responseMetadata, attempts };
+      return { success: false, ...failure, attempts };
+    }
     messages.push({ role: "assistant", content: llmResponse.rawText }, { role: "user", content:
-      `Repair the JSON structure once. Errors: ${failure.error}\nRequired schema: ${JSON.stringify(loadAssessorSchema())}\nKeep grounded public evidence and apply all scheduling/semantic rules. Never invent quotes or fill missing fields with invented facts. Set a candidate to null when its need cannot be represented with supported public evidence.` });
+      `Repair the JSON structure once. Errors: ${failure.error}\nRequired schema: ${JSON.stringify(loadAssessorSchema())}\nEvery non-null candidate's semanticReview.matches must contain exactly one entry for each SEMANTIC_REFERENCES id${references.length ? ` (${JSON.stringify(references.map(r => r.id))})` : " (none supplied: use [])"}, judged on meaning. Keep grounded public evidence and apply all scheduling/semantic rules. Never invent quotes or fill missing fields with invented facts. Set a candidate to null when its need cannot be represented with supported public evidence.` });
   }
 }

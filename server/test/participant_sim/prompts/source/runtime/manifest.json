@@ -71,8 +71,8 @@
   "frozenControlScope": "Historical exact baseline and the participant-requested Generalist route (frozen_control/base.md + requested_generalist.md, requested_validator.md). There is no automatic non-Specialist prompt route: the Static condition and the Adaptive Static-policy turn send the Alsobay et al. request (server/src/AlsobayStatic.mjs) without validation. The control_50 package was deleted on 2026-11-19.",
   "files": {
     "specialist/assessor.md": {
-      "sha256": "750808ae49c9999fa78c94b37eb671517a3d8a8596e14fd2002f224a39445fec",
-      "bytes": 69757
+      "sha256": "363d99cc0be8be8dc588027848590c8f8ebda4263f62bcb900d1f4410a09f4d8",
+      "bytes": 69964
     },
     "specialist/assessor.schema.json": {
       "sha256": "6e51034b3ce6be65b345920d679db0fd3020b7134a2efa0061a2cbb3f0007cda",

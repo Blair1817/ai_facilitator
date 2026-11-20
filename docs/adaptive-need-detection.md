@@ -220,3 +220,23 @@ Supersedes the Synthesiser parts of the sections above (one-shot scoreboard gene
 ## 2026-11-15 Static-policy turn
 
 The Adaptive Static-policy turn (no eligible Specialist, or a Specialist that failed twice) now sends the Alsobay et al. request used by the Static condition and posts its `MESSAGE` without validation. See [static-alsobay-replication.md](static-alsobay-replication.md). The grounding-ID repair described above no longer applies to it.
+
+## 2026-11-20 Semantic review coverage repair
+
+Each non-null detector candidate must return exactly one `semanticReview.matches`
+entry per `SEMANTIC_REFERENCES` id. The detector response check now treats a
+missing, unknown or duplicate id as a structural error, so the existing single
+structure repair can complete the comparison. If the repaired output is still
+incomplete, the output is kept and each incomplete candidate is rejected as
+`semantic_review_incomplete`, as before. The Markdown export header reports
+`Empty-pool Static-policy turns` (published Adaptive Static-policy turns with no
+Specialist attempt), and those audit entries show
+`Routing: ADAPTIVE_STATIC_POLICY (no eligible Specialist candidate)`.
+
+When `SEMANTIC_REFERENCES` is non-empty and the provider enforces strict
+schemas (official OpenAI endpoint), the detector request uses a per-checkpoint
+schema: `semanticReview` is required for every non-null candidate and
+`matches` is an object with one required property per reference id. The
+response is converted back to the canonical array before validation, so
+complete comparisons are guaranteed without a repair call. The repair above
+remains the safety net for providers without strict schemas.

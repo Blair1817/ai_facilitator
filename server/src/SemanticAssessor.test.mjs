@@ -186,3 +186,87 @@ test("the detector requests a strict response schema derived from the canonical 
   assert.equal(result.success, true);
   assert.equal("defer" in result.factors, false);
 });
+
+// ── 2026-11-20: semantic review must cover every supplied reference ─────────
+const HISTORY = [
+  { planId: "expander:A:m0", semanticKey: "a" },
+  { planId: "challenger:B:m1", semanticKey: "b" },
+];
+const match = id => ({ id, relation: "different", responseEvidence: [], newEvidence: [] });
+const withReview = ids => ({
+  ...VALID_FACTORS,
+  candidates: { ...VALID_FACTORS.candidates,
+    scrutinize: { ...VALID_FACTORS.candidates.scrutinize, semanticReview: { key: "eldoron unsupported", matches: ids.map(match) } } },
+});
+
+test("validateAgainstAssessorSchema: flags a semantic review that omits a supplied reference", () => {
+  const references = HISTORY.map(h => ({ id: h.planId }));
+  const incomplete = validateAgainstAssessorSchema(withReview(["expander:A:m0"]), { references });
+  assert.equal(incomplete.ok, false);
+  assert.match(JSON.stringify(incomplete.errors), /missing \[\\"challenger:B:m1\\"\]/);
+  assert.equal(validateAgainstAssessorSchema(withReview(["expander:A:m0", "challenger:B:m1"]), { references }).ok, true);
+  assert.equal(validateAgainstAssessorSchema(withReview(["expander:A:m0", "expander:A:m0", "challenger:B:m1"]), { references }).ok, false);
+  // Without references (legacy callers) only the JSON schema is checked.
+  assert.equal(validateAgainstAssessorSchema(withReview(["expander:A:m0"])).ok, true);
+});
+
+test("assessSemanticFactors: repairs an incomplete semantic review once", async () => {
+  const calls = [];
+  const responses = [withReview(["expander:A:m0"]), withReview(["expander:A:m0", "challenger:B:m1"])];
+  const fakeCallLLM = async (messages, options) => { calls.push({ messages: [...messages], options }); return { success: true, rawText: JSON.stringify(responses[calls.length - 1]) }; };
+  const result = await assessSemanticFactors({ chat: chat(), taskGeneralContext: "x", callLLM: fakeCallLLM, interventionHistory: HISTORY, allowStructureRepair: true });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].options.structureRepair, true);
+  assert.match(calls[1].messages.at(-1).content, /challenger:B:m1/);
+  assert.equal(result.success, true);
+  assert.equal(result.factors.candidates.scrutinize.semanticReview.matches.length, 2);
+  assert.equal(result.attempts[0].semanticCoverageIncomplete, true);
+});
+
+test("assessSemanticFactors: an unrepaired incomplete review keeps the output for per-candidate rejection", async () => {
+  const fakeCallLLM = async () => ({ success: true, rawText: JSON.stringify(withReview(["expander:A:m0"])) });
+  const repaired = await assessSemanticFactors({ chat: chat(), taskGeneralContext: "x", callLLM: fakeCallLLM, interventionHistory: HISTORY, allowStructureRepair: true });
+  assert.equal(repaired.success, true);
+  assert.equal(repaired.attempts.length, 2);
+  const noRepair = await assessSemanticFactors({ chat: chat(), taskGeneralContext: "x", callLLM: fakeCallLLM, interventionHistory: HISTORY });
+  assert.equal(noRepair.success, true);
+  assert.equal(noRepair.attempts.length, 1);
+});
+
+test("per-checkpoint strict schema requires one keyed match per reference", async () => {
+  const { strictAssessorResponseSchema, normalizeKeyedSemanticMatches } = await import("./SemanticAssessor.js");
+  assert.equal(strictAssessorResponseSchema([]), strictAssessorResponseSchema(), "no references: shared cached schema");
+  const ids = HISTORY.map(h => h.planId);
+  const schema = strictAssessorResponseSchema(ids.map(id => ({ id })));
+  const walk = node => { if (!node || typeof node !== "object") return; if (node.properties) {
+    assert.deepEqual([...node.required].sort(), Object.keys(node.properties).sort()); assert.equal(node.additionalProperties, false); }
+    Object.values(node).forEach(walk); };
+  walk(schema);
+  const matches = schema.$defs.semanticReview.properties.matches;
+  assert.equal(matches.type, "object");
+  assert.deepEqual(matches.required, ids);
+  assert.equal("id" in matches.properties[ids[0]].properties, false);
+  for (const name of ["elicit", "scrutinize", "integrate"]) {
+    const branch = schema.properties.candidates.properties[name].anyOf.find(b => b.properties);
+    assert.deepEqual(branch.properties.semanticReview, { $ref: "#/$defs/semanticReview" }, `${name} review is non-null`);
+  }
+  assert.equal(strictAssessorResponseSchema().$defs.semanticReview.properties.matches.type, "array", "cached schema not mutated");
+
+  const keyed = withReview([]);
+  keyed.candidates.scrutinize.semanticReview.matches = Object.fromEntries(ids.map(id => [id, { relation: "different", responseEvidence: [], newEvidence: [] }]));
+  assert.deepEqual(normalizeKeyedSemanticMatches(keyed), withReview(ids));
+  assert.deepEqual(normalizeKeyedSemanticMatches(withReview(ids)), withReview(ids), "array form unchanged");
+});
+
+test("assessSemanticFactors: keyed strict output is complete in one call", async () => {
+  const ids = HISTORY.map(h => h.planId);
+  const keyed = withReview([]);
+  keyed.candidates.scrutinize.semanticReview.matches = Object.fromEntries(ids.map(id => [id, { relation: "different", responseEvidence: [], newEvidence: [] }]));
+  const calls = [];
+  const result = await assessSemanticFactors({ chat: chat(), taskGeneralContext: "x", interventionHistory: HISTORY, allowStructureRepair: true,
+    callLLM: async (_messages, options) => { calls.push(options); return { success: true, rawText: JSON.stringify(keyed) }; } });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].responseSchema.schema.$defs.semanticReview.properties.matches.required, ids);
+  assert.equal(result.success, true);
+  assert.deepEqual(result.factors.candidates.scrutinize.semanticReview.matches.map(m => m.id), ids);
+});

@@ -794,6 +794,7 @@ test("renderTranscriptMd prints Adaptive failure causes without message text", (
     ],
   });
   assert.match(markdown, /- Specialist-to-Static fallbacks: 2/);
+  assert.match(markdown, /- Empty-pool Static-policy turns: 0/);
   assert.match(markdown, /- Specialist failure: semantic \[expander\]/);
   assert.match(markdown, /- Specialist validator failed: notGrounded, hiddenInformationInference/);
   assert.match(markdown, /- Specialist failure: preflight \[challenger\]/);
@@ -1156,4 +1157,19 @@ test("redactGameBundle keeps audit IDs and timestamps intact but still redacts f
   assert.deepEqual(entry.agentState.eligibleMessageIds, ["msg-1795026256007"]);
   assert.equal(entry.agentState.publicContextFingerprint, "1795026256007");
   assert.match(entry.reason, /\[REDACTED_PHONE\]/);
+});
+
+test("renderTranscriptMd counts Adaptive Static-policy turns with no Specialist candidate", () => {
+  const markdown = renderTranscriptMd({
+    game: { id: "G", totalFallbackMessages: 0 }, players: [], rounds: [],
+    llmLog: [
+      { auditRequestId: "e", outcome: "PUBLISHED", selectedRole: "STATIC", routingDecision: "ADAPTIVE_STATIC_POLICY",
+        selection: { mode: "random", pool: [], rejected: [{ need: "ELICIT", operation: "coverage_gap", reason: "semantic_review_incomplete" }] } },
+      { auditRequestId: "f", outcome: "PUBLISHED", selectedRole: "STATIC", routingDecision: "ADAPTIVE_STATIC_POLICY", fallbackRoute: "SPECIALIST_TO_STATIC_POLICY" },
+      { auditRequestId: "g", outcome: "SILENT", selectedRole: "STATIC", routingDecision: "ADAPTIVE_STATIC_POLICY" },
+    ],
+  });
+  assert.match(markdown, /- Empty-pool Static-policy turns: 1/);
+  assert.match(markdown, /- Specialist-to-Static fallbacks: 1/);
+  assert.equal((markdown.match(/- Routing: ADAPTIVE_STATIC_POLICY \(no eligible Specialist candidate\)/g) || []).length, 1);
 });
