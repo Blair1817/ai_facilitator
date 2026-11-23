@@ -833,3 +833,18 @@ test("test data is hidden by default, included explicitly, and labelled in direc
     assert.ok(csv.body.split('\n').slice(1).filter(Boolean).every(line => line.split(',')[csv.body.split('\n')[0].split(',').indexOf('test_mode')] === 'true'));
   } finally { await srv.close(); }
 });
+
+test("Empirica admin accounts can also log in to the export pages and are audited by name", async () => {
+  const srv = await makeRunningServer({ additionalUsers: [{ username: "admin", password: "admin-pass" }] });
+  const basic = (u, p) => ({ authorization: `Basic ${Buffer.from(`${u}:${p}`, "utf8").toString("base64")}` });
+  try {
+    assert.equal((await fetchText(srv.base + "/batches", basic("admin", "admin-pass"))).status, 200);
+    assert.equal((await fetchText(srv.base + "/batches")).status, 200, "export account still works");
+    assert.equal((await fetchText(srv.base + "/batches", basic("admin", "wrong"))).status, 401);
+    assert.equal((await fetchText(srv.base + "/batches", basic("researcher", "admin-pass"))).status, 401, "passwords are not interchangeable");
+    const requesters = fs.readFileSync(srv.auditFile, "utf8").trim().split("\n").map(line => JSON.parse(line).requester);
+    assert.deepEqual(requesters, ["admin", "researcher"]);
+  } finally {
+    await srv.close();
+  }
+});

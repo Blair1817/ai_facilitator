@@ -18,6 +18,8 @@ import { ExportMetadataIndex } from "./ExportMetadataIndex.mjs";
 import { recordExportEvent } from "./ExportAudit.mjs";
 import { waitForAdminEndpoint } from "./AdminContextStartup.mjs";
 import { runStartupSelfCheck } from "./prompts/promptLoader.js";
+import { adminMonitor } from "./AdminMonitor.mjs";
+import { createMonitorHandler, readEmpiricaAdminUsers } from "./AdminMonitorServer.mjs";
 
 const argv = minimist(process.argv.slice(2), { string: ["token"] });
 
@@ -96,11 +98,12 @@ if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "your-key-here
       const exportConfig = readExportServerConfig(process.env);
 
       let srtoken = exportConfig.tajribaSrToken;
+      const tajribaConfigText = exportConfig.tajribaConfig ? fs.readFileSync(exportConfig.tajribaConfig, "utf8") : null;
       if (!srtoken) {
         if (!exportConfig.tajribaConfig) {
           throw new Error("TAJRIBA_CONFIG or TAJRIBA_SRTOKEN is required for ExportServer");
         }
-        const configText = fs.readFileSync(exportConfig.tajribaConfig, "utf8");
+        const configText = tajribaConfigText;
         const m = configText.match(/^srtoken\s*=\s*"([^"]+)"$/m);
         if (!m) throw new Error(`srtoken field missing in ${exportConfig.tajribaConfig}`);
         srtoken = m[1];
@@ -117,11 +120,28 @@ if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === "your-key-here
         auditFile: exportConfig.auditFile,
         metadataIndex: new ExportMetadataIndex({ file: exportConfig.metadataStoreFile }),
       });
+      // Live monitor: export account = read-only viewer; Empirica admin
+      // accounts from empirica.toml = may control games.
+      const monitorAdminUsers = readEmpiricaAdminUsers(tajribaConfigText);
+      if (!monitorAdminUsers.length) {
+        console.warn("[monitor] no [[tajriba.auth.users]] found (set TAJRIBA_CONFIG); monitor is read-only");
+      }
+      const monitorHandler = createMonitorHandler({
+        monitor: adminMonitor,
+        basePath: exportConfig.basePath,
+        viewer: { username: exportConfig.authUsername, password: exportConfig.authPassword },
+        adminUsers: monitorAdminUsers,
+        auditFile: exportConfig.auditFile,
+        participantUrl: (process.env.MONITOR_PARTICIPANT_URL || "").replace(/\/+$/, "") || null,
+      });
       const exportServer = createExportServer({
+        monitorHandler,
         service: exportService,
         auditFile: exportConfig.auditFile,
         authUsername: exportConfig.authUsername,
         authPassword: exportConfig.authPassword,
+        // Empirica admin accounts may also log in to the export pages.
+        additionalUsers: monitorAdminUsers,
         basePath: exportConfig.basePath,
         allowRaw: exportConfig.allowRaw,
       });

@@ -57,7 +57,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import http from "node:http";
 
-import { describeFinalDecisionOutcome, ExportService, ExportNotFoundError } from "./ExportService.mjs";
+import { describeAdminIntervention, describeFinalDecisionOutcome, ExportService, ExportNotFoundError } from "./ExportService.mjs";
 import { recordExportEvent } from "./ExportAudit.mjs";
 import { connectExportAdmin, ExportStoreTimeout } from "./ExportConnection.mjs";
 import { ExportMetadataIndex, ExportMetadataUnavailable } from "./ExportMetadataIndex.mjs";
@@ -70,8 +70,10 @@ export function createExportServer({
   auditFile,
   authUsername,
   authPassword,
+  additionalUsers = [],
   basePath = "/",
   allowRaw = false,
+  monitorHandler = null,
   now = () => new Date().toISOString(),
 } = {}) {
   if (!service) throw new Error("createExportServer: service is required");
@@ -92,7 +94,10 @@ export function createExportServer({
         await sendJson(res, 200, { status: "ok" });
         return;
       }
-      const requester = authenticateBasic(req, { authUsername, authPassword });
+      // Live monitor: own auth (viewer/admin roles) and outside the
+      // single-export lock so polling never blocks a download.
+      if (monitorHandler && await monitorHandler(req, res)) return;
+      const requester = authenticateBasic(req, { authUsername, authPassword, additionalUsers });
       if (!requester) {
         await sendUnauthorized(res);
         return;
@@ -405,7 +410,10 @@ function clampInt(value, fallback, min, max) {
   return Math.max(min, Math.min(max, Math.trunc(n)));
 }
 
-function authenticateBasic(req, { authUsername, authPassword }) {
+// Accepts the export account plus any additional accounts (the Empirica
+// admin users from empirica.toml). Every candidate is compared so timing
+// does not reveal which account matched. Returns the matched username.
+function authenticateBasic(req, { authUsername, authPassword, additionalUsers = [] }) {
   const header = req.headers.authorization;
   if (typeof header !== "string") return null;
   const match = /^Basic\s+([^\s]+)$/i.exec(header);
@@ -420,10 +428,13 @@ function authenticateBasic(req, { authUsername, authPassword }) {
   if (separator < 0) return null;
   const username = decoded.slice(0, separator);
   const password = decoded.slice(separator + 1);
-  const usernameMatches = constantTimeEqual(username, authUsername);
-  const passwordMatches = constantTimeEqual(password, authPassword);
-  if (!usernameMatches || !passwordMatches) return null;
-  return authUsername;
+  let matched = null;
+  for (const user of [{ username: authUsername, password: authPassword }, ...additionalUsers]) {
+    const usernameMatches = constantTimeEqual(username, user.username);
+    const passwordMatches = constantTimeEqual(password, user.password);
+    if (usernameMatches && passwordMatches && matched === null) matched = user.username;
+  }
+  return matched;
 }
 
 function constantTimeEqual(actual, expected) {
@@ -685,7 +696,7 @@ function renderTranscriptPage({ transcript, basePath, redact }) {
         <div><dt>Official group final choice</dt><dd>${round.officialGroupFinalChoice ? `<code>${escapeHtml(round.officialGroupFinalChoice)}</code>` : `<span class="muted">not recorded</span>`}</dd></div>
         <div><dt>Final decision timed out</dt><dd>${round.finalDecisionTimedOut == null ? `<span class="muted">not recorded</span>` : `<code>${escapeHtml(round.finalDecisionTimedOut)}</code>`}</dd></div>
         <div><dt>Final decision finalised at</dt><dd>${round.finalDecisionFinalizedAt == null ? `<span class="muted">not recorded</span>` : escapeHtml(round.finalDecisionFinalizedAt)}</dd></div>
-      </dl>${outcomeDescription ? `<p class="outcome-description">${escapeHtml(outcomeDescription)}</p>` : ""}`;
+      </dl>${outcomeDescription ? `<p class="outcome-description">${escapeHtml(outcomeDescription)}</p>` : ""}${(round.adminInterventions || []).map(event => `<p class="outcome-description"><strong>Researcher intervention:</strong> ${escapeHtml(describeAdminIntervention(event).replace(/`/g, ""))}</p>`).join("")}`;
       const messages = round.messages.length === 0
         ? `<p class="empty">No messages recorded for this round.</p>`
         : round.messages.map((message) => {

@@ -293,6 +293,9 @@ export class ExportService {
       treatment: gameTreatmentName(attrs),
       testMode: (attrs.testControlsEnabled === true || attrs.testControlsEnabled === "true") || gameTreatmentName(attrs) === "test",
       testControlEvents: (attrs.testControlEventsIndex || []).map(id => attrs[`testControlEvents.${id}`]).filter(Boolean),
+      // Researcher interventions from the live admin monitor (accepted only).
+      adminControlEvents: (attrs.adminControlEventsIndex || []).map(id => attrs[`adminControlEvents.${id}`])
+        .filter(event => event && event.status === "accepted"),
       sequenceId: attrs.sequenceId || null,
       taskOrder: attrs.taskOrder || null,
       taskVersionOrder: attrs.taskVersionOrder || null,
@@ -505,6 +508,7 @@ export class ExportService {
         finalDecisionTimedOut: r.finalDecisionTimedOut,
         finalDecisionFinalizedAt: r.finalDecisionFinalizedAt,
       })),
+      adminControlEvents: redacted.game.adminControlEvents || [],
       llmLogEntryCount: redacted.llmLog.length,
     };
     return new Promise((resolve, reject) => {
@@ -721,6 +725,7 @@ export function renderQuestionnaireCsv(bundle) {
   const perPlayerRow = (player, round, slot) => {
     const data = round.perPlayer[player.id] || {};
     return {
+      admin_interventions: formatAdminInterventionsCell(adminInterventionsForRound(game, round.id, player.id)),
       round_index: round.taskIndex,
       task_index: round.taskIndex,
       task_version: round.taskVersion,
@@ -876,6 +881,7 @@ export function renderQuestionnaireCsv(bundle) {
     "initial_decision_server_received_at", "initial_decision_accepted_on_time",
     "initial_decision_timeout_reason", "initial_decision_completion_duration_ms", "test_mode",
     "agrees_with_group_choice", "group_final_submitted_at", "group_final_timeout_reason",
+    "admin_interventions",
   ];
   const csv = toCsv(rows, columns);
   return { csv, columns, rowCount: rows.length };
@@ -917,6 +923,7 @@ export function renderTranscriptMd(bundle) {
     lines.push(`- Final decision finalised at: ${round.finalDecisionFinalizedAt ?? "_(not recorded)_"}`);
     const outcomeDescription = describeFinalDecisionOutcome(round.finalDecisionOutcome);
     if (outcomeDescription) lines.push(`- ${outcomeDescription}`);
+    for (const event of round.adminInterventions || []) lines.push(`- **Researcher intervention:** ${describeAdminIntervention(event)}`);
     lines.push("");
     if (round.messages.length === 0) {
       lines.push("_No messages recorded for this round._");
@@ -1018,6 +1025,7 @@ export function buildFormalTranscript(bundle) {
       finalDecisionOutcome: round.finalDecisionOutcome ?? null,
       finalDecisionTimedOut: round.finalDecisionTimedOut ?? null,
       finalDecisionFinalizedAt: round.finalDecisionFinalizedAt ?? null,
+      adminInterventions: adminInterventionsForRound(game, round.id),
       messages: collectRoundMessages(round, bundle, game),
     }));
   return {
@@ -1225,7 +1233,7 @@ function messageContent(message) {
   return typeof value === "string" ? value : String(value ?? "");
 }
 
-function redactTranscriptMessage(message) {
+export function redactTranscriptMessage(message) {
   if (!message || typeof message !== "object") return message;
   const redacted = { ...message };
   if (typeof message.content === "string") redacted.content = redactDeep(message.content);
@@ -1240,6 +1248,25 @@ function nonEmptyString(value) {
 function titleCase(value) {
   const text = String(value);
   return text ? text[0].toUpperCase() + text.slice(1) : text;
+}
+
+// Accepted admin-monitor interventions that touched this round (optionally
+// only the stage-wide ones plus those for one participant).
+export function adminInterventionsForRound(game, roundId, playerId = undefined) {
+  return (game?.adminControlEvents || []).filter(event => event.roundId === roundId
+    && (playerId === undefined || !event.playerId || event.playerId === playerId));
+}
+
+export function describeAdminIntervention(event) {
+  const at = Number.isFinite(event.timestamp) ? new Date(event.timestamp).toISOString() : "unknown time";
+  if (event.action === "end_stage") return `Researcher ended stage \`${event.stageName}\` early at ${at} (handled like the stage timer running out).`;
+  if (event.action === "skip_break") return `Researcher skipped the shared break at ${at}.`;
+  if (event.action === "goto_page") return `Researcher moved participant \`${event.playerId}\` to ${event.destination ?? `page ${event.targetIndex}`} in \`${event.stageName}\` at ${at}.`;
+  return `Researcher action \`${event.action}\` at ${at}.`;
+}
+
+function formatAdminInterventionsCell(events) {
+  return events.map(event => `${event.action}:${event.stageName}${event.action === "goto_page" ? `->${event.targetIndex}` : ""}@${event.timestamp}`).join(";");
 }
 
 export function describeFinalDecisionOutcome(outcome) {

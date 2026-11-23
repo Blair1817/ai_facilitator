@@ -52,6 +52,7 @@ import { buildAgentState } from "./AgentState.mjs";
 import { validateCandidate } from "./SemanticValidator.js";
 import { normalizeGeneratorCandidate } from "../../client/src/components/facilitatorPresentation.mjs";
 import { initializeTestControls, registerTestControls, canPublishTestResult } from "./TestControls.mjs";
+import { adminMonitor } from "./AdminMonitor.mjs";
 import { claimSequenceForStudy } from "./RandomizationLedger.mjs";
 import { randomUUID } from "node:crypto";
 import { initialiseTaskOptionOrder, orderTaskSections } from "./TaskOptionOrder.mjs";
@@ -96,6 +97,7 @@ import { handlePersonalFlowStageStart, registerPersonalFlow } from "./PersonalFl
 
 registerPractice(Empirica, appendCanonicalMessage);
 registerTestControls(Empirica);
+adminMonitor.register(Empirica);
 registerPersonalFlow(Empirica, (player, round, stageName) => {
   const rows = buildRoundResponseRows({ gameId: round.currentGame.id, roundId: round.id,
     participantId: player.id, stageName, read: (key) => player.round.get(key) });
